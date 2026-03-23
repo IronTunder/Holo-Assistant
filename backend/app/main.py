@@ -1,33 +1,26 @@
-from backend.app.api.auth import auth
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import engine, Base
-from backend.app.api.machines import machines
+from app.api.auth.auth import router as auth_router
+# from app.api.machines import router as machines_router
+# from app.api.checklist import router as checklist_router
 
-# Crea le tabelle nel database
-Base.metadata.create_all(bind=engine)
+app = FastAPI(title="Ditto API", version="1.0.0")
 
-app = FastAPI(
-    title="Ditto API - Assistente Olografico",
-    description="API per il sistema di assistenza vocale industriale",
-    version="1.0.0"
-)
-
-# Configura CORS
+# Configura CORS per permettere al frontend di comunicare
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend Next.js
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Includi router
-app.include_router(auth.router)
-app.include_router(machines.router)
+# Includi i router
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+# app.include_router(machines_router, prefix="/machines", tags=["machines"])
+# app.include_router(checklist_router, prefix="/checklist", tags=["checklist"])
 
 @app.get("/health")
-def health_check():
-    """Endpoint per verificare che il servizio sia attivo"""
+async def health_check():
     return {"status": "ok", "message": "Ditto API is running"}

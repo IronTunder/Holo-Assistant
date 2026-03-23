@@ -1,59 +1,100 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel
 from typing import Optional
 
-from app.database import get_db
-from app.models.user import User
-from app.models.machine import Machine
-from app.schemas.user import BadgeLoginRequest, BadgeLoginResponse, UserResponse
-from app.schemas.machine import MachineResponse
+router = APIRouter()
 
-router = APIRouter(prefix="/auth", tags=["autenticazione"])
+# Modelli per le richieste/risposte
+class BadgeLoginRequest(BaseModel):
+    badge_id: str
 
-@router.post("/badge-login", response_model=BadgeLoginResponse)
-def badge_login(
-    request: BadgeLoginRequest,
-    db: Session = Depends(get_db)
-):
+class UserResponse(BaseModel):
+    id: int
+    nome: str
+    badge_id: str
+    livello_esperienza: str
+    reparto: str
+    turno: str
+
+class MachineResponse(BaseModel):
+    id: int
+    nome: str
+    reparto: str
+    descrizione: str
+    id_postazione: str
+    stato: str
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
+    machine: MachineResponse
+    message: Optional[str] = None
+
+@router.post("/badge-login", response_model=LoginResponse)
+async def badge_login(request: BadgeLoginRequest):
     """
-    Login con badge RFID/NFC
-    Riceve badge_id e postazione_id, restituisce utente e macchina associata
+    Login con badge RFID.
+    Per ora restituisce dati di esempio.
     """
-    # Cerca utente per badge_id
-    user = db.query(User).filter(User.badge_id == request.badge_id).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Badge non riconosciuto"
+    # DATI DI ESEMPIO (da sostituire con la logica reale del database)
+    if request.badge_id == "NFT-001":
+        user = UserResponse(
+            id=1,
+            nome="Mario Rossi",
+            badge_id="NFT-001",
+            livello_esperienza="manutentore",
+            reparto="Tecnico",
+            turno="mattina"
         )
-    
-    # Cerca macchina per id_postazione
-    machine = db.query(Machine).filter(
-        Machine.id_postazione == request.postazione_id
-    ).first()
-    
-    if not machine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Postazione non trovata"
+        machine = MachineResponse(
+            id=1,
+            nome="Pressa A7",
+            reparto="Stampaggio",
+            descrizione="Pressa idraulica 200 ton",
+            id_postazione="POST-001",
+            stato="libera"
         )
-    
-    # Aggiorna stato postazione (da implementare con Redis o tabella apposita)
-    # Per ora restituiamo solo successo
-    
-    return BadgeLoginResponse(
-        success=True,
-        user=UserResponse.model_validate(user),
-        machine=MachineResponse.model_validate(machine) if machine else None,
-        message=f"Benvenuto {user.nome}"
-    )
+        return LoginResponse(
+            access_token="fake-jwt-token",
+            token_type="bearer",
+            user=user,
+            machine=machine,
+            message="Benvenuto Mario!"
+        )
+    elif request.badge_id == "NFT-002":
+        user = UserResponse(
+            id=2,
+            nome="Luigi Verdi",
+            badge_id="NFT-002",
+            livello_esperienza="senior",
+            reparto="Stampaggio",
+            turno="mattina"
+        )
+        machine = MachineResponse(
+            id=1,
+            nome="Pressa A7",
+            reparto="Stampaggio",
+            descrizione="Pressa idraulica 200 ton",
+            id_postazione="POST-001",
+            stato="libera"
+        )
+        return LoginResponse(
+            access_token="fake-jwt-token",
+            token_type="bearer",
+            user=user,
+            machine=machine,
+            message="Benvenuto Luigi!"
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Badge non riconosciuto. Verifica il codice o contatta l'amministratore."
+        )
 
 @router.post("/logout")
-def logout(
-    badge_id: str,
-    db: Session = Depends(get_db)
-):
-    """Termina il turno dell'operatore"""
-    # Aggiorna stato postazione (da implementare)
-    return {"success": True, "message": "Logout effettuato"}
+async def logout():
+    """
+    Logout dell'operatore.
+    """
+    return {"message": "Logout effettuato con successo"}
