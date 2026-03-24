@@ -397,7 +397,7 @@ async def admin_login(
     
     # Cerca utente per username con ruolo ADMIN
     user = db.query(User).filter(
-        User.nome == request.username,
+        User.nome == request.username.strip(),
         User.ruolo == Ruolo.ADMIN
     ).first()
     

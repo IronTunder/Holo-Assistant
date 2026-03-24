@@ -62,22 +62,6 @@ start_production.bat
 
 ---
 
-### 4. **stop.bat** - Arresto Servizi 🛑
-Termina tutti i servizi (backend + frontend) in modo pulito.
-
-```bash
-stop.bat
-```
-
-**Cosa fa:**
-- ✅ Ferma il server FastAPI
-- ✅ Ferma il dev server Vite
-- ✅ Chiude le finestre associate
-
-**Quando usarlo:** Quando vuoi fermare i servizi velocemente
-
----
-
 ## 🔧 Prerequisiti
 
 Prima di avviare gli script, assicurati di avere:
