@@ -31,7 +31,7 @@
          └────────────┬─────────────┘
                       │
               FastAPI Backend
-         192.168.1.119:8000
+         {serverip}:8000
          └─────┬──────────┘
                │
         ┌──────┴──────────┐
@@ -55,8 +55,8 @@ start.bat
 Avvia Backend + Frontend con hot reload.
 
 - 🎨 Frontend: http://localhost:5173
-- 🔌 Backend API: http://192.168.1.119:8000
-- 📊 Health Check: http://192.168.1.119:8000/health
+- 🔌 Backend API: http://{serverip}:8000
+- 📊 Health Check: http://{serverip}:8000/health
 
 ### 3️⃣ **Test Admin Dashboard**
 ```
@@ -186,7 +186,7 @@ ADMIN_PASSWORD=admin123
 
 ### frontend/my-app/.env
 ```ini
-VITE_API_URL=http://192.168.1.119:8000
+VITE_API_URL=http://{serverip}:8000
 ```
 
 ## 🛠️ Sviluppo
@@ -295,7 +295,7 @@ npm run preview     # Preview build
 
 ### Health Check
 ```bash
-curl http://192.168.1.119:8000/health
+curl http://{serverip}:8000/health
 # {"status": "ok"}
 ```
 
@@ -343,7 +343,7 @@ Modifica in `backend/.env` prima di qualsiasi deployment.
 
 ## 📞 Support & Docs
 
-- **API Docs**: http://192.168.1.119:8000/docs (Swagger)
+- **API Docs**: http://{serverip}:8000/docs (Swagger)
 - **Setup Guide**: [STARTUP_GUIDE.md](./STARTUP_GUIDE.md)
 - **GitHub Issues**: Segnala problemi
 - **Email**: support@example.com
