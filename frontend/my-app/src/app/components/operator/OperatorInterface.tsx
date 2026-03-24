@@ -1,32 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Mic, Radio } from 'lucide-react';
 import { AvatarDisplay } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
+import { useAuth } from '../../AuthContext';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
-interface User {
-  id: number;
-  nome: string;
-  badge_id: string;
-  livello_esperienza: string;
-  reparto: string;
-  turno: string;
-}
-
-interface Machine {
-  id: number;
-  nome: string;
-  reparto: string;
-  id_postazione: string;
-  in_uso: boolean;
-}
-
 export function OperatorInterface() {
+  const { 
+    isLoggedIn, 
+    accessToken, 
+    user, 
+    machine, 
+    login, 
+    logout 
+  } = useAuth();
+  
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [currentMachine, setCurrentMachine] = useState<Machine | null>(null);
   const [transcript, setTranscript] = useState('');
   const [wakeWordActive, setWakeWordActive] = useState(true);
   const [showSubtitles, setShowSubtitles] = useState(false);
@@ -51,15 +41,14 @@ export function OperatorInterface() {
       }
 
       const data = await response.json();
-      setCurrentUser(data.user);
-      setCurrentMachine(data.machine);
-      setIsLoggedIn(true);
-      
-      // Salva il token
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      localStorage.setItem('machine', JSON.stringify(data.machine));
-      
+      // Usa la funzione di login dal context
+      login(
+        data.access_token,
+        data.refresh_token,
+        data.user,
+        data.machine,
+        data.expires_in
+      );
     } catch (error) {
       console.error('Login error:', error);
       alert(error instanceof Error ? error.message : 'Errore durante il login');
@@ -85,15 +74,14 @@ export function OperatorInterface() {
       }
 
       const data = await response.json();
-      setCurrentUser(data.user);
-      setCurrentMachine(data.machine);
-      setIsLoggedIn(true);
-      
-      // Salva il token
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      localStorage.setItem('machine', JSON.stringify(data.machine));
-      
+      // Usa la funzione di login dal context
+      login(
+        data.access_token,
+        data.refresh_token,
+        data.user,
+        data.machine,
+        data.expires_in
+      );
     } catch (error) {
       console.error('Login error:', error);
       alert(error instanceof Error ? error.message : 'Errore durante il login');
@@ -103,22 +91,8 @@ export function OperatorInterface() {
   };
 
   const handleLogout = async () => {
-    if (currentUser && currentMachine) {
-      try {
-        await fetch(`${API_URL}/auth/logout?user_id=${currentUser.id}&machine_id=${currentMachine.id}`, {
-          method: 'POST',
-        });
-      } catch (error) {
-        console.error('Logout error:', error);
-      }
-    }
+    await logout();
     
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('machine');
-    setIsLoggedIn(false);
-    setCurrentUser(null);
-    setCurrentMachine(null);
     setAvatarState('idle');
   };
 
@@ -163,20 +137,20 @@ export function OperatorInterface() {
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <span className="text-blue-400">DITTO</span> Assistente
           </h1>
-          {currentMachine && (
+          {machine && (
             <p className="text-sm text-gray-400 mt-1">
-              Postazione: {currentMachine.nome} - {currentMachine.id_postazione}
+              Postazione: {machine.nome} - {machine.id_postazione}
             </p>
           )}
         </div>
         
         <div className="flex items-center gap-4">
-          {isLoggedIn && currentUser && (
+          {isLoggedIn && user && (
             <div className="flex items-center gap-3">
               <div className="text-right">
                 <p className="text-sm text-gray-400">Operatore</p>
-                <p className="font-semibold">{currentUser.nome}</p>
-                <p className="text-xs text-gray-500">{currentUser.livello_esperienza} - {currentUser.turno}</p>
+                <p className="font-semibold">{user.nome}</p>
+                <p className="text-xs text-gray-500">{user.livello_esperienza} - {user.turno}</p>
               </div>
               <button
                 onClick={handleLogout}
@@ -247,24 +221,6 @@ export function OperatorInterface() {
                   )}
                 </div>
               </div>
-
-              {/* Subtitles */}
-              {showSubtitles && transcript && (
-                <div className="mt-6 max-w-2xl mx-auto px-6">
-                  <div className="bg-black/60 backdrop-blur-md px-8 py-4 rounded-xl border border-white/20">
-                    <p className="text-center text-lg">{transcript}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Test interaction button */}
-              <button
-                onClick={simulateWakeWord}
-                disabled={avatarState !== 'idle'}
-                className="mt-8 px-6 py-3 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors"
-              >
-                🎤 Simula Interazione Test
-              </button>
 
               {/* Quick actions */}
               <div className="mt-12 grid grid-cols-3 gap-4 max-w-2xl mx-auto px-6">

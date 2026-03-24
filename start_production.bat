@@ -1,14 +1,14 @@
 @echo off
 REM ========================================
-REM Progetto Ditto - Start Services Script
+REM Progetto Ditto - Start (Production Mode)
 REM ========================================
-REM Avvia il backend e frontend quando il database è già inizializzato
+REM Avvia i servizi in modalità produzione (senza hot reload)
 
 setlocal enabledelayedexpansion
 
 echo.
 echo ========================================
-echo  Progetto Ditto - Avvio Servizi
+echo  Progetto Ditto - Avvio Modalità Produzione
 echo ========================================
 echo.
 
@@ -40,7 +40,7 @@ cd /d "%BASE_DIR%docker"
 docker-compose up -d
 
 if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Impossibile avviare docker-compose. 
+    echo [WARNING] Impossibile avviare docker-compose.
     echo [INFO] Assicurati che Docker Desktop sia in esecuzione.
     timeout /t 2 /nobreak
     goto :skip_docker
@@ -53,10 +53,10 @@ echo [OK] PostgreSQL dovrebbe essere pronto
 :skip_docker
 
 REM ========================================
-REM 2. AVVIO BACKEND
+REM 2. AVVIO BACKEND (senza --reload)
 REM ========================================
 echo.
-echo [FASE 2] Avvio Backend FastAPI...
+echo [FASE 2] Avvio Backend FastAPI (produzione)...
 echo.
 
 cd /d "%BASE_DIR%backend"
@@ -81,18 +81,18 @@ call venv\Scripts\activate.bat
 REM Installa dipendenze se necessario
 pip install -q -r requirements.txt
 
-REM Avvia il server in una nuova finestra
+REM Avvia il server in una nuova finestra (senza reload)
 echo [OK] Avvio server backend su http://localhost:8000
-start "Ditto Backend Server" cmd /k "cd /d %BASE_DIR%backend && venv\Scripts\activate && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "Ditto Backend Server (Production)" cmd /k "cd /d %BASE_DIR%backend && venv\Scripts\activate && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
 REM Attendi un momento per il startup
 timeout /t 3 /nobreak
 
 REM ========================================
-REM 3. AVVIO FRONTEND
+REM 3. AVVIO FRONTEND (build ottimizzato)
 REM ========================================
 echo.
-echo [FASE 3] Avvio Frontend (React + Vite)...
+echo [FASE 3] Avvio Frontend (produzione)...
 echo.
 
 cd /d "%BASE_DIR%frontend\my-app"
@@ -111,16 +111,16 @@ if not exist "node_modules" (
     call npm install
 )
 
-REM Avvia il server di sviluppo in una nuova finestra
-echo [OK] Avvio dev server frontend su http://localhost:5173
-start "Ditto Frontend Dev Server" cmd /k "cd /d %BASE_DIR%frontend\my-app && npm run dev"
+REM Avvia il server di preview (versione ottimizzata)
+echo [OK] Avvio preview server frontend su http://localhost:5173
+start "Ditto Frontend Preview (Production)" cmd /k "cd /d %BASE_DIR%frontend\my-app && npm run preview"
 
 REM ========================================
 REM 4. RIEPILOGO
 REM ========================================
 echo.
 echo ========================================
-echo  Servizi Avviati Con Successo!
+echo  Servizi Avviati (Modalità Produzione)
 echo ========================================
 echo.
 echo Docker:   postgres:5432 (in docker-compose)

@@ -6,12 +6,14 @@ from typing import List
 
 from app.database import get_db
 from app.models.machine import Machine
+from app.models.user import User
 from app.schemas.machine import MachineCreate, MachineUpdate, MachineResponse
+from app.api.auth.auth import get_current_user, verify_admin
 
 router = APIRouter(tags=["macchinari"])
 
 @router.get("/", response_model=List[MachineResponse])
-def get_machines(
+async def get_machines(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db)
@@ -21,7 +23,7 @@ def get_machines(
     return machines
 
 @router.get("/available", response_model=List[MachineResponse])
-def get_available_machines(
+async def get_available_machines(
     db: Session = Depends(get_db)
 ):
     """Lista solo i macchinari non in uso"""
@@ -29,11 +31,11 @@ def get_available_machines(
     return machines
 
 @router.get("/{machine_id}", response_model=MachineResponse)
-def get_machine(
+async def get_machine(
     machine_id: int,
     db: Session = Depends(get_db)
 ):
-    """Dettaglio di un macchinario"""
+    """Dettagli di un macchinario"""
     machine = db.query(Machine).filter(Machine.id == machine_id).first()
     if not machine:
         raise HTTPException(
@@ -43,11 +45,12 @@ def get_machine(
     return machine
 
 @router.post("/", response_model=MachineResponse, status_code=status.HTTP_201_CREATED)
-def create_machine(
+async def create_machine(
     machine: MachineCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    admin: User = Depends(verify_admin)
 ):
-    """Crea un nuovo macchinario"""
+    """Crea un nuovo macchinario (admin only)"""
     # Verifica se esiste già con lo stesso nome o id_postazione
     existing = db.query(Machine).filter(
         (Machine.nome == machine.nome) | (Machine.id_postazione == machine.id_postazione)
@@ -66,12 +69,13 @@ def create_machine(
     return db_machine
 
 @router.put("/{machine_id}", response_model=MachineResponse)
-def update_machine(
+async def update_machine(
     machine_id: int,
     machine: MachineUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    admin: User = Depends(verify_admin)
 ):
-    """Aggiorna un macchinario"""
+    """Aggiorna un macchinario (admin only)"""
     db_machine = db.query(Machine).filter(Machine.id == machine_id).first()
     if not db_machine:
         raise HTTPException(
@@ -88,13 +92,14 @@ def update_machine(
     return db_machine
 
 @router.patch("/{machine_id}/status")
-def update_machine_status(
+async def update_machine_status(
     machine_id: int,
     in_uso: bool,
     operatore_id: int = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    admin: User = Depends(verify_admin)
 ):
-    """Aggiorna lo stato di utilizzo del macchinario"""
+    """Aggiorna lo stato di utilizzo del macchinario (admin only)"""
     db_machine = db.query(Machine).filter(Machine.id == machine_id).first()
     if not db_machine:
         raise HTTPException(
@@ -113,11 +118,12 @@ def update_machine_status(
     }
 
 @router.delete("/{machine_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_machine(
+async def delete_machine(
     machine_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    admin: User = Depends(verify_admin)
 ):
-    """Elimina un macchinario"""
+    """Elimina un macchinario (admin only)"""
     db_machine = db.query(Machine).filter(Machine.id == machine_id).first()
     if not db_machine:
         raise HTTPException(
