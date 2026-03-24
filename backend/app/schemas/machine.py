@@ -1,3 +1,5 @@
+# backend/app/schemas/machine.py
+
 from pydantic import BaseModel
 from typing import Optional
 
@@ -15,9 +17,11 @@ class MachineUpdate(BaseModel):
     reparto: Optional[str] = None
     descrizione: Optional[str] = None
     id_postazione: Optional[str] = None
+    in_uso: Optional[bool] = None
 
 class MachineResponse(MachineBase):
     id: int
+    in_uso: bool = False
     
     class Config:
         from_attributes = True

@@ -1,3 +1,5 @@
+# backend/app/models/user.py
+
 from sqlalchemy import Column, Integer, String, Enum, DateTime
 from sqlalchemy.sql import func
 from app.database import Base
@@ -20,6 +22,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String, nullable=False)
     badge_id = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=True)  # Nuovo campo per la password
     livello_esperienza = Column(Enum(LivelloEsperienza), nullable=False)
     reparto = Column(String, nullable=False)
     turno = Column(Enum(Turno), nullable=False)

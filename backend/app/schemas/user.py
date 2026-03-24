@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+# backend/app/schemas/user.py
+
+from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from app.models.user import LivelloEsperienza, Turno
@@ -11,7 +13,7 @@ class UserBase(BaseModel):
     turno: Turno
 
 class UserCreate(UserBase):
-    pass
+    password: Optional[str] = None  # Password opzionale per il login
 
 class UserResponse(UserBase):
     id: int
@@ -22,7 +24,12 @@ class UserResponse(UserBase):
 
 class BadgeLoginRequest(BaseModel):
     badge_id: str
-    postazione_id: str  # ID della postazione (es. POST-001)
+    machine_id: int
+
+class CredentialsLoginRequest(BaseModel):
+    username: str
+    password: str
+    machine_id: int
 
 class BadgeLoginResponse(BaseModel):
     success: bool
