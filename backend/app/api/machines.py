@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.machine import Machine
 from app.schemas.machine import MachineCreate, MachineUpdate, MachineResponse
 
-router = APIRouter(prefix="/machines", tags=["macchinari"])
+router = APIRouter(tags=["macchinari"])
 
 @router.get("/", response_model=List[MachineResponse])
 def get_machines(
