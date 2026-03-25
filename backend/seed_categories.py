@@ -13,14 +13,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.models.category import Category
 from app.models.preset_response import PresetResponse
+from app.models.machine import Machine
 from app.database import Base
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Connessione al database
-DATABASE_URL = "postgresql+psycopg2://postgres:postgres@localhost:5432/ditto_db"
+# Connessione al database (usa variabili d'ambiente se disponibili)
+db_host = os.getenv("DATABASE_HOST", "localhost")
+db_port = os.getenv("DATABASE_PORT", "5432")
+db_user = os.getenv("DATABASE_USER", "postgres")
+db_password = os.getenv("DATABASE_PASSWORD", "postgres")
+db_name = os.getenv("DATABASE_NAME", "ditto_db")
+
+DATABASE_URL = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -75,7 +83,7 @@ CATEGORIES_DATA = {
 
 
 def seed_database():
-    """Popola il database con categorie e risposte preset."""
+    """Popola il database con categorie e risposte preset, associate ai macchinari."""
     
     db = SessionLocal()
     
@@ -88,6 +96,14 @@ def seed_database():
         
         logger.info("Inizio seeding del database con categorie e risposte...")
         
+        # Recupera tutti i macchinari
+        machines = db.query(Machine).all()
+        if not machines:
+            logger.warning("Nessun macchinario trovato nel database. Crea prima i macchinari.")
+            return
+        
+        logger.info(f"Trovati {len(machines)} macchinari. Associando categorie...")
+        
         for category_name, category_data in CATEGORIES_DATA.items():
             # Crea la categoria
             category = Category(
@@ -97,14 +113,20 @@ def seed_database():
             db.add(category)
             db.flush()  # Flush per ottenere l'ID
             
-            logger.info(f"Creata categoria: {category_name}")
+            # Associa questa categoria a TUTTI i macchinari
+            for machine in machines:
+                machine.categories.append(category)
+            
+            logger.info(f"Creata categoria: {category_name} (associata a {len(machines)} macchinari)")
             
             # Aggiungi le risposte per questa categoria
+            # Le risposte sono GLOBALI (machine_id = NULL) ma accessibili solo dai macchinari che hanno questa categoria
             for response_data in category_data["responses"]:
                 preset_response = PresetResponse(
                     category_id=category.id,
                     text=response_data["text"],
-                    keywords=response_data["keywords"]
+                    keywords=response_data["keywords"],
+                    machine_id=None  # Globale a questa categoria
                 )
                 db.add(preset_response)
             
@@ -116,6 +138,8 @@ def seed_database():
         logger.info(f"Categorie create: {len(CATEGORIES_DATA)}")
         total_responses = sum(len(cat['responses']) for cat in CATEGORIES_DATA.values())
         logger.info(f"Risposte create: {total_responses}")
+        logger.info(f"Macchinari: {len(machines)}")
+        logger.info(f"Associazioni Machine-Category: {len(machines) * len(CATEGORIES_DATA)}")
         
     except Exception as e:
         db.rollback()

@@ -7,5 +7,6 @@ class PresetResponse(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)  # Se NULL: valida per tutti i macchinari
     text = Column(Text, nullable=False)
     keywords = Column(String(500), nullable=True)

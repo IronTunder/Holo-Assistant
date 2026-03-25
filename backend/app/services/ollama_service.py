@@ -22,15 +22,14 @@ async def classify_question(question: str, categories: List[str]) -> str:
         Nome della categoria più appropriata
     """
     categories_str = ", ".join(categories)
-    prompt = f"""Date le seguenti categorie: {categories_str}
+    prompt = f"""Categorie: {categories_str}
 
-Classifica questa domanda in una sola categoria:
-"{question}"
+Domanda: "{question}"
 
-Rispondi SOLO con il nome della categoria, senza spiegazioni."""
+Quale categoria? Rispondi con UN SOLO nome della lista."""
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # Timeout aumentato a 120 secondi
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -38,8 +37,11 @@ Rispondi SOLO con il nome della categoria, senza spiegazioni."""
                     "prompt": prompt,
                     "stream": False,
                     "temperature": 0.3,
+                    "top_k": 40,
+                    "top_p": 0.9,
+                    "num_predict": 20,  # Limita output per velocità
                 },
-                timeout=30.0,
+                timeout=120.0,
             )
             response.raise_for_status()
             
@@ -59,6 +61,7 @@ Rispondi SOLO con il nome della categoria, senza spiegazioni."""
     except Exception as e:
         logger.error(f"Error classifying question with Ollama: {e}", exc_info=True)
         logger.error(f"Attempted to connect to: {OLLAMA_BASE_URL}")
+        # Fallback: ritorna la prima categoria se c'è errore
         return categories[0] if categories else "Generale"
 
 
@@ -85,19 +88,18 @@ async def select_best_response(
     
     # Crea un prompt per Ollama per selezionare la migliore risposta
     responses_text = "\n".join(
-        [f"{i+1}. {r['text']}" for i, r in enumerate(preset_responses)]
+        [f"{i+1}. {r['text'][:100]}..." if len(r['text']) > 100 else f"{i+1}. {r['text']}" for i, r in enumerate(preset_responses)]
     )
     
     prompt = f"""Domanda: "{question}"
 
-Disponibili le seguenti risposte:
+Risposte disponibili:
 {responses_text}
 
-Quale è la risposta più appropriata per rispondere a questa domanda?
-Rispondi SOLO con il numero (1, 2, 3, ecc) della risposta migliore, senza spiegazioni."""
+Numero della migliore risposta? Rispondi con UN SOLO numero."""
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # Timeout aumentato a 120 secondi
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={
@@ -105,8 +107,11 @@ Rispondi SOLO con il numero (1, 2, 3, ecc) della risposta migliore, senza spiega
                     "prompt": prompt,
                     "stream": False,
                     "temperature": 0.2,
+                    "top_k": 40,
+                    "top_p": 0.9,
+                    "num_predict": 10,  # Limita output per velocità
                 },
-                timeout=30.0,
+                timeout=120.0,
             )
             response.raise_for_status()
             
