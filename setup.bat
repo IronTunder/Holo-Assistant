@@ -21,7 +21,7 @@ echo [INFO] IP del server: %IP%
 echo.
 
 :: 1. Avvia Docker
-echo [1/5] Avvio PostgreSQL con Docker...
+echo [1/5] Avvio PostgreSQL e Ollama con Docker...
 cd %ROOT_DIR%\docker
 if not exist docker-compose.yml (
     echo [ERRORE] File docker-compose.yml non trovato in %CD%
@@ -38,8 +38,19 @@ echo [OK] Docker avviato correttamente
 echo.
 
 :: Attendi che PostgreSQL sia pronto
-echo Attendendo l'avvio di PostgreSQL...
-timeout /t 5 /nobreak >nul
+echo Attendendo l'avvio di PostgreSQL e Ollama...
+timeout /t 8 /nobreak >nul
+
+:: Verifica che Ollama sia pronto e pull il modello mistral
+echo Preparazione modello AI (mistral)...
+docker exec ditto_ollama ollama pull mistral >nul 2>&1
+if errorlevel 1 (
+    echo [AVVISO] Impossibile pullare il modello mistral. Assicurati che Ollama sia accessibile.
+    echo [AVVISO] Puoi pullare manualmente con: docker exec ditto_ollama ollama pull mistral
+) else (
+    echo [OK] Modello mistral pronto
+)
+echo.
 
 :: 2. Configura il backend
 echo [2/5] Configurazione backend...
@@ -59,6 +70,7 @@ echo ADMIN_TOKEN_EXPIRE_MINUTES=120
 echo ALGORITHM=HS256
 echo ACCESS_TOKEN_EXPIRE_MINUTES=30
 echo ALLOWED_ORIGINS=http://localhost:5173,http://%IP%:5173
+echo OLLAMA_BASE_URL=http://%IP%:11434
 ) > %ROOT_DIR%\backend\.env
 echo [OK] Backend configurato
 echo.
@@ -81,7 +93,7 @@ call venv\Scripts\activate.bat
 
 :: Installa dipendenze
 echo Installazione dipendenze Python...
-pip install -r requirements.txt
+pip install -r requirements.txt --quiet
 if errorlevel 1 (
     echo [AVVISO] Problemi con l'installazione delle dipendenze
 )
@@ -93,6 +105,10 @@ python init_db.py
 :: Popola database con dati di test
 echo Popolamento database con dati di test...
 python populate.py
+
+:: Popola database con categorie e risposte preset per Ollama
+echo Seeding categorie e risposte per AI...
+python seed_categories.py
 
 echo [OK] Database configurato
 echo.

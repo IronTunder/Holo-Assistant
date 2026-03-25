@@ -1,0 +1,11 @@
+from sqlalchemy import Column, Integer, String, Text, ForeignKey
+from app.database import Base
+
+
+class PresetResponse(Base):
+    __tablename__ = "preset_responses"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
+    text = Column(Text, nullable=False)
+    keywords = Column(String(500), nullable=True)

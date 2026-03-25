@@ -31,13 +31,13 @@
          └────────────┬─────────────┘
                       │
               FastAPI Backend
-         {serverip}:8000
-         └─────┬──────────┘
-               │
-        ┌──────┴──────────┐
-        │   PostgreSQL    │
-        │   Database      │
-        └─────────────────┘
+         {server's-ip-address}:8000
+         └─────┬──────────┬──────────┐
+               │          │          │
+        ┌──────▼──┐  ┌────▼─────┐  ┌▼──────────┐
+        │PostgreSQL│  │ Ollama   │  │Interactions│
+        │Database  │  │    AI    │  │ & Logging  │
+        └──────────┘  └──────────┘  └────────────┘
 ```
 
 ## 🚀 Quick Start
@@ -55,8 +55,8 @@ start.bat
 Avvia Backend + Frontend con hot reload.
 
 - 🎨 Frontend: http://localhost:5173
-- 🔌 Backend API: http://{serverip}:8000
-- 📊 Health Check: http://{serverip}:8000/health
+- 🔌 Backend API: http://{server's-ip-address}:8000
+- 📊 Health Check: http://{server's-ip-address}:8000/health
 
 ### 3️⃣ **Test Admin Dashboard**
 ```
@@ -167,26 +167,99 @@ POST /auth/admin-login
 ### RefreshToken
 - Token refresh JWT per estendere sessioni
 
-## ⚙️ Variabili Ambiente
+## 🤖 Sistema Q&A con AI (Ollama)
 
-### backend/.env
+Il sistema intelligente di risposta alle domande degli operatori utilizza **Ollama (Mistral AI)** per:
+
+### 🔄 Flusso di Funzionamento
+1. **Operatore pone una domanda** tramite l'interfaccia vocale/testo
+2. **Ollama classifica la domanda** in una delle categorie disponibili
+3. **Sistema seleziona la risposta preset** più appropriata per quella categoria
+4. **Risposta viene visualizzata** all'operatore
+5. **Interazione viene registrata** nel database
+
+### 📚 Categorie Disponibili
+
+| Categoria | Descrizione | # Risposte |
+|-----------|-------------|-----------|
+| **Manutenzione** | Manutenzione ordinaria, ricambi, lubrificazione | 4 |
+| **Sicurezza** | DPI, protezioni, emergenze | 4 |
+| **Operazioni** | Avvio, parametri, sequenze di lavoro | 4 |
+| **Diagnostica** | Errori, spie, anomalie | 4 |
+| **Pulizia** | Pulizia e igiene della macchina | 4 |
+
+### 💡 Esempi di Risposte
+
+**Categoria: Sicurezza**
+```
+Dispositivi di protezione individuale obbligatori:
+• Mascherina FFP2
+• Occhiali di protezione
+• Guanti in nitrile
+• Scarpe antinfortunistiche
+• Casco
+```
+
+**Categoria: Operazioni**
+```
+Sequenza di avvio:
+1. Verificare le protezioni
+2. Inserire il materiale
+3. Selezionare il programma
+4. Impostare parametri velocità/potenza
+5. Premere START
+```
+
+### 🧠 Come Funziona Ollama
+
+- **Modello**: Mistral 7B (richiesto minimo 4GB VRAM)
+- **Temperatura**: 0.3 per classificazione, 0.2 per selezione (risposte deterministiche)
+- **URL**: Configurato in `OLLAMA_BASE_URL` del backend
+- **Timeout**: 30 secondi per richiesta
+
+### 🗂️ Dati Seed
+
+Le categorie e risposte sono caricate da [seed_categories.py](./backend/seed_categories.py):
+```bash
+python backend/seed_categories.py
+```
+
+Quando eseguito, popola il DB con:
+- **5 categorie** (Manutenzione, Sicurezza, Operazioni, Diagnostica, Pulizia)
+- **20 risposte preset** (4 per categoria)
+- **Keywords** per il matching delle risposte
+
+ℹ️ Lo script si esegue automaticamente durante `setup.bat` se il DB è vuoto.
+
+## ⚙️ Variabili Ambiente
 ```ini
 # Database
-DATABASE_URL=postgresql://user:password@localhost/ditto
+DATABASE_HOST={server's-ip-address}
+DATABASE_PORT=5432
+DATABASE_USER=postgres
+DATABASE_PASSWORD=postgres
+DATABASE_NAME=ditto_db
 
-# JWT
-SECRET_KEY=your-secret-key
+# JWT & Security
+SECRET_KEY=your-super-secret-key-change-this-in-production
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 ADMIN_TOKEN_EXPIRE_MINUTES=120
-ACCESS_TOKEN_EXPIRE_MINUTES=480
 
-# Admin
+# Admin Credentials
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD=tuapasswordsicura
+
+# CORS
+ALLOWED_ORIGINS=http://localhost:5173,http://{server's-ip-address}:5173
+
+# AI Service (Ollama)
+OLLAMA_BASE_URL=http://{server's-ip-address}:11434
 ```
 
 ### frontend/my-app/.env
 ```ini
-VITE_API_URL=http://{serverip}:8000
+VITE_API_URL=http://{server's-ip-address}:8000
 ```
 
 ## 🛠️ Sviluppo
@@ -295,7 +368,7 @@ npm run preview     # Preview build
 
 ### Health Check
 ```bash
-curl http://{serverip}:8000/health
+curl http://{server's-ip-address}:8000/health
 # {"status": "ok"}
 ```
 
@@ -305,10 +378,12 @@ curl http://{serverip}:8000/health
 |----------|-----------|
 | **404 on /auth/admin-login** | Controlla config.ts: URL deve essere senza `/api/` prefix |
 | **Accesso negato admin dashboard** | Verifica ADMIN_USERNAME/PASSWORD in .env |
-| **Database connection error** | Assicurati PostgreSQL è in esecuzione; controlla DATABASE_URL |
+| **503 Service Unavailable** | Ollama non disponibile; verifica OLLAMA_BASE_URL e che Ollama sia in esecuzione |
+| **Database connection error** | Assicurati PostgreSQL è in esecuzione; controlla DATABASE_HOST, DATABASE_PORT |
 | **Cannot find module (frontend)** | `cd frontend/my-app && npm install` |
 | **Port already in use** | Esegui `stop.bat` o cambia porta in start.bat |
 | **401 Unauthorized** | Token scaduto o mancante; login di nuovo |
+| **AI_API_URL is undefined** | Assicurati di usare `VITE_AI_API_URL` nel .env (con prefisso VITE_) |
 
 👉 **Vedi [STARTUP_GUIDE.md](./STARTUP_GUIDE.md) per troubleshooting dettagliato**
 
@@ -343,10 +418,10 @@ Modifica in `backend/.env` prima di qualsiasi deployment.
 
 ## 📞 Support & Docs
 
-- **API Docs**: http://{serverip}:8000/docs (Swagger)
+- **API Docs**: http://{server's-ip-address}:8000/docs (Swagger)
 - **Setup Guide**: [STARTUP_GUIDE.md](./STARTUP_GUIDE.md)
 - **GitHub Issues**: Segnala problemi
-- **Email**: support@example.com
+- **Email**: matteo.onetti@isarome.it
 
 ## 📄 Licenza
 
@@ -358,6 +433,6 @@ Proprietary - Uso interno solo
 
 ---
 
-**Ultima Modifica**: Marzo 2024  
+**Ultima Modifica**: Marzo 2026  
 **Versione**: 1.0.0
 

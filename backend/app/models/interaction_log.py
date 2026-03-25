@@ -8,6 +8,7 @@ class InteractionLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     domanda = Column(Text, nullable=False)
     risposta = Column(Text, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())

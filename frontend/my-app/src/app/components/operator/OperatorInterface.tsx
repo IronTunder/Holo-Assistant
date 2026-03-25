@@ -28,7 +28,7 @@ export function OperatorInterface() {
   const [isTyping, setIsTyping] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_URL;
-
+  
   useEffect(() => {
     if (!isLoggedIn || !machine || !user || !accessToken) return;
 
@@ -42,23 +42,22 @@ export function OperatorInterface() {
             'Content-Type': 'application/json',
           },
         });
-
         if (response.ok) {
           const machineData = await response.json();
-          console.log('Polling machine status:', machineData);
           if (!machineData.in_uso) {
             setLogoutMessage('Macchina liberata dall\'amministratore');
             await handleLogout();
           } else if (machineData.operatore_attuale_id && machineData.operatore_attuale_id !== user.id) {
-            console.log(`Machine operator mismatch: expected ${user.id}, got ${machineData.operatore_attuale_id}`);
+            setLogoutMessage(`Machine operator mismatch: expected ${user.id}, got ${machineData.operatore_attuale_id}`);
             await handleLogout();
           } else if (!machineData.operatore_attuale_id && machineData.in_uso) {
-            console.log('Machine inconsistency: in_uso=true but operatore_attuale_id=null');
+            setLogoutMessage('Machine inconsistency: in_uso=true but operatore_attuale_id=null');
+            await handleLogout();
           }
         } else if (response.status === 401) {
-          console.log('Token expired during polling');
+          console.error('Token expired during polling');
         } else {
-          console.log(`Polling failed with status: ${response.status}`);
+          console.error(`Polling failed with status: ${response.status}`);
         }
       } catch (error) {
         console.error('Error polling machine status:', error);
@@ -70,10 +69,6 @@ export function OperatorInterface() {
 
     return () => clearInterval(pollingInterval);
   }, [isLoggedIn, machine, user, accessToken, logout, API_URL]);
-
-  useEffect(() => {
-    simulateWakeWord();
-  }, [isLoggedIn]);
 
   const handleBadgeLogin = async (badgeId: string, machineId: number) => {
     setLoading(true);
@@ -148,17 +143,44 @@ export function OperatorInterface() {
     await logout();
   };
 
-  const handleQuestionSubmit = () => {
-    if (questionInput.trim()) {
+  const handleQuestionSubmit = async () => {
+    if (questionInput.trim() && user && machine) {
       const userQuestion = questionInput;
       setQuestionInput('');
       setAvatarState('thinking');
       
-      setTimeout(() => {
-        const response = `Risposta simulata alla domanda: "${userQuestion}"`;
-        setAvatarState('speaking');
-        startTypingEffect(response);
-      }, 2000);
+      try {
+        // Chiama il backend per ottenere la risposta
+        const response = await fetch(`${API_URL}/api/interactions/ask`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            machine_id: machine.id,
+            user_id: user.id,
+            question: userQuestion,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Errore nel processamento della domanda');
+        }
+
+        const data = await response.json();
+        
+        setTimeout(() => {
+          setAvatarState('speaking');
+          startTypingEffect(data.response);
+        }, 1500);
+      } catch (error) {
+        console.error('Error asking question:', error);
+        setAvatarState('idle');
+        const errorMsg = error instanceof Error ? error.message : 'Errore sconosciuto';
+        alert(`Errore: ${errorMsg}`);
+      }
     }
   };
 
@@ -191,6 +213,7 @@ export function OperatorInterface() {
     typeNextChar();
   };
 
+  /*
   const simulateWakeWord = () => {
     if (avatarState === 'idle' && isLoggedIn) {
       setAvatarState('listening');
@@ -215,7 +238,7 @@ export function OperatorInterface() {
       }, 3000);
     }
   };
-
+  */
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white relative overflow-hidden">
       {/* Logout notification */}

@@ -69,15 +69,17 @@ Prima di avviare gli script, assicurati di avere:
 ### Backend
 - ✅ Python 3.8+ installato
 - ✅ File `.env` configurato nella cartella `backend/`
+- ✅ Ollama installato e accessibile (Docker o nativo)
 
 ### Frontend
 - ✅ Node.js 16+ installato
 - ✅ npm installato (di default con Node.js)
 - ✅ File `.env` configurato nella cartella `frontend/my-app/`
 
-### Database
-- ✅ PostgreSQL in esecuzione
+### Database & AI
+- ✅ PostgreSQL in esecuzione (Docker o nativo)
 - ✅ Database inizializzato (tramite `setup.bat`)
+- ✅ Ollama in esecuzione con modello `mistral` caricato
 
 ---
 
@@ -85,24 +87,37 @@ Prima di avviare gli script, assicurati di avere:
 
 ### `backend/.env`
 ```ini
-# Database
-DATABASE_URL=postgresql://user:password@localhost/ditto
+# Database Configuration
+DATABASE_HOST={server's-ip-address}      # Indirizzo server del database
+DATABASE_PORT=5432               # Porta PostgreSQL
+DATABASE_USER=postgres            # Utente DB
+DATABASE_PASSWORD=postgres        # Password DB
+DATABASE_NAME=ditto_db            # Nome database
 
-# JWT
-SECRET_KEY=your-secret-key-change-this-in-production
+# JWT & Security
+SECRET_KEY=your-super-secret-key-change-this-in-production
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=480
-REFRESH_TOKEN_EXPIRE_DAYS=30
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 ADMIN_TOKEN_EXPIRE_MINUTES=120
 
-# Admin
+# Admin Credentials (per login admin dashboard)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=tuapasswordsicura
+
+# CORS (Allowed Frontend Origins)
+ALLOWED_ORIGINS=http://localhost:5173,http://{server's-ip-address}:5173
+
+# Ollama AI Service
+OLLAMA_BASE_URL=http://{server's-ip-address}:11434   # URL del servizio Ollama
 ```
 
 ### `frontend/my-app/.env`
 ```ini
-VITE_API_URL=http://192.168.1.119:8000
+# Backend API Endpoint
+VITE_API_URL=http://{server's-ip-address}:8000
+
+# Ollama AI Service (usato dal frontend per debug/testing)
+VITE_AI_API_URL=http://{server's-ip-address}:11434
 ```
 
 ---
@@ -170,7 +185,7 @@ Verifica che i servizi siano in esecuzione:
 
 ```bash
 # Backend
-curl http://192.168.1.119:8000/health
+curl http://{server's-ip-address}:8000/health
 
 # Frontend (visita nel browser)
 http://localhost:5173
@@ -182,9 +197,16 @@ http://localhost:5173
 
 ### Backend non si avvia
 - Verifica che PostgreSQL sia in esecuzione
-- Controlla file `.env` in `backend/`
+- Verifica che Ollama sia in esecuzione: `http://{server's-ip-address}:11434/api/tags`
+- Controlla file `.env` in `backend/` con `OLLAMA_BASE_URL` corretto
 - Assicurati che Python sia installato: `python --version`
 - Ricreamo venv: `rmdir backend\venv` e riesegui `start.bat`
+
+### Ollama non disponibile (503 Service Unavailable)
+- Verifica che il container Ollama sia in esecuzione: `docker ps | findstr ollama`
+- Verifica che il modello mistral sia caricato: `docker exec ditto_ollama ollama list`
+- Se manca, carica il modello: `docker exec ditto_ollama ollama pull mistral`
+- Controlla che `OLLAMA_BASE_URL` in `backend/.env` sia corretto
 
 ### Frontend non si avvia
 - Controlla che Node.js sia installato: `node --version`
@@ -198,8 +220,15 @@ Se le porte 8000 o 5173 sono già in uso:
 
 ### Admin login non funziona
 - Assicurati che il database sia stato inizializzato: `setup.bat`
-- Verifica le credenziali in `.env`: `ADMIN_USERNAME` e `ADMIN_PASSWORD`
-- Controlla se l'endpoint è corretto: `http://serverip/auth/admin-login`
+- Verifica le credenziali in `backend/.env`: `ADMIN_USERNAME` e `ADMIN_PASSWORD`
+- Verifica nel frontend che gli URL in `frontend/my-app/.env` siano corretti
+- Controlla se l'endpoint è corretto: `http://localhost:5173/admin-login`
+- Controlla nei browser console (F12) se ci sono errori CORS
+
+### AI classification non funziona (Error classifying question with Ollama)
+- Verifica che Ollama sia raggiungibile dall'IP configurato
+- Controlla i log del backend per l'IP effettivo di connessione
+- Carica il modello mistral se manca: `docker exec ditto_ollama ollama pull mistral`
 
 ---
 

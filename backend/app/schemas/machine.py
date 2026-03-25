@@ -22,6 +22,7 @@ class MachineUpdate(BaseModel):
 class MachineResponse(MachineBase):
     id: int
     in_uso: bool = False
+    operatore_attuale_id: Optional[int] = None
     
     class Config:
         from_attributes = True

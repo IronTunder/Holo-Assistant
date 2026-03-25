@@ -22,8 +22,23 @@ services:
     networks:
       - ditto_network
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ditto_ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_GPU=1
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./ollama/models:/models
+    networks:
+      - ditto_network
+
 volumes:
   postgres_data:
+  ollama_data:
 
 networks:
   ditto_network:

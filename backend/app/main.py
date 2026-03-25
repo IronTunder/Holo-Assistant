@@ -9,6 +9,7 @@ import logging
 from app.api.auth.auth import router as auth_router
 from app.api.machines import router as machines_router
 from app.api.admin import router as admin_router
+from app.api.interactions import router as interactions_router
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -17,12 +18,6 @@ app = FastAPI(title="Ditto API", version="1.0.0")
 
 # Funzione per rilevare il prefisso di rete locale dinamicamente
 def get_local_network_prefix() -> str:
-    """
-    Rileva il prefisso di rete locale (es. 192.168.1, 192.168.10, ecc.)
-    Scansiona le interfacce di rete e trova il primo indirizzo IPv4 non-loopback,
-    dando priorità alle reti private reali (192.168.x.x, 10.x.x.x) rispetto alle virtuali.
-    Ritorna il pattern regex per il CORS (es. r"http://192\.168\.1") o None se fallisce.
-    """
     try:
         # Ottieni il hostname locale
         hostname = socket.gethostname()
@@ -38,8 +33,6 @@ def get_local_network_prefix() -> str:
                     valid_ips.insert(0, ip)  # Inserisci all'inizio
                 elif ip.startswith("10."):     # Priorità alta - reti private aziendali
                     valid_ips.insert(0, ip)  # Inserisci all'inizio
-                elif ip.startswith("172."):    # Probabilmente virtuale (WSL, Docker, etc.)
-                    valid_ips.append(ip)      # Aggiungi alla fine
                 else:
                     valid_ips.append(ip)      # Altri IP alla fine
         
@@ -97,6 +90,7 @@ logger.info(f"[CORS] Initialized with regex: {cors_regex}")
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(machines_router, prefix="/machines", tags=["machines"])
 app.include_router(admin_router, tags=["admin"])
+app.include_router(interactions_router, tags=["interactions"])
 
 @app.get("/health")
 async def health_check():
