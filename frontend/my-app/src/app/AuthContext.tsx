@@ -213,7 +213,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Effettua logout e revoca il refresh token
   const logout = useCallback(async () => {
-    // Se è un operatore (non admin), libera la macchina
     if (!isAdmin && user && machine && refreshToken) {
       try {
         await fetch(API_ENDPOINTS.LOGOUT, {
@@ -231,7 +230,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.error('Errore durante logout:', error);
       }
     } else if (isAdmin && refreshToken) {
-      // Per admin, solo revoca il token
       try {
         await fetch(API_ENDPOINTS.LOGOUT, {
           method: 'POST',
@@ -240,7 +238,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           },
           body: JSON.stringify({
             user_id: user?.id,
-            machine_id: 1, // Dummy per admin
+            machine_id: 1,
             refresh_token: refreshToken,
           }),
         });

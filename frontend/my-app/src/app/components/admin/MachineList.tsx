@@ -56,6 +56,17 @@ export const MachineList = () => {
     fetchMachines();
   }, [accessToken]);
 
+  // Polling effect - refresh machine list every 5 seconds
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const pollingInterval = setInterval(() => {
+      fetchMachines();
+    }, 10000);
+
+    return () => clearInterval(pollingInterval);
+  }, [accessToken]);
+
   const handleDeleteMachine = async (machineId: number) => {
     try {
       const response = await fetch(API_ENDPOINTS.DELETE_ADMIN_MACHINE(machineId), {

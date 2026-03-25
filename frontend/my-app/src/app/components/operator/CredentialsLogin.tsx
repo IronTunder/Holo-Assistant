@@ -82,7 +82,7 @@ export function CredentialsLogin({ onLogin, onCancel }: CredentialsLoginProps) {
 
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-xs text-gray-300">
             <p className="font-semibold text-blue-400 mb-1">💡 Credenziali di test:</p>
-            <p>Username: mario.rossi / luigi.verdi / anna.bianchi / marco.neri</p>
+            <p>Username: Mario Rossi / Luigi Verdi / Anna Bianchi / Marco Neri</p>
             <p>Password: password123</p>
           </div>
 

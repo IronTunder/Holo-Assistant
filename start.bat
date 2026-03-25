@@ -83,7 +83,7 @@ pip install -q -r requirements.txt
 
 REM Avvia il server in una nuova finestra
 echo [OK] Avvio server backend su http://localhost:8000
-start "Ditto Backend Server" cmd /k "cd /d %BASE_DIR%backend && venv\Scripts\activate && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "Ditto Backend Server" cmd /k "cd /d %BASE_DIR%backend && venv\Scripts\activate && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-use-colors"
 
 REM Attendi un momento per il startup
 timeout /t 3 /nobreak
@@ -113,7 +113,7 @@ if not exist "node_modules" (
 
 REM Avvia il server di sviluppo in una nuova finestra
 echo [OK] Avvio dev server frontend su http://localhost:5173
-start "Ditto Frontend Dev Server" cmd /k "cd /d %BASE_DIR%frontend\my-app && npm run dev"
+start "Ditto Frontend Dev Server" cmd /k "cd /d %BASE_DIR%frontend\my-app && npm run dev -- --host 0.0.0.0"
 
 REM ========================================
 REM 4. RIEPILOGO

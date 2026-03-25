@@ -3,38 +3,95 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import ipaddress
+import socket
+import logging
 
 from app.api.auth.auth import router as auth_router
 from app.api.machines import router as machines_router
 from app.api.admin import router as admin_router
 
+# Setup logging
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Ditto API", version="1.0.0")
+
+# Funzione per rilevare il prefisso di rete locale dinamicamente
+def get_local_network_prefix() -> str:
+    """
+    Rileva il prefisso di rete locale (es. 192.168.1, 192.168.10, ecc.)
+    Scansiona le interfacce di rete e trova il primo indirizzo IPv4 non-loopback,
+    dando priorità alle reti private reali (192.168.x.x, 10.x.x.x) rispetto alle virtuali.
+    Ritorna il pattern regex per il CORS (es. r"http://192\.168\.1") o None se fallisce.
+    """
+    try:
+        # Ottieni il hostname locale
+        hostname = socket.gethostname()
+        # Ottieni tutti gli indirizzi IP associati al hostname
+        ip_addresses = socket.gethostbyname_ex(hostname)[2]
+        
+        # Filtra e ordina gli indirizzi IPv4 non-loopback
+        valid_ips = []
+        for ip in ip_addresses:
+            if ip != "127.0.0.1" and ":" not in ip:  # Esclude IPv6 e loopback
+                # Classifica gli IP per priorità
+                if ip.startswith("192.168."):  # Priorità massima - reti locali comuni
+                    valid_ips.insert(0, ip)  # Inserisci all'inizio
+                elif ip.startswith("10."):     # Priorità alta - reti private aziendali
+                    valid_ips.insert(0, ip)  # Inserisci all'inizio
+                elif ip.startswith("172."):    # Probabilmente virtuale (WSL, Docker, etc.)
+                    valid_ips.append(ip)      # Aggiungi alla fine
+                else:
+                    valid_ips.append(ip)      # Altri IP alla fine
+        
+        # Usa il primo IP valido (prioritizzato)
+        if valid_ips:
+            ip = valid_ips[0]
+            # Estrai il prefisso di rete (tutto tranne l'ultimo ottetto)
+            network_prefix = ".".join(ip.split(".")[:3])
+            # Scappa i punti per il regex
+            escaped_prefix = network_prefix.replace(".", r"\.")
+            logger.info(f"[CORS] Detected local network IP: {ip}, using regex prefix: {escaped_prefix}")
+            return escaped_prefix
+    except Exception as e:
+        logger.warning(f"[CORS] Failed to detect local network IP: {e}")
+    
+    return None
 
 # Funzione per verificare se un'origine è nella rete locale
 def is_local_network(origin: str) -> bool:
-    """Verifica se l'origine è nella rete 192.168.1.0/24"""
+    """Verifica se l'origine è nella rete locale rilevata automaticamente"""
     if not origin:
         return False
     
-    # Estrai l'IP dall'URL (es. http://192.168.1.100:5173)
     try:
-        # Rimuovi protocollo e porta
+        # Estrai l'IP dall'URL (es. http://192.168.1.100:5173)
         host = origin.split("://")[1].split(":")[0]
         ip = ipaddress.ip_address(host)
-        # Verifica se è nella rete 192.168.1.0/24
-        return ip in ipaddress.ip_network("192.168.1.0/24")
+        # Verifica se è nella rete privata
+        return ip.is_private
     except:
         return False
+
+# Rileva il prefisso di rete e crea il pattern CORS
+network_prefix = get_local_network_prefix()
+if network_prefix:
+    logger.info(f"[CORS] Detected local network prefix: {network_prefix}, allowing origins matching: http://{network_prefix}.*:5173")
+    cors_regex = rf"http://{network_prefix}\..*:5173"
+else:
+    logger.warning("[CORS] Could not detect local network, using fallback pattern")
+    cors_regex = r"http://192\.168\..*\..*:5173"
 
 # Configura CORS dinamico
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:5173"],  # Base
-    allow_origin_regex=r"http://192\.168\.1\..*:5173",  # Regex per la rete locale
+    allow_origin_regex=cors_regex,  # Regex dinamico per la rete locale
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger.info(f"[CORS] Initialized with regex: {cors_regex}")
 
 # Includi i router
 app.include_router(auth_router, prefix="/auth", tags=["auth"])

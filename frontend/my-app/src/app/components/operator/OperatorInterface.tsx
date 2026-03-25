@@ -21,8 +21,59 @@ export function OperatorInterface() {
   const [wakeWordActive, setWakeWordActive] = useState(true);
   const [showSubtitles, setShowSubtitles] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
+  const [questionInput, setQuestionInput] = useState('');
+  const [currentTranscription, setCurrentTranscription] = useState('');
+  const [showFollowUp, setShowFollowUp] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_URL;
+
+  useEffect(() => {
+    if (!isLoggedIn || !machine || !user || !accessToken) return;
+
+    const pollMachineStatus = async () => {
+      if (!isLoggedIn || !machine || !user || !accessToken) return;
+      try {
+        const response = await fetch(`${API_URL}/machines/${machine.id}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const machineData = await response.json();
+          console.log('Polling machine status:', machineData);
+          if (!machineData.in_uso) {
+            setLogoutMessage('Macchina liberata dall\'amministratore');
+            await handleLogout();
+          } else if (machineData.operatore_attuale_id && machineData.operatore_attuale_id !== user.id) {
+            console.log(`Machine operator mismatch: expected ${user.id}, got ${machineData.operatore_attuale_id}`);
+            await handleLogout();
+          } else if (!machineData.operatore_attuale_id && machineData.in_uso) {
+            console.log('Machine inconsistency: in_uso=true but operatore_attuale_id=null');
+          }
+        } else if (response.status === 401) {
+          console.log('Token expired during polling');
+        } else {
+          console.log(`Polling failed with status: ${response.status}`);
+        }
+      } catch (error) {
+        console.error('Error polling machine status:', error);
+      }
+    };
+
+    const pollingInterval = setInterval(pollMachineStatus, 10000);
+    pollMachineStatus();
+
+    return () => clearInterval(pollingInterval);
+  }, [isLoggedIn, machine, user, accessToken, logout, API_URL]);
+
+  useEffect(() => {
+    simulateWakeWord();
+  }, [isLoggedIn]);
 
   const handleBadgeLogin = async (badgeId: string, machineId: number) => {
     setLoading(true);
@@ -34,14 +85,11 @@ export function OperatorInterface() {
         },
         body: JSON.stringify({ badge_id: badgeId, machine_id: machineId }),
       });
-
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.detail || 'Errore durante il login');
       }
-
       const data = await response.json();
-      // Usa la funzione di login dal context
       login(
         data.access_token,
         data.refresh_token,
@@ -69,12 +117,9 @@ export function OperatorInterface() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Credenziali non valide');
+        throw new Error('Credenziali non valide');
       }
-
       const data = await response.json();
-      // Usa la funzione di login dal context
       login(
         data.access_token,
         data.refresh_token,
@@ -91,12 +136,61 @@ export function OperatorInterface() {
   };
 
   const handleLogout = async () => {
-    await logout();
-    
+    setLogoutMessage(null);
     setAvatarState('idle');
+    setTranscript('');
+    setQuestionInput('');
+    setCurrentTranscription('');
+    setShowFollowUp(false);
+    setIsTyping(false);
+    setShowSubtitles(false);
+    setWakeWordActive(true);
+    await logout();
   };
 
-  // Simula il rilevamento del wake word
+  const handleQuestionSubmit = () => {
+    if (questionInput.trim()) {
+      const userQuestion = questionInput;
+      setQuestionInput('');
+      setAvatarState('thinking');
+      
+      setTimeout(() => {
+        const response = `Risposta simulata alla domanda: "${userQuestion}"`;
+        setAvatarState('speaking');
+        startTypingEffect(response);
+      }, 2000);
+    }
+  };
+
+  const handleFollowUpResponse = (resolved: boolean) => {
+    console.log(`Problema risolto: ${resolved}`);
+    setShowFollowUp(false);
+    setCurrentTranscription('');
+  };
+
+  const startTypingEffect = (fullText: string) => {
+    setCurrentTranscription('');
+    setIsTyping(true);
+    setShowSubtitles(true);
+    
+    let index = 0;
+    
+    const typeNextChar = () => {
+      if (index < fullText.length) {
+        setCurrentTranscription(fullText.substring(0, index + 1));
+        index++;
+        setTimeout(typeNextChar, 50);
+      } else {
+        setIsTyping(false);
+        setAvatarState('idle');
+        setShowSubtitles(false);
+        setShowFollowUp(true);
+      }
+    };
+    
+    typeNextChar();
+  };
+
   const simulateWakeWord = () => {
     if (avatarState === 'idle' && isLoggedIn) {
       setAvatarState('listening');
@@ -108,14 +202,15 @@ export function OperatorInterface() {
         setAvatarState('thinking');
         
         setTimeout(() => {
-          setTranscript('Per cambiare l\'olio della Pressa A7: 1. Spegnere la macchina. 2. Attendere il raffreddamento. 3. Posizionare un contenitore sotto lo scarico...');
+          const response = 'Per cambiare l\'olio della Pressa A7: \n1. Spegnere la macchina. \n2. Attendere il raffreddamento. \n3. Posizionare un contenitore sotto lo scarico';
+          setTranscript('');
           setAvatarState('speaking');
           
-          setTimeout(() => {
-            setAvatarState('idle');
-            setShowSubtitles(false);
-            setTranscript('');
-          }, 5000);
+          // Start typing effect during speaking state
+          startTypingEffect(response);
+          
+          // After typing is complete, return to idle and show follow-up
+          // The follow-up will be shown by startTypingEffect when typing completes
         }, 2000);
       }, 3000);
     }
@@ -123,6 +218,14 @@ export function OperatorInterface() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white relative overflow-hidden">
+      {/* Logout notification */}
+      {logoutMessage && (
+        <div className="fixed top-4 left-4 right-4 z-50 bg-red-500/20 border border-red-500/50 rounded-lg p-4 text-red-100 backdrop-blur-md">
+          <p className="font-semibold">{logoutMessage}</p>
+          <p className="text-sm text-red-200 mt-1">Sei stato disconnesso dalla macchina</p>
+        </div>
+      )}
+
       {/* Background pattern */}
       <div className="absolute inset-0 opacity-10">
         <div className="absolute inset-0" style={{
@@ -154,7 +257,8 @@ export function OperatorInterface() {
               </div>
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 rounded-lg transition-colors"
+                disabled={isTyping || avatarState === 'speaking'}
+                className={`px-4 py-2 rounded-lg transition-colors border border-red-500/50 ${isTyping || avatarState === 'speaking' ? 'bg-red-500/10 text-red-300 cursor-not-allowed' : 'bg-red-500/20 hover:bg-red-500/30 text-white'}`}
               >
                 Logout
               </button>
@@ -221,6 +325,71 @@ export function OperatorInterface() {
                   )}
                 </div>
               </div>
+
+              {/* Text input for questions */}
+              <div className="mt-8 w-full max-w-md mx-auto px-6">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={questionInput}
+                    onChange={(e) => {
+                      setQuestionInput(e.target.value);
+                      // Reset transcription when user starts typing a new question
+                      if (currentTranscription && !isTyping) {
+                        setCurrentTranscription('');
+                        setShowFollowUp(false);
+                      }
+                    }}
+                    placeholder="Scrivi la tua domanda..."
+                    disabled={isTyping}
+                    className="flex-1 px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onKeyPress={(e) => e.key === 'Enter' && !isTyping && handleQuestionSubmit()}
+                  />
+                  <button
+                    onClick={handleQuestionSubmit}
+                    disabled={isTyping || !questionInput.trim()}
+                    className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-500 disabled:cursor-not-allowed rounded-lg transition-colors"
+                  >
+                    Invia
+                  </button>
+                </div>
+              </div>
+
+              {/* Transcription display */}
+              {currentTranscription && (
+                <div className="mt-6 w-full max-w-2xl mx-auto px-6">
+                  <div className="bg-white/5 border border-white/10 rounded-lg p-4">
+                    <h3 className="text-sm font-semibold text-gray-300 mb-2">Risposta Assistente</h3>
+                    <div className="text-sm text-gray-200 whitespace-pre-line">
+                      {currentTranscription}
+                      {isTyping && <span className="animate-pulse">|</span>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Follow-up question */}
+              {showFollowUp && (
+                <div className="mt-6 w-full max-w-md mx-auto px-6">
+                  <div className="bg-white/10 border border-white/20 rounded-lg p-4 text-center">
+                    <p className="text-lg font-semibold mb-4">Hai risolto il problema?</p>
+                    <div className="flex gap-4 justify-center">
+                      <button
+                        onClick={() => handleFollowUpResponse(true)}
+                        className="px-6 py-2 bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
+                      >
+                        Sì
+                      </button>
+                      <button
+                        onClick={() => handleFollowUpResponse(false)}
+                        className="px-6 py-2 bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+                      >
+                        No
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Quick actions */}
               <div className="mt-12 grid grid-cols-3 gap-4 max-w-2xl mx-auto px-6">
