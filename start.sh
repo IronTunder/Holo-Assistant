@@ -25,6 +25,9 @@ fi
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-mistral}"
+OLLAMA_CONTAINER_NAME="${OLLAMA_CONTAINER_NAME:-ditto_ollama}"
 IP=""
 
 # Funzioni di logging
@@ -92,6 +95,43 @@ get_local_ip() {
     echo "$ip"
 }
 
+ensure_ollama_model() {
+    log_info "Verifico Ollama e modello $OLLAMA_MODEL..."
+    local max_attempts=45
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+        if docker exec "$OLLAMA_CONTAINER_NAME" ollama list >/dev/null 2>&1; then
+            log_ok "Ollama è pronto"
+            break
+        fi
+
+        if [ $attempt -eq $max_attempts ]; then
+            log_warning "Ollama non è diventato disponibile in tempo"
+            return 1
+        fi
+
+        printf "."
+        sleep 2
+        ((attempt++))
+    done
+    echo ""
+
+    if docker exec "$OLLAMA_CONTAINER_NAME" ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "$OLLAMA_MODEL"; then
+        log_ok "Modello $OLLAMA_MODEL già presente"
+    else
+        log_info "Scarico modello $OLLAMA_MODEL..."
+        if docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL"; then
+            log_ok "Modello $OLLAMA_MODEL scaricato"
+        else
+            log_warning "Download del modello $OLLAMA_MODEL fallito"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
 # Header
 echo ""
 echo "========================================"
@@ -144,8 +184,8 @@ else
         
         # Attendi che PostgreSQL sia pronto
         log_info "Attendo che PostgreSQL sia pronto..."
-        local max_attempts=30
-        local attempt=1
+        max_attempts=30
+        attempt=1
         
         while [ $attempt -le $max_attempts ]; do
             if docker ps 2>/dev/null | grep -q postgres; then
@@ -164,6 +204,8 @@ else
             ((attempt++))
         done
         echo ""
+
+        ensure_ollama_model || log_warning "Ollama disponibile senza garanzia che il modello $OLLAMA_MODEL sia pronto"
     fi
 fi
 

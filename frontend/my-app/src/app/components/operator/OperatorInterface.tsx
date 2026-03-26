@@ -171,7 +171,7 @@ export function OperatorInterface() {
         }
 
         const data = await response.json();
-        handleTTS();
+        handleTTS(data.response);
         setTimeout(() => {
           setAvatarState('speaking');
           startTypingEffect(data.response);
@@ -185,12 +185,12 @@ export function OperatorInterface() {
     }
   };
 
-    const handleTTS = async () => {
+    const handleTTS = async (text: string) => {
     if (!isLoggedIn) {
       return;
     }
     try {
-      await playTts(currentTranscription, accessToken ?? undefined);
+      await playTts(text, accessToken ?? undefined);
     } catch (error) {
       console.error('TTS test error:', error);
       alert(error instanceof Error ? error.message : 'Errore durante il test TTS');

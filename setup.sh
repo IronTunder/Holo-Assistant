@@ -34,6 +34,8 @@ SETUP_SUCCESS=false
 DOCKER_INSTALLED=false
 OS_DISTRO=""
 OS_VERSION=""
+OLLAMA_CONTAINER_NAME="ditto_ollama"
+OLLAMA_MODEL="mistral"
 
 # Directory Piper
 PIPER_BASE_DIR="$HOME/.local/share/piper"
@@ -582,6 +584,59 @@ setup_database() {
 }
 
 ################################################################################
+# Setup Ollama / Mistral
+################################################################################
+
+setup_ollama_model() {
+    log "STEP" "Configurazione Ollama e modello $OLLAMA_MODEL"
+
+    if ! docker ps --format '{{.Names}}' | grep -qx "$OLLAMA_CONTAINER_NAME"; then
+        error_exit "Container Ollama non in esecuzione"
+    fi
+
+    log "INFO" "Attendo che Ollama sia pronto..."
+    local max_attempts=45
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+        if docker exec "$OLLAMA_CONTAINER_NAME" ollama list >/dev/null 2>&1; then
+            log "SUCCESS" "Ollama risponde correttamente"
+            break
+        fi
+
+        if [ $attempt -eq $max_attempts ]; then
+            error_exit "Ollama non è diventato disponibile in tempo"
+        fi
+
+        log "INFO" "Attesa Ollama... ($attempt/$max_attempts)"
+        sleep 2
+        ((attempt++))
+    done
+
+    if docker exec "$OLLAMA_CONTAINER_NAME" ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "$OLLAMA_MODEL"; then
+        log "SUCCESS" "Modello $OLLAMA_MODEL già presente"
+    else
+        log "INFO" "Download modello $OLLAMA_MODEL in corso..."
+        docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$OLLAMA_MODEL" || error_exit "Download modello $OLLAMA_MODEL fallito"
+        log "SUCCESS" "Modello $OLLAMA_MODEL scaricato"
+    fi
+
+    log "INFO" "Verifica disponibilità modello..."
+    local ollama_base_url="http://127.0.0.1:11434"
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsS "$ollama_base_url/api/generate" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"$OLLAMA_MODEL\",\"prompt\":\"Rispondi solo OK\",\"stream\":false}" >/dev/null 2>&1; then
+            log "SUCCESS" "Modello $OLLAMA_MODEL pronto all'uso"
+        else
+            log "WARNING" "Ollama è attivo ma il warm-up del modello non è riuscito"
+        fi
+    else
+        log "WARNING" "curl non disponibile, salto il warm-up del modello"
+    fi
+}
+
+################################################################################
 # Setup backend
 ################################################################################
 
@@ -762,6 +817,7 @@ show_summary() {
     echo -e "  • Frontend (rete):     ${GREEN}http://$IP:5173${NC}"
     echo -e "  • Backend API:         ${GREEN}http://localhost:8000${NC}"
     echo -e "  • Documentazione API:  ${GREEN}http://localhost:8000/docs${NC}"
+    echo -e "  • Ollama API:          ${GREEN}http://localhost:11434${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}🔐 Credenziali:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -774,6 +830,12 @@ show_summary() {
     echo -e "  • Piper eseguibile:    ${GREEN}$PIPER_EXECUTABLE${NC}"
     echo -e "  • Modello vocale:      ${GREEN}$PIPER_MODEL_PATH${NC}"
     echo -e "  • Test TTS:            echo 'Ciao' | $PIPER_EXECUTABLE --model $PIPER_MODEL_PATH --output_file test.wav${NC}"
+    echo ""
+    echo -e "${CYAN}${BOLD}🧠 Modello AI:${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "  • Provider:            ${GREEN}Ollama${NC}"
+    echo -e "  • Modello:             ${GREEN}$OLLAMA_MODEL${NC}"
+    echo -e "  • Test rapido:         curl http://localhost:11434/api/tags${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}📝 Comandi utili:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -825,6 +887,7 @@ EOF
     
     # Setup
     setup_database
+    setup_ollama_model
     setup_backend
     setup_frontend
     
@@ -833,6 +896,7 @@ EOF
     
     SETUP_SUCCESS=true
     show_summary
+}
 
 # Esegui
 main "$@"
