@@ -3,6 +3,7 @@ import { Mic, Radio } from 'lucide-react';
 import { AvatarDisplay } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { useAuth } from '../../AuthContext';
+import { playTts } from '../../ttsClient';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
@@ -170,7 +171,7 @@ export function OperatorInterface() {
         }
 
         const data = await response.json();
-        
+        handleTTS();
         setTimeout(() => {
           setAvatarState('speaking');
           startTypingEffect(data.response);
@@ -181,6 +182,18 @@ export function OperatorInterface() {
         const errorMsg = error instanceof Error ? error.message : 'Errore sconosciuto';
         alert(`Errore: ${errorMsg}`);
       }
+    }
+  };
+
+    const handleTTS = async () => {
+    if (!isLoggedIn) {
+      return;
+    }
+    try {
+      await playTts(currentTranscription, accessToken ?? undefined);
+    } catch (error) {
+      console.error('TTS test error:', error);
+      alert(error instanceof Error ? error.message : 'Errore durante il test TTS');
     }
   };
 

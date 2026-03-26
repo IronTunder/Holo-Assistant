@@ -28,6 +28,9 @@ if not exist docker-compose.yml (
     pause
     exit /b 1
 )
+
+:: Ferma container esistenti e riavvia
+docker-compose down 2>nul
 docker-compose up -d
 if errorlevel 1 (
     echo [ERRORE] Impossibile avviare Docker. Assicurati che Docker Desktop sia in esecuzione.
@@ -40,6 +43,25 @@ echo.
 :: Attendi che PostgreSQL sia pronto
 echo Attendendo l'avvio di PostgreSQL e Ollama...
 timeout /t 8 /nobreak >nul
+
+:: Verifica che PostgreSQL sia pronto
+echo Verifica connessione a PostgreSQL...
+set MAX_ATTEMPTS=30
+set ATTEMPT=1
+:wait_postgres
+docker exec ditto_postgres pg_isready -U postgres >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] PostgreSQL e' pronto
+    goto :postgres_ready
+)
+if %ATTEMPT% equ %MAX_ATTEMPTS% (
+    echo [AVVISO] PostgreSQL potrebbe non essere pronto
+    goto :postgres_ready
+)
+set /a ATTEMPT+=1
+timeout /t 2 /nobreak >nul
+goto :wait_postgres
+:postgres_ready
 
 :: Verifica che Ollama sia pronto e pull il modello mistral
 echo Preparazione modello AI (mistral)...
@@ -71,6 +93,11 @@ echo ALGORITHM=HS256
 echo ACCESS_TOKEN_EXPIRE_MINUTES=30
 echo ALLOWED_ORIGINS=http://localhost:5173,http://%IP%:5173
 echo OLLAMA_BASE_URL=http://%IP%:11434
+echo TTS_ENABLED=true
+echo PIPER_EXECUTABLE=%USERPROFILE%\.local\share\piper\bin\piper.exe
+echo PIPER_MODEL_PATH=%USERPROFILE%\.local\share\piper\voices\it_IT-paola-medium.onnx
+echo PIPER_CONFIG_PATH=%USERPROFILE%\.local\share\piper\voices\it_IT-paola-medium.onnx.json
+echo TTS_SAMPLE_RATE=22050
 ) > %ROOT_DIR%\backend\.env
 echo [OK] Backend configurato
 echo.
@@ -91,24 +118,42 @@ if not exist venv\ (
 :: Attiva ambiente virtuale
 call venv\Scripts\activate.bat
 
+:: Aggiorna pip
+echo Aggiornamento pip...
+python -m pip install --upgrade pip --quiet
+
 :: Installa dipendenze
 echo Installazione dipendenze Python...
-pip install -r requirements.txt --quiet
-if errorlevel 1 (
-    echo [AVVISO] Problemi con l'installazione delle dipendenze
+if exist requirements.txt (
+    pip install -r requirements.txt --quiet
+) else (
+    echo [AVVISO] requirements.txt non trovato, installo dipendenze base
+    pip install fastapi uvicorn sqlalchemy psycopg2-binary python-jose[cryptography] passlib[bcrypt] python-multipart python-dotenv requests --quiet
 )
 
 :: Crea tabelle
-echo Creazione tabelle database...
-python init_db.py
+if exist init_db.py (
+    echo Creazione tabelle database...
+    python init_db.py
+) else (
+    echo [AVVISO] init_db.py non trovato
+)
 
 :: Popola database con dati di test
-echo Popolamento database con dati di test...
-python populate.py
+if exist populate.py (
+    echo Popolamento database con dati di test...
+    python populate.py
+) else (
+    echo [AVVISO] populate.py non trovato
+)
 
 :: Popola database con categorie e risposte preset per Ollama
-echo Seeding categorie e risposte per AI...
-python seed_categories.py
+if exist seed_categories.py (
+    echo Seeding categorie e risposte per AI...
+    python seed_categories.py
+) else (
+    echo [AVVISO] seed_categories.py non trovato
+)
 
 echo [OK] Database configurato
 echo.
@@ -120,7 +165,8 @@ echo [OK] Backend avviato su http://%IP%:8000
 echo.
 
 :: Attendi che il backend sia pronto
-timeout /t 3 /nobreak >nul
+echo Attendendo l'avvio del backend...
+timeout /t 5 /nobreak >nul
 
 :: 5. Configura e avvia frontend
 echo [5/5] Configurazione e avvio frontend...
@@ -138,6 +184,8 @@ echo VITE_API_URL=http://%IP%:8000
 if not exist node_modules\ (
     echo Installazione dipendenze Node.js...
     call npm install
+) else (
+    echo Dipendenze Node.js gia' installate
 )
 
 :: Avvia frontend
@@ -149,6 +197,29 @@ echo.
 
 :: Torna alla directory root
 cd %ROOT_DIR%
+
+:: Salva informazioni in un file
+(
+echo === DITTO - Informazioni di sistema ===
+echo Data avvio: %date% %time%
+echo IP Server: %IP%
+echo.
+echo URL:
+echo - Frontend locale: http://localhost:5173
+echo - Frontend rete: http://%IP%:5173
+echo - Backend: http://%IP%:8000
+echo - API Docs: http://%IP%:8000/docs
+echo.
+echo Comandi utili:
+echo - Ferma container: cd docker ^&^& docker-compose down
+echo - Log container: docker-compose logs -f
+echo.
+echo Credenziali di test:
+echo - Username: Mario Rossi, Luigi Verdi, Anna Bianchi, Marco Neri
+echo - Password: password123
+) > %ROOT_DIR%\ditto_info.txt
+echo [OK] Informazioni salvate in: %ROOT_DIR%\ditto_info.txt
+echo.
 
 :: Mostra riepilogo
 echo ========================================

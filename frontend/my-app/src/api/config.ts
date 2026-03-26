@@ -52,6 +52,9 @@ export const API_ENDPOINTS = {
   RESET_MACHINE_STATUS: (id: number) => `${API_BASE_URL}/admin/machines/${id}/reset-status`,
 
   LIST_LOGS: `${API_BASE_URL}/admin/logs`,
+
+  TTS_HEALTH: `${API_BASE_URL}/tts/health`,
+  TTS_SYNTHESIZE: `${API_BASE_URL}/tts/synthesize`,
 };
 
 export default API_ENDPOINTS;

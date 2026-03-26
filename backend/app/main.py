@@ -10,6 +10,7 @@ from app.api.auth.auth import router as auth_router
 from app.api.machines import router as machines_router
 from app.api.admin import router as admin_router
 from app.api.interactions import router as interactions_router
+from app.api.tts import router as tts_router
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(machines_router, prefix="/machines", tags=["machines"])
 app.include_router(admin_router, tags=["admin"])
 app.include_router(interactions_router, tags=["interactions"])
+app.include_router(tts_router, prefix="/tts", tags=["tts"])
 
 @app.get("/health")
 async def health_check():
