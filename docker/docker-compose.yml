@@ -6,6 +6,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: ditto_db
+      TZ: Europe/Rome
+      PGTZ: Europe/Rome
     ports:
       - "5432:5432"
     volumes:
@@ -30,6 +32,7 @@ services:
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_NUM_GPU=1
+      - TZ=Europe/Rome
     volumes:
       - ollama_data:/root/.ollama
       - ./ollama/models:/models

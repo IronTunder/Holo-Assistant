@@ -1,12 +1,14 @@
 # backend/app/api/auth/auth.py
 
-from fastapi import APIRouter, HTTPException, status, Depends, Header
+from fastapi import APIRouter, HTTPException, Request, status, Depends, Header
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from passlib.context import CryptContext
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
+import asyncio
 import os
 from dotenv import load_dotenv
 import secrets
@@ -16,12 +18,13 @@ from app.models.user import User, RefreshToken, Ruolo
 from app.models.machine import Machine
 from app.schemas.user import UserResponse
 from app.schemas.machine import MachineResponse
+from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 load_dotenv()
 
 router = APIRouter()
 
-# Usa solo pbkdf2_sha256 - NON usare bcrypt
+# Usa solo pbkdf2_sha256
 pwd_context = CryptContext(
     schemes=["pbkdf2_sha256"],
     deprecated="auto",
@@ -32,7 +35,10 @@ pwd_context = CryptContext(
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))  # 8 hours
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+ADMIN_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", "120"))
+OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES", "480"))
+ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES", "120"))
+SSE_TOKEN_EXPIRE_MINUTES = int(os.getenv("SSE_TOKEN_EXPIRE_MINUTES", "5"))
 
 class BadgeLoginRequest(BaseModel):
     badge_id: str
@@ -50,9 +56,16 @@ class AdminLoginRequest(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
-class LogoutRequest(BaseModel):
-    user_id: int
+
+class RefreshTokenStatusRequest(BaseModel):
+    refresh_token: str
+
+class SSETokenRequest(BaseModel):
     machine_id: int
+
+class LogoutRequest(BaseModel):
+    user_id: Optional[int] = None
+    machine_id: Optional[int] = None
     refresh_token: Optional[str] = None
 
 class LoginResponse(BaseModel):
@@ -78,24 +91,112 @@ class TokenResponse(BaseModel):
     token_type: str
     expires_in: int
 
+class CurrentUserResponse(BaseModel):
+    user: UserResponse
+    is_admin: bool
+
+
+class RefreshTokenStatusResponse(BaseModel):
+    valid: bool
+    user_id: int
+    is_admin: bool
+
+class SSETokenResponse(BaseModel):
+    token: str
+    expires_in: int
+
 class TokenData(BaseModel):
     user_id: Optional[int] = None
     username: Optional[str] = None
 
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def get_access_token_expires_delta(user: User) -> timedelta:
+    if user.ruolo == Ruolo.ADMIN:
+        return timedelta(minutes=ADMIN_TOKEN_EXPIRE_MINUTES)
+    return timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
+
+def get_refresh_token_expires_delta(user: User) -> timedelta:
+    if user.ruolo == Ruolo.ADMIN:
+        return timedelta(minutes=ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES)
+    return timedelta(minutes=OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES)
+
+
+class SessionStatusResponse(BaseModel):
+    session_valid: bool
+    machine_assigned: bool
+    machine_in_use: bool
+    operator_matches: bool
+    should_logout: bool
+    reason: Literal["ok", "machine_released", "machine_reassigned", "machine_not_found"]
+
+
+def _build_operator_payload(user: Optional[User]) -> Optional[dict]:
+    if user is None:
+        return None
+
+    return {
+        "id": user.id,
+        "nome": user.nome,
+        "badge_id": user.badge_id,
+        "reparto": user.reparto,
+        "turno": user.turno.value,
+        "livello_esperienza": user.livello_esperienza.value,
+    }
+
+
+def build_admin_machine_event_payload(
+    machine: Machine,
+    operator: Optional[User] = None,
+    deleted: bool = False,
+) -> dict:
+    return {
+        "id": machine.id,
+        "nome": machine.nome,
+        "reparto": machine.reparto,
+        "descrizione": machine.descrizione,
+        "id_postazione": machine.id_postazione,
+        "in_uso": machine.in_uso,
+        "operatore_attuale_id": machine.operatore_attuale_id,
+        "operator": _build_operator_payload(operator),
+        "deleted": deleted,
+    }
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = utc_now() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = utc_now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def create_refresh_token(user_id: int, machine_id: int, db: Session) -> str:
+
+def create_sse_token(user_id: int, machine_id: int) -> str:
+    expire = utc_now() + timedelta(minutes=SSE_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "machine_id": machine_id,
+        "type": "sse",
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def create_refresh_token(
+    user_id: int,
+    db: Session,
+    expires_delta: timedelta,
+    machine_id: Optional[int] = None,
+) -> str:
     """Genera un refresh token e lo salva nel database."""
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expires_at = utc_now() + expires_delta
     
     refresh_token_db = RefreshToken(
         user_id=user_id,
@@ -107,6 +208,52 @@ def create_refresh_token(user_id: int, machine_id: int, db: Session) -> str:
     db.add(refresh_token_db)
     db.commit()
     return token
+
+
+def cleanup_refresh_tokens(
+    db: Session,
+    user_id: Optional[int] = None,
+    remove_other_active: bool = False,
+    preserve_token: Optional[str] = None,
+) -> None:
+    """Elimina refresh token scaduti, revocati e token attivi precedenti dello stesso utente."""
+    now = utc_now()
+    query = db.query(RefreshToken)
+
+    if user_id is not None:
+        query = query.filter(RefreshToken.user_id == user_id)
+
+    tokens_to_delete = query.filter(
+        (RefreshToken.is_revoked.is_(True)) | (RefreshToken.expires_at < now)
+    ).all()
+
+    if user_id is not None and remove_other_active:
+        active_tokens = query.filter(
+            RefreshToken.is_revoked.is_(False),
+            RefreshToken.expires_at >= now,
+        ).all()
+        for active_token in active_tokens:
+            if preserve_token is not None and active_token.token == preserve_token:
+                continue
+            tokens_to_delete.append(active_token)
+
+    unique_tokens = {
+        token.id: token
+        for token in tokens_to_delete
+        if preserve_token is None or token.token != preserve_token
+    }
+    if not unique_tokens:
+        return
+
+    for token in unique_tokens.values():
+        db.delete(token)
+
+    db.commit()
+
+
+def delete_refresh_token(db: Session, refresh_token_db: RefreshToken) -> None:
+    db.delete(refresh_token_db)
+    db.commit()
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -164,6 +311,251 @@ async def verify_admin(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
+def build_session_status_payload(
+    machine: Optional[Machine],
+    expected_user_id: int,
+) -> SessionStatusResponse:
+    if not machine:
+        return SessionStatusResponse(
+            session_valid=True,
+            machine_assigned=False,
+            machine_in_use=False,
+            operator_matches=False,
+            should_logout=True,
+            reason="machine_not_found",
+        )
+
+    if not machine.in_uso:
+        return SessionStatusResponse(
+            session_valid=True,
+            machine_assigned=False,
+            machine_in_use=False,
+            operator_matches=False,
+            should_logout=True,
+            reason="machine_released",
+        )
+
+    if machine.operatore_attuale_id is None:
+        return SessionStatusResponse(
+            session_valid=True,
+            machine_assigned=False,
+            machine_in_use=True,
+            operator_matches=False,
+            should_logout=True,
+            reason="machine_released",
+        )
+
+    if machine.operatore_attuale_id != expected_user_id:
+        return SessionStatusResponse(
+            session_valid=True,
+            machine_assigned=True,
+            machine_in_use=True,
+            operator_matches=False,
+            should_logout=True,
+            reason="machine_reassigned",
+        )
+
+    return SessionStatusResponse(
+        session_valid=True,
+        machine_assigned=True,
+        machine_in_use=True,
+        operator_matches=True,
+        should_logout=False,
+        reason="ok",
+    )
+
+
+async def publish_machine_session_event(
+    machine: Optional[Machine],
+    expected_user_id: int,
+    machine_id: Optional[int] = None,
+    db: Optional[Session] = None,
+) -> None:
+    target_machine_id = machine.id if machine is not None else machine_id
+    if target_machine_id is None:
+        return
+
+    payload = build_session_status_payload(machine, expected_user_id).model_dump()
+    await session_event_bus.publish(target_machine_id, "session_status", payload)
+
+    if machine is not None and db is not None:
+        await publish_admin_machine_event(db, machine)
+
+
+async def publish_admin_machine_event(
+    db: Session,
+    machine: Machine,
+    deleted: bool = False,
+) -> None:
+    operator = None
+    if machine.operatore_attuale_id is not None:
+        operator = db.query(User).filter(User.id == machine.operatore_attuale_id).first()
+
+    payload = build_admin_machine_event_payload(machine, operator=operator, deleted=deleted)
+    await session_event_bus.publish(
+        ADMIN_MACHINE_EVENTS_CHANNEL,
+        "machine_status",
+        payload,
+    )
+
+
+def decode_sse_token(token: str) -> dict:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token SSE non valido",
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise credentials_exception from exc
+
+    if payload.get("type") != "sse":
+        raise credentials_exception
+
+    if payload.get("sub") is None or payload.get("machine_id") is None:
+        raise credentials_exception
+
+    return payload
+
+
+@router.get("/session-status", response_model=SessionStatusResponse)
+async def session_status(
+    machine_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Controlla lo stato minimo della sessione operatore e dell'assegnazione macchina."""
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    return build_session_status_payload(machine, current_user.id)
+
+
+@router.get("/me", response_model=CurrentUserResponse)
+async def get_current_session_user(
+    current_user: User = Depends(get_current_user),
+):
+    return CurrentUserResponse(
+        user=UserResponse(
+            id=current_user.id,
+            nome=current_user.nome,
+            badge_id=current_user.badge_id,
+            livello_esperienza=current_user.livello_esperienza.value,
+            reparto=current_user.reparto,
+            turno=current_user.turno.value,
+            created_at=current_user.created_at,
+        ),
+        is_admin=current_user.ruolo == Ruolo.ADMIN,
+    )
+
+
+@router.post("/refresh-token-status", response_model=RefreshTokenStatusResponse)
+async def refresh_token_status(
+    request: RefreshTokenStatusRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    cleanup_refresh_tokens(db, user_id=current_user.id, preserve_token=request.refresh_token)
+    refresh_token_db = db.query(RefreshToken).filter(
+        RefreshToken.token == request.refresh_token
+    ).first()
+
+    if not refresh_token_db:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token non valido"
+        )
+
+    if refresh_token_db.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token non associato all'utente corrente"
+        )
+
+    if refresh_token_db.is_revoked:
+        delete_refresh_token(db, refresh_token_db)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token revocato"
+        )
+
+    if refresh_token_db.expires_at < utc_now():
+        delete_refresh_token(db, refresh_token_db)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token scaduto"
+        )
+
+    return RefreshTokenStatusResponse(
+        valid=True,
+        user_id=current_user.id,
+        is_admin=current_user.ruolo == Ruolo.ADMIN,
+    )
+
+
+@router.post("/sse-token", response_model=SSETokenResponse)
+async def create_operator_sse_token(
+    request: SSETokenRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.ruolo == Ruolo.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Canale SSE disponibile solo per operatori",
+        )
+
+    machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
+    session_status_payload = build_session_status_payload(machine, current_user.id)
+    if session_status_payload.should_logout:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La sessione macchina non e valida per aprire SSE",
+        )
+
+    token = create_sse_token(current_user.id, request.machine_id)
+    return SSETokenResponse(
+        token=token,
+        expires_in=SSE_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@router.get("/session-events")
+async def session_events(
+    request: Request,
+    machine_id: int,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    token_payload = decode_sse_token(token)
+    token_machine_id = int(token_payload["machine_id"])
+    token_user_id = int(token_payload["sub"])
+
+    if token_machine_id != machine_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Machine ID SSE non valido",
+        )
+
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    initial_payload = build_session_status_payload(machine, token_user_id).model_dump()
+
+    async def event_generator():
+        stream = session_event_bus.stream(machine_id, initial_payload)
+        async for message in stream:
+            if await request.is_disconnected():
+                break
+            yield message
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.post("/badge-login", response_model=LoginResponse)
 async def badge_login(
     request: BadgeLoginRequest,
@@ -206,12 +598,19 @@ async def badge_login(
     machine.in_uso = True
     machine.operatore_attuale_id = user.id
     db.commit()
+    await publish_machine_session_event(machine, user.id, db=db)
     
     # Crea token di accesso e refresh token
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome}
     )
-    refresh_token = create_refresh_token(user.id, machine.id, db)
+    cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
+    refresh_token = create_refresh_token(
+        user.id,
+        db,
+        expires_delta=get_refresh_token_expires_delta(user),
+        machine_id=machine.id,
+    )
     
     machine_response = MachineResponse(
         id=machine.id,
@@ -287,12 +686,19 @@ async def credentials_login(
     machine.in_uso = True
     machine.operatore_attuale_id = user.id
     db.commit()
+    await publish_machine_session_event(machine, user.id, db=db)
     
     # Crea token di accesso e refresh token
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome}
     )
-    refresh_token = create_refresh_token(user.id, machine.id, db)
+    cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
+    refresh_token = create_refresh_token(
+        user.id,
+        db,
+        expires_delta=get_refresh_token_expires_delta(user),
+        machine_id=machine.id,
+    )
     
     machine_response = MachineResponse(
         id=machine.id,
@@ -319,6 +725,7 @@ async def refresh_token(
     db: Session = Depends(get_db)
 ):
     """Endpoint per rinnovare l'access token usando un refresh token."""
+    cleanup_refresh_tokens(db, preserve_token=request.refresh_token)
     
     # Cerca il refresh token nel database
     refresh_token_db = db.query(RefreshToken).filter(
@@ -333,13 +740,15 @@ async def refresh_token(
     
     # Verifica se è stato revocato
     if refresh_token_db.is_revoked:
+        delete_refresh_token(db, refresh_token_db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token revocato"
         )
     
     # Verifica se è scaduto
-    if refresh_token_db.expires_at < datetime.utcnow():
+    if refresh_token_db.expires_at < utc_now():
+        delete_refresh_token(db, refresh_token_db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token scaduto"
@@ -348,19 +757,22 @@ async def refresh_token(
     # Genera nuovo access token
     user = db.query(User).filter(User.id == refresh_token_db.user_id).first()
     if not user:
+        delete_refresh_token(db, refresh_token_db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Utente non trovato"
         )
     
+    access_token_expires_delta = get_access_token_expires_delta(user)
     access_token = create_access_token(
-        data={"sub": str(user.id), "username": user.nome}
+        data={"sub": str(user.id), "username": user.nome, "is_admin": user.ruolo == Ruolo.ADMIN},
+        expires_delta=access_token_expires_delta,
     )
     
     return TokenResponse(
         access_token=access_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        expires_in=int(access_token_expires_delta.total_seconds())
     )
 
 @router.post("/logout")
@@ -371,20 +783,24 @@ async def logout(
     """Endpoint per fare logout - libera la macchina e revoca il refresh token."""
     
     # Libera la macchina
-    machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
+    machine = None
+    if request.machine_id is not None and request.user_id is not None:
+        machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
+
     if machine and machine.operatore_attuale_id == request.user_id:
         machine.in_uso = False
         machine.operatore_attuale_id = None
         db.commit()
+        await publish_machine_session_event(machine, request.user_id, db=db)
     
     # Revoca il refresh token se fornito
+    cleanup_refresh_tokens(db, user_id=request.user_id)
     if request.refresh_token:
         refresh_token_db = db.query(RefreshToken).filter(
             RefreshToken.token == request.refresh_token
         ).first()
         if refresh_token_db:
-            refresh_token_db.is_revoked = True
-            db.commit()
+            delete_refresh_token(db, refresh_token_db)
     
     return {"message": "Logout effettuato con successo"}
 
@@ -432,26 +848,23 @@ async def admin_login(
     )
     
     # Crea token di accesso (2 ore per admin, più corto)
-    admin_access_token_expiry = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", "120"))
+    admin_access_token_expiry = ADMIN_TOKEN_EXPIRE_MINUTES
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome, "is_admin": True},
         expires_delta=timedelta(minutes=admin_access_token_expiry)
     )
     
-    # Crea refresh token (non associato a macchina per admin)
-    refresh_token_db = RefreshToken(
-        user_id=user.id,
-        machine_id=1,  # Dummy machine_id (admin non usa macchine)
-        token=secrets.token_urlsafe(32),
-        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-        is_revoked=False
+    cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
+    refresh_token = create_refresh_token(
+        user.id,
+        db,
+        expires_delta=get_refresh_token_expires_delta(user),
+        machine_id=None,
     )
-    db.add(refresh_token_db)
-    db.commit()
     
     return AdminLoginResponse(
         access_token=access_token,
-        refresh_token=refresh_token_db.token,
+        refresh_token=refresh_token,
         token_type="bearer",
         expires_in=admin_access_token_expiry * 60,  # secondi
         user=user_response,

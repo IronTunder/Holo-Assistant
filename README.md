@@ -1,438 +1,225 @@
-# 🤖 Progetto Ditto - Sistema di Gestione Macchinari
+# Progetto Ditto
 
-**Progetto Ditto** è un sistema completo di **gestione macchinari industriali** con interfaccia operatore e dashboard amministrativa.
+Sistema di gestione macchinari industriali con:
+- interfaccia operatore;
+- dashboard amministrativa;
+- backend FastAPI;
+- database PostgreSQL;
+- supporto AI con Ollama per classificazione/selezione risposte preset.
 
-## 🎯 Caratteristiche Principali
+## Quick Start
 
-### 👷 Operatore
-- ✅ Login tramite **badge RFID** o credenziali
-- ✅ Interfaccia intuitiva per macchinari assegnati
-- ✅ Gestione stato macchinari (in uso, libero, manutenzione)
-- ✅ Registro interazioni e utilizzo
+### Primo setup
 
-### 👨‍💼 Amministratore
-- ✅ Dashboard amministrativa **protetta da credenziali separate**
-- ✅ Gestione utenti (CRUD completo)
-- ✅ Gestione macchinari e postazioni
-- ✅ Visualizzazione log audit
-- ✅ Gestione ruoli e permessi
-- ✅ Reset password utenti
-
-## 🏗️ Architettura
-
-```
-┌─────────────────────────────────────────────┐
-│          Frontend (React + TypeScript)      │
-│   Vite Dev Server - localhost:5173         │
-└────────┬──────────────────────────┬─────────┘
-         │                          │
-    [Operator UI]            [Admin Dashboard]
-         │                          │
-         └────────────┬─────────────┘
-                      │
-              FastAPI Backend
-         {server's-ip-address}:8000
-         └─────┬──────────┬──────────┐
-               │          │          │
-        ┌──────▼──┐  ┌────▼─────┐  ┌▼──────────┐
-        │PostgreSQL│  │ Ollama   │  │Interactions│
-        │Database  │  │    AI    │  │ & Logging  │
-        └──────────┘  └──────────┘  └────────────┘
-```
-
-## 🚀 Quick Start
-
-### 1️⃣ **Primo Avvio - Setup Completo**
-```bash
+Windows:
+```bat
 setup.bat
 ```
-Questo crea venv, installa dipendenze, inizializza il database.
 
-### 2️⃣ **Avvio Servizi (Development)**
+Linux:
 ```bash
+./setup.sh
+```
+
+Lo script:
+- avvia Docker con PostgreSQL, Adminer e Ollama;
+- prepara il modello `mistral:7b-instruct-v0.3-q4_K_M`;
+- crea `backend/.env` e `frontend/my-app/.env`;
+- installa dipendenze backend/frontend;
+- inizializza e popola il database.
+
+### Avvio successivo
+
+Windows:
+```bat
 start.bat
 ```
-Avvia Backend + Frontend con hot reload.
 
-- 🎨 Frontend: http://localhost:5173
-- 🔌 Backend API: http://{server's-ip-address}:8000
-- 📊 Health Check: http://{server's-ip-address}:8000/health
-
-### 3️⃣ **Test Admin Dashboard**
-```
-http://localhost:5173/admin-login
-Username: admin (da .env)
-Password: tuapasswordsicura (da .env)
-```
-
-### 4️⃣ **Arresto Servizi**
+Linux:
 ```bash
-stop.bat
+./start.sh
 ```
 
-## 📖 Documentazione Completa
+Lo script:
+- riavvia Docker;
+- aspetta PostgreSQL;
+- legge `OLLAMA_MODEL` da `backend/.env`;
+- prova il warmup del modello AI;
+- avvia backend e frontend in finestre separate;
+- aggiorna `ditto_info.txt`.
 
-👉 **[Guida di Avvio Dettagliata](./STARTUP_GUIDE.md)** - Tutto su setup, configurazione, troubleshooting
+## URL principali
 
-## 📋 Prerequisiti
+- Frontend locale: `http://localhost:5173`
+- Frontend rete: `http://{server-ip}:5173`
+- Backend API: `http://{server-ip}:8000`
+- Swagger: `http://{server-ip}:8000/docs`
+- Adminer: `http://localhost:8080`
+- Ollama tags: `http://{server-ip}:11434/api/tags`
 
-- **Python 3.8+** - [Download](https://python.org)
-- **Node.js 16+** - [Download](https://nodejs.org)
-- **PostgreSQL 12+** - [Download](https://postgresql.org) oppure Docker
-- **Git** (opzionale)
+## Login
 
-## 🗂️ Struttura Progetto
+### Operatore
 
-```
-Progetto-Ditto/
-├── backend/                  # FastAPI Server (Python)
-│   ├── app/
-│   │   ├── main.py          # App principale
-│   │   ├── database.py      # Connessione DB
-│   │   ├── models/          # SQLAlchemy models
-│   │   ├── schemas/         # Pydantic schemas
-│   │   └── api/
-│   │       ├── auth/        # Endpoint autenticazione
-│   │       ├── machines.py  # API macchinari (operatore)
-│   │       └── admin.py     # API admin (CRUD)
-│   ├── init_db.py           # Inizializzazione DB
-│   ├── populate.py          # Dati di test
-│   └── requirements.txt      # Dipendenze Python
-│
-├── frontend/my-app/          # React + TypeScript (Vite)
-│   ├── src/
-│   │   ├── main.tsx
-│   │   ├── app/
-│   │   │   ├── App.tsx
-│   │   │   ├── AuthContext.tsx
-│   │   │   ├── routes.tsx
-│   │   │   └── components/
-│   │   │       ├── admin/   # Admin dashboard components
-│   │   │       ├── operator/ # Operatore interface
-│   │   │       └── ui/      # shadcn/ui components
-│   │   └── api/
-│   │       └── config.ts    # Endpoint configuration
-│   └── package.json
-│
-├── docker/
-│   └── docker-compose.yml    # PostgreSQL (opzionale)
-│
-└── start.bat / stop.bat / setup.bat
-```
+Flussi supportati:
+- `POST /auth/badge-login`
+- `POST /auth/credentials-login`
 
-## 🔐 Autenticazione e Autorizzazione
+L’operatore accede associandosi a una macchina.
 
-### Login Operatore
-```
-POST /auth/login
-{
-  "badge_id": "ABC123"  // o username + password
-}
-→ JWT Token (8 ore)
-```
+### Admin
 
-### Login Admin
-```
+Endpoint:
+```http
 POST /auth/admin-login
-{
-  "username": "admin",
-  "password": "password"
-}
-→ JWT Token Admin (2 ore, più restrittivo)
 ```
 
-### Controlli Accesso
-- **GET /machines** - Pubblico
-- **POST/PUT/DELETE /machines** - Solo ADMIN
-- **GET/POST/PUT/DELETE /admin/** - Solo ADMIN
-
-## 🗄️ Database Schema
-
-### User
-- `id`, `badge_id`, `nome`, `email`, `password_hash`
-- `ruolo`: OPERAIO | ADMIN
-- `livello_esperienza`, `reparto`, `turno`
-- `creato_il`, `aggiornato_il`
-
-### Machine
-- `id`, `nome`, `descrizione`, `reparto`
-- `in_uso`: bool, `id_operatore`: nullable
-- `stato`, `id_postazione`
-- `creato_il`, `aggiornato_il`
-
-### InteractionLog
-- `id`, `user_id`, `machine_id`
-- `domanda`, `risposta`, `timestamp`
-
-### RefreshToken
-- Token refresh JWT per estendere sessioni
-
-## 🤖 Sistema Q&A con AI (Ollama)
-
-Il sistema intelligente di risposta alle domande degli operatori utilizza **Ollama (Mistral AI)** per:
-
-### 🔄 Flusso di Funzionamento
-1. **Operatore pone una domanda** tramite l'interfaccia vocale/testo
-2. **Ollama classifica la domanda** in una delle categorie disponibili
-3. **Sistema seleziona la risposta preset** più appropriata per quella categoria
-4. **Risposta viene visualizzata** all'operatore
-5. **Interazione viene registrata** nel database
-
-### 📚 Categorie Disponibili
-
-| Categoria | Descrizione | # Risposte |
-|-----------|-------------|-----------|
-| **Manutenzione** | Manutenzione ordinaria, ricambi, lubrificazione | 4 |
-| **Sicurezza** | DPI, protezioni, emergenze | 4 |
-| **Operazioni** | Avvio, parametri, sequenze di lavoro | 4 |
-| **Diagnostica** | Errori, spie, anomalie | 4 |
-| **Pulizia** | Pulizia e igiene della macchina | 4 |
-
-### 💡 Esempi di Risposte
-
-**Categoria: Sicurezza**
-```
-Dispositivi di protezione individuale obbligatori:
-• Mascherina FFP2
-• Occhiali di protezione
-• Guanti in nitrile
-• Scarpe antinfortunistiche
-• Casco
-```
-
-**Categoria: Operazioni**
-```
-Sequenza di avvio:
-1. Verificare le protezioni
-2. Inserire il materiale
-3. Selezionare il programma
-4. Impostare parametri velocità/potenza
-5. Premere START
-```
-
-### 🧠 Come Funziona Ollama
-
-- **Modello**: Mistral 7B (richiesto minimo 4GB VRAM)
-- **Temperatura**: 0.3 per classificazione, 0.2 per selezione (risposte deterministiche)
-- **URL**: Configurato in `OLLAMA_BASE_URL` del backend
-- **Timeout**: 30 secondi per richiesta
-
-### 🗂️ Dati Seed
-
-Le categorie e risposte sono caricate da [seed_categories.py](./backend/seed_categories.py):
-```bash
-python backend/seed_categories.py
-```
-
-Quando eseguito, popola il DB con:
-- **5 categorie** (Manutenzione, Sicurezza, Operazioni, Diagnostica, Pulizia)
-- **20 risposte preset** (4 per categoria)
-- **Keywords** per il matching delle risposte
-
-ℹ️ Lo script si esegue automaticamente durante `setup.bat` se il DB è vuoto.
-
-## ⚙️ Variabili Ambiente
+Credenziali di default generate dal setup:
 ```ini
-# Database
-DATABASE_HOST={server's-ip-address}
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=tuapasswordsicura
+```
+
+## Sessioni e token
+
+Variabili attuali:
+```ini
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+ADMIN_TOKEN_EXPIRE_MINUTES=120
+OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
+ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
+```
+
+Nota importante:
+- se scade solo l’`access_token`, la sessione può essere recuperata se il `refresh_token` è ancora valido;
+- per testare davvero la scadenza completa bisogna ridurre anche `OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES` o `ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES`.
+
+## AI con Ollama
+
+Configurazione attuale:
+```ini
+OLLAMA_BASE_URL=http://{server-ip}:11434
+OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_HEALTH_TIMEOUT_SECONDS=5
+OLLAMA_KEEP_ALIVE=30m
+OLLAMA_NUM_PREDICT_CLASSIFY=4
+OLLAMA_NUM_PREDICT_SELECT=2
+OLLAMA_TOP_K=20
+OLLAMA_TOP_P=0.8
+OLLAMA_TEMPERATURE_CLASSIFY=0.0
+OLLAMA_TEMPERATURE_SELECT=0.0
+OLLAMA_NUM_CTX=2048
+OLLAMA_NUM_THREAD=4
+```
+
+Comportamento attuale:
+- il backend prova direttamente la generazione con Ollama;
+- se Ollama fallisce o il modello non è pronto, entra in fallback controllato;
+- la selezione di fallback usa euristiche keyword-based, non il “primo risultato” fisso;
+- `start.bat` e `start.sh` provano a fare warmup del modello con `ollama run`.
+
+## Variabili ambiente
+
+### `backend/.env`
+
+```ini
+DATABASE_HOST={server-ip}
 DATABASE_PORT=5432
 DATABASE_USER=postgres
 DATABASE_PASSWORD=postgres
 DATABASE_NAME=ditto_db
 
-# JWT & Security
 SECRET_KEY=your-super-secret-key-change-this-in-production
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-ADMIN_TOKEN_EXPIRE_MINUTES=120
 
-# Admin Credentials
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=tuapasswordsicura
 
-# CORS
-ALLOWED_ORIGINS=http://localhost:5173,http://{server's-ip-address}:5173
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+ADMIN_TOKEN_EXPIRE_MINUTES=120
+OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
+ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 
-# AI Service (Ollama)
-OLLAMA_BASE_URL=http://{server's-ip-address}:11434
+ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
+
+OLLAMA_BASE_URL=http://{server-ip}:11434
+OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_HEALTH_TIMEOUT_SECONDS=5
+OLLAMA_KEEP_ALIVE=30m
+OLLAMA_NUM_PREDICT_CLASSIFY=4
+OLLAMA_NUM_PREDICT_SELECT=2
+OLLAMA_TOP_K=20
+OLLAMA_TOP_P=0.8
+OLLAMA_TEMPERATURE_CLASSIFY=0.0
+OLLAMA_TEMPERATURE_SELECT=0.0
+OLLAMA_NUM_CTX=2048
+OLLAMA_NUM_THREAD=4
+
+TTS_ENABLED=true
 ```
 
-### frontend/my-app/.env
+### `frontend/my-app/.env`
+
 ```ini
-VITE_API_URL=http://{server's-ip-address}:8000
+VITE_API_URL=http://{server-ip}:8000
 ```
 
-## 🛠️ Sviluppo
+Il frontend usa solo `VITE_API_URL`.
 
-### Backend
+## Struttura progetto
+
+```text
+Progetto-Ditto/
+├── backend/
+├── frontend/my-app/
+├── docker/
+├── setup.bat
+├── start.bat
+├── setup.sh
+└── start.sh
+```
+
+## Troubleshooting rapido
+
+### Ollama risponde a `/api/tags` ma fallisce su `/api/generate`
+
+Controlla:
+- che `OLLAMA_MODEL` esista davvero nel container:
+  ```bash
+  docker exec ditto_ollama ollama list
+  ```
+- che il modello configurato coincida con quello scaricato;
+- che il cold start non stia andando in timeout.
+
+Per scaricare manualmente il modello corretto:
 ```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate      # Windows
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
 ```
 
-### Frontend
-```bash
-cd frontend/my-app
-npm install
-npm run dev
-```
+### Prima richiesta AI molto lenta
 
-## 📊 API Endpoints
+È normale al primo load del modello. Gli script di start provano già un warmup. Se serve più margine:
+- aumenta `OLLAMA_TIMEOUT_SECONDS`;
+- verifica che il warmup non fallisca;
+- controlla i log di Ollama per timeout di load.
 
-### Auth
-- `POST /auth/login` - Login operatore (badge)
-- `POST /auth/admin-login` - Login admin
-- `POST /auth/refresh` - Refresh token
-- `POST /auth/logout` - Logout
+### Errore database
 
-### Machines
-- `GET /machines` - Lista macchinari
-- `POST /machines` - Crea (admin)
-- `PUT /machines/{id}` - Modifica (admin)
-- `DELETE /machines/{id}` - Elimina (admin)
+Verifica:
+- container Postgres attivo;
+- `DATABASE_HOST` corretto;
+- `docker exec ditto_postgres pg_isready -U postgres`.
 
-### Admin Only
-- `GET /admin/users` - Lista utenti
-- `POST /admin/users` - Crea utente
-- `PUT /admin/users/{id}` - Modifica utente
-- `DELETE /admin/users/{id}` - Elimina utente
-- `POST /admin/users/{id}/reset-password` - Reset password
-- `GET /admin/logs` - Log audit
-- `GET /admin/machines` - Gestione macchinari
+## Documentazione
 
-Vedi `/docs` per OpenAPI completo.
+- Guida operativa: [STARTUP_GUIDE.md](./STARTUP_GUIDE.md)
+- Backend entrypoint: [backend/app/main.py](/e:/Scuola/Progetto-Ditto/backend/app/main.py)
+- Auth: [backend/app/api/auth/auth.py](/e:/Scuola/Progetto-Ditto/backend/app/api/auth/auth.py)
+- Interactions AI: [backend/app/api/interactions.py](/e:/Scuola/Progetto-Ditto/backend/app/api/interactions.py)
 
-## 🔄 Flussi Principali
+## Stato attuale
 
-### 1. Login Operatore
-```
-Browser → http://localhost:5173
-  ↓
-Inserisci Badge ID (RFID) o username
-  ↓
-POST /auth/login
-  ↓
-JWT Token salvato in localStorage
-  ↓
-Accesso OperatorInterface
-```
-
-### 2. Accesso Admin Dashboard
-```
-Browser → http://localhost:5173/admin-login
-  ↓
-Inserisci Username + Password Admin
-  ↓
-POST /auth/admin-login
-  ↓
-Admin JWT salvato (token diverso)
-  ↓
-ProtectedRoute: verifica isAdmin
-  ↓
-Accesso AdminDashboard
-```
-
-### 3. Creazione Nuovo Utente (Admin)
-```
-AdminDashboard → Tab "Users"
-  ↓
-Clicca "Aggiungi Utente"
-  ↓
-Compila form (nome, badge_id, role, etc)
-  ↓
-POST /admin/users
-  ↓
-Nuovo utente nel database
-  ↓
-Refresh lista utenti
-```
-
-## 🧪 Testing
-
-### Test Backend
-```bash
-cd backend
-pytest              # Se pytest installato
-# Oppure test manuale via /docs
-```
-
-### Test Frontend
-```bash
-cd frontend/my-app
-npm run build       # Build ottimizzato
-npm run preview     # Preview build
-```
-
-### Health Check
-```bash
-curl http://{server's-ip-address}:8000/health
-# {"status": "ok"}
-```
-
-## 🐛 Troubleshooting
-
-| Problema | Soluzione |
-|----------|-----------|
-| **404 on /auth/admin-login** | Controlla config.ts: URL deve essere senza `/api/` prefix |
-| **Accesso negato admin dashboard** | Verifica ADMIN_USERNAME/PASSWORD in .env |
-| **503 Service Unavailable** | Ollama non disponibile; verifica OLLAMA_BASE_URL e che Ollama sia in esecuzione |
-| **Database connection error** | Assicurati PostgreSQL è in esecuzione; controlla DATABASE_HOST, DATABASE_PORT |
-| **Cannot find module (frontend)** | `cd frontend/my-app && npm install` |
-| **Port already in use** | Esegui `stop.bat` o cambia porta in start.bat |
-| **401 Unauthorized** | Token scaduto o mancante; login di nuovo |
-| **AI_API_URL is undefined** | Assicurati di usare `VITE_AI_API_URL` nel .env (con prefisso VITE_) |
-
-👉 **Vedi [STARTUP_GUIDE.md](./STARTUP_GUIDE.md) per troubleshooting dettagliato**
-
-## 🚀 Deployment
-
-### Development
-```bash
-start.bat          # Hot reload abilitato
-```
-
-### Production
-```bash
-start_production.bat    # Build ottimizzato, no reload
-```
-
-Opzioni per deploy:
-- Docker (vedi `docker-compose.yml`)
-- Ubuntu/Linux con systemd
-- Cloud (AWS, Azure, Heroku)
-
-## 📝 Password Admin Predefinita
-
-⚠️ **IMPORTANTE**: Cambia la password admin SUBITO in produzione!
-
-Default (in .env):
-```
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123
-```
-
-Modifica in `backend/.env` prima di qualsiasi deployment.
-
-## 📞 Support & Docs
-
-- **API Docs**: http://{server's-ip-address}:8000/docs (Swagger)
-- **Setup Guide**: [STARTUP_GUIDE.md](./STARTUP_GUIDE.md)
-- **GitHub Issues**: Segnala problemi
-- **Email**: matteo.onetti@isarome.it
-
-## 📄 Licenza
-
-Proprietary - Uso interno solo
-
-## 👥 Contributors
-
-- Team Progetto Ditto
-
----
-
-**Ultima Modifica**: Marzo 2026  
-**Versione**: 1.0.0
-
+- ultimo aggiornamento: Marzo 2026
+- source of truth per setup/avvio: `setup.bat` e `start.bat`

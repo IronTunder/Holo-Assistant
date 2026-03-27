@@ -1,6 +1,6 @@
 // frontend/my-app/src/app/components/admin/AdminDashboard.tsx
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../../AuthContext';
 import { Button } from '../../components/ui/button';

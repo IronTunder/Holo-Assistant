@@ -28,14 +28,12 @@ export interface AuthContextType {
   refreshToken: string | null;
   user: AuthUser | null;
   machine: AuthMachine | null;
-  expiresIn: number | null; // secondi fino a scadenza
-  
-  // Azioni
+  expiresIn: number | null;
   login: (accessToken: string, refreshToken: string, user: AuthUser, machine: AuthMachine, expiresIn: number) => void;
   adminLogin: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   restoreSession: () => Promise<boolean>;
   logout: () => Promise<void>;
-  refreshAccessToken: () => Promise<boolean>;
+  refreshAccessToken: (refreshTokenValue?: string) => Promise<boolean>;
   setTokensFromRefresh: (accessToken: string, expiresIn: number) => void;
 }
 
@@ -50,33 +48,48 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [machine, setMachine] = useState<AuthMachine | null>(null);
   const [expiresIn, setExpiresIn] = useState<number | null>(null);
 
-  // Funzione di login
+  const clearSession = useCallback(() => {
+    setIsLoggedIn(false);
+    setIsAdmin(false);
+    setAccessToken(null);
+    setRefreshToken(null);
+    setUser(null);
+    setMachine(null);
+    setExpiresIn(null);
+
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('user');
+    localStorage.removeItem('machine');
+    localStorage.removeItem('expiresIn');
+    localStorage.removeItem('loginTimestamp');
+    localStorage.removeItem('isAdmin');
+  }, []);
+
   const login = useCallback((
-    accessToken: string,
-    refreshToken: string,
-    user: AuthUser,
-    machine: AuthMachine,
-    expiresIn: number
+    nextAccessToken: string,
+    nextRefreshToken: string,
+    nextUser: AuthUser,
+    nextMachine: AuthMachine,
+    nextExpiresIn: number
   ) => {
-    setAccessToken(accessToken);
-    setRefreshToken(refreshToken);
-    setUser(user);
-    setMachine(machine);
-    setExpiresIn(expiresIn);
+    setAccessToken(nextAccessToken);
+    setRefreshToken(nextRefreshToken);
+    setUser(nextUser);
+    setMachine(nextMachine);
+    setExpiresIn(nextExpiresIn);
     setIsLoggedIn(true);
     setIsAdmin(false);
 
-    // Salva in localStorage
-    localStorage.setItem('accessToken', accessToken);
-    localStorage.setItem('refreshToken', refreshToken);
-    localStorage.setItem('user', JSON.stringify(user));
-    localStorage.setItem('machine', JSON.stringify(machine));
-    localStorage.setItem('expiresIn', expiresIn.toString());
+    localStorage.setItem('accessToken', nextAccessToken);
+    localStorage.setItem('refreshToken', nextRefreshToken);
+    localStorage.setItem('user', JSON.stringify(nextUser));
+    localStorage.setItem('machine', JSON.stringify(nextMachine));
+    localStorage.setItem('expiresIn', nextExpiresIn.toString());
     localStorage.setItem('loginTimestamp', Date.now().toString());
     localStorage.setItem('isAdmin', 'false');
   }, []);
 
-  // Funzione di admin login
   const adminLogin = useCallback(async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const response = await fetch(API_ENDPOINTS.ADMIN_LOGIN, {
@@ -97,15 +110,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setAccessToken(data.access_token);
       setRefreshToken(data.refresh_token);
       setUser(data.user);
-      setMachine(null); // Admin non ha macchina assegnata
+      setMachine(null);
       setExpiresIn(data.expires_in);
       setIsLoggedIn(true);
       setIsAdmin(true);
 
-      // Salva in localStorage
       localStorage.setItem('accessToken', data.access_token);
       localStorage.setItem('refreshToken', data.refresh_token);
       localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.removeItem('machine');
       localStorage.setItem('expiresIn', data.expires_in.toString());
       localStorage.setItem('loginTimestamp', Date.now().toString());
       localStorage.setItem('isAdmin', 'true');
@@ -117,57 +130,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, []);
 
-  // Ripristina sessione da localStorage
-  const restoreSession = useCallback(async (): Promise<boolean> => {
-    const storedRefreshToken = localStorage.getItem('refreshToken');
-    const storedAccessToken = localStorage.getItem('accessToken');
-    const storedUser = localStorage.getItem('user');
-    const storedIsAdmin = localStorage.getItem('isAdmin') === 'true';
-    const storedMachine = localStorage.getItem('machine');
-
-    if (!storedRefreshToken || !storedAccessToken || !storedUser) {
-      return false;
-    }
-
-    try {
-      // Prova a ripristinare direttamente dallo storage
-      const user = JSON.parse(storedUser);
-      const machine = storedMachine ? JSON.parse(storedMachine) : null;
-      const expiresIn = parseInt(localStorage.getItem('expiresIn') || '0', 10);
-      const loginTimestamp = parseInt(localStorage.getItem('loginTimestamp') || '0', 10);
-
-      // Verifica se il token è ancora valido (con margine di 5 minuti)
-      const elapsedSeconds = (Date.now() - loginTimestamp) / 1000;
-      const tokenValidSeconds = expiresIn - 300; // 5 minuti di margine
-
-      if (elapsedSeconds < tokenValidSeconds) {
-        // Token ancora valido
-        setAccessToken(storedAccessToken);
-        setRefreshToken(storedRefreshToken);
-        setUser(user);
-        if (machine) {
-          setMachine(machine);
-        }
-        setExpiresIn(expiresIn - Math.floor(elapsedSeconds));
-        setIsLoggedIn(true);
-        setIsAdmin(storedIsAdmin);
-        return true;
-      } else {
-        // Token scaduto o prossimo a scadere, prova il refresh
-        return await refreshAccessToken(storedRefreshToken);
-      }
-    } catch (error) {
-      console.error('Errore nel ripristino della sessione:', error);
-      // Clearifica da localStorage se errore
-      clearSession();
-      return false;
-    }
-  }, []);
-
-  // Aggiorna il token di accesso usando il refresh token
   const refreshAccessToken = useCallback(async (refreshTokenValue?: string): Promise<boolean> => {
     const tokenToUse = refreshTokenValue || refreshToken;
-    
+
     if (!tokenToUse) {
       return false;
     }
@@ -182,7 +147,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
 
       if (!response.ok) {
-        // Refresh fallito, fai logout
         clearSession();
         return false;
       }
@@ -193,16 +157,55 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       localStorage.setItem('accessToken', data.access_token);
       localStorage.setItem('expiresIn', data.expires_in.toString());
       localStorage.setItem('loginTimestamp', Date.now().toString());
-      
+
       return true;
     } catch (error) {
       console.error('Errore nel refresh token:', error);
       clearSession();
       return false;
     }
-  }, [refreshToken]);
+  }, [clearSession, refreshToken]);
 
-  // Aggiorna i token da una risposta di refresh
+  const restoreSession = useCallback(async (): Promise<boolean> => {
+    const storedRefreshToken = localStorage.getItem('refreshToken');
+    const storedUser = localStorage.getItem('user');
+    const storedIsAdmin = localStorage.getItem('isAdmin') === 'true';
+    const storedMachine = localStorage.getItem('machine');
+
+    if (!storedRefreshToken || !storedUser) {
+      return false;
+    }
+
+    try {
+      const parsedUser = JSON.parse(storedUser);
+      const parsedMachine = storedMachine ? JSON.parse(storedMachine) : null;
+      const refreshed = await refreshAccessToken(storedRefreshToken);
+      if (!refreshed) {
+        return false;
+      }
+
+      const refreshedAccessToken = localStorage.getItem('accessToken');
+      const refreshedExpiresIn = parseInt(localStorage.getItem('expiresIn') || '0', 10);
+      if (!refreshedAccessToken) {
+        clearSession();
+        return false;
+      }
+
+      setAccessToken(refreshedAccessToken);
+      setRefreshToken(storedRefreshToken);
+      setUser(parsedUser);
+      setMachine(parsedMachine);
+      setExpiresIn(refreshedExpiresIn);
+      setIsLoggedIn(true);
+      setIsAdmin(storedIsAdmin);
+      return true;
+    } catch (error) {
+      console.error('Errore nel ripristino della sessione:', error);
+      clearSession();
+      return false;
+    }
+  }, [clearSession, refreshAccessToken]);
+
   const setTokensFromRefresh = useCallback((newAccessToken: string, newExpiresIn: number) => {
     setAccessToken(newAccessToken);
     setExpiresIn(newExpiresIn);
@@ -211,7 +214,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.setItem('loginTimestamp', Date.now().toString());
   }, []);
 
-  // Effettua logout e revoca il refresh token
   const logout = useCallback(async () => {
     if (!isAdmin && user && machine && refreshToken) {
       try {
@@ -238,7 +240,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           },
           body: JSON.stringify({
             user_id: user?.id,
-            machine_id: 1,
             refresh_token: refreshToken,
           }),
         });
@@ -248,45 +249,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     clearSession();
-  }, [user, machine, refreshToken, isAdmin]);
+  }, [clearSession, isAdmin, machine, refreshToken, user]);
 
-  // Pulisce lo stato e localStorage
-  const clearSession = useCallback(() => {
-    setIsLoggedIn(false);
-    setIsAdmin(false);
-    setAccessToken(null);
-    setRefreshToken(null);
-    setUser(null);
-    setMachine(null);
-    setExpiresIn(null);
-
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
-    localStorage.removeItem('machine');
-    localStorage.removeItem('expiresIn');
-    localStorage.removeItem('loginTimestamp');
-    localStorage.removeItem('isAdmin');
-  }, []);
-
-  // Monitora il refresh token nei tab aperti
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'refreshToken') {
         if (e.newValue === null) {
-          // Logout in un altro tab
           clearSession();
         } else {
-          // Login in un altro tab
           const storedUser = localStorage.getItem('user');
           const storedMachine = localStorage.getItem('machine');
           const storedIsAdmin = localStorage.getItem('isAdmin') === 'true';
           if (storedUser) {
             setRefreshToken(e.newValue);
             setUser(JSON.parse(storedUser));
-            if (storedMachine) {
-              setMachine(JSON.parse(storedMachine));
-            }
+            setMachine(storedMachine ? JSON.parse(storedMachine) : null);
             setIsAdmin(storedIsAdmin);
             setIsLoggedIn(true);
           }
@@ -297,29 +274,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [clearSession]);
-
-  // Imposta il timer per il refresh automatico del token
-  useEffect(() => {
-    if (!isLoggedIn || !expiresIn) {
-      return;
-    }
-
-    // Refresh 5 minuti prima della scadenza
-    const refreshBuffer = 5 * 60; // 5 minuti in secondi
-    const timeUntilRefresh = expiresIn - refreshBuffer;
-
-    if (timeUntilRefresh <= 0) {
-      // Token quasi scaduto, refresha subito
-      refreshAccessToken();
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      refreshAccessToken();
-    }, timeUntilRefresh * 1000);
-
-    return () => clearTimeout(timer);
-  }, [isLoggedIn, expiresIn, refreshAccessToken]);
 
   const value: AuthContextType = {
     isLoggedIn,

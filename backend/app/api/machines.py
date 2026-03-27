@@ -5,12 +5,17 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.database import get_db
+from app.api.auth.auth import (
+    get_current_user,
+    publish_admin_machine_event,
+    publish_machine_session_event,
+    verify_admin,
+)
 from app.models.machine import Machine
 from app.models.user import User
 from app.schemas.machine import MachineCreate, MachineUpdate, MachineResponse
-from app.api.auth.auth import get_current_user, verify_admin
 
-router = APIRouter(tags=["macchinari"])
+router = APIRouter(tags=["machines"])
 
 @router.get("/", response_model=List[MachineResponse])
 async def get_machines(
@@ -66,6 +71,7 @@ async def create_machine(
     db.add(db_machine)
     db.commit()
     db.refresh(db_machine)
+    await publish_admin_machine_event(db, db_machine)
     return db_machine
 
 @router.put("/{machine_id}", response_model=MachineResponse)
@@ -89,6 +95,7 @@ async def update_machine(
     
     db.commit()
     db.refresh(db_machine)
+    await publish_admin_machine_event(db, db_machine)
     return db_machine
 
 @router.patch("/{machine_id}/status")
@@ -111,6 +118,11 @@ async def update_machine_status(
     db_machine.operatore_attuale_id = operatore_id if in_uso else None
     
     db.commit()
+    await publish_machine_session_event(
+        db_machine,
+        -1,
+        db=db,
+    )
     
     return {
         "success": True,
@@ -131,6 +143,18 @@ async def delete_machine(
             detail="Macchinario non trovato"
         )
     
+    deleted_machine_id = db_machine.id
+    deleted_payload_machine = Machine(
+        id=db_machine.id,
+        nome=db_machine.nome,
+        reparto=db_machine.reparto,
+        descrizione=db_machine.descrizione,
+        id_postazione=db_machine.id_postazione,
+        in_uso=db_machine.in_uso,
+        operatore_attuale_id=db_machine.operatore_attuale_id,
+    )
     db.delete(db_machine)
     db.commit()
+    await publish_admin_machine_event(db, deleted_payload_machine, deleted=True)
+    await publish_machine_session_event(None, -1, machine_id=deleted_machine_id)
     return None

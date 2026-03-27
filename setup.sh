@@ -35,13 +35,11 @@ DOCKER_INSTALLED=false
 OS_DISTRO=""
 OS_VERSION=""
 OLLAMA_CONTAINER_NAME="ditto_ollama"
-OLLAMA_MODEL="mistral"
+OLLAMA_MODEL="mistral:7b-instruct-v0.3-q4_K_M"
 
 # Directory Piper
 PIPER_BASE_DIR="$HOME/.local/share/piper"
-PIPER_BIN_DIR="$PIPER_BASE_DIR/bin"
 PIPER_VOICES_DIR="$PIPER_BASE_DIR/voices"
-PIPER_EXECUTABLE="$PIPER_BIN_DIR/piper"
 PIPER_MODEL_PATH="$PIPER_VOICES_DIR/it_IT-paola-medium.onnx"
 PIPER_CONFIG_PATH="$PIPER_VOICES_DIR/it_IT-paola-medium.onnx.json"
 
@@ -173,11 +171,13 @@ get_os_type() {
 ################################################################################
 
 install_piper() {
-    log "STEP" "Installazione Piper TTS"
+    log "STEP" "Installazione modello Piper TTS"
     
     # Crea directory necessarie
-    mkdir -p "$PIPER_BIN_DIR"
     mkdir -p "$PIPER_VOICES_DIR"
+    
+    # Il runtime usa la libreria Python piper-tts, quindi il binario non serve piu.
+    if false; then
     
     # Determina architettura
     ARCH=$(uname -m)
@@ -252,6 +252,8 @@ install_piper() {
         log "SUCCESS" "Piper già installato"
     fi
     
+    fi
+
     # Scarica modello vocale italiano
     if [ ! -f "$PIPER_MODEL_PATH" ]; then
         log "INFO" "Download modello vocale italiano (Paola medium)..."
@@ -311,18 +313,11 @@ EOF
     fi
     
     # Verifica installazione
-    if [ -f "$PIPER_EXECUTABLE" ] && [ -f "$PIPER_MODEL_PATH" ]; then
-        log "SUCCESS" "Piper TTS installato correttamente"
-        
-        # Test rapido
-        if echo "Test" | "$PIPER_EXECUTABLE" --model "$PIPER_MODEL_PATH" --output_file /dev/null 2>/dev/null; then
-            log "SUCCESS" "Piper funziona correttamente"
-        else
-            log "WARNING" "Piper potrebbe non funzionare correttamente"
-        fi
+    if [ -f "$PIPER_MODEL_PATH" ] && [ -f "$PIPER_CONFIG_PATH" ]; then
+        log "SUCCESS" "Modello Piper TTS pronto"
         return 0
     else
-        log "WARNING" "Piper TTS non completamente installato"
+        log "WARNING" "Modello Piper TTS non completamente installato"
         return 1
     fi
 }
@@ -658,17 +653,27 @@ DATABASE_PASSWORD=postgres
 DATABASE_NAME=ditto_db
 SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || echo "dev-secret-key-$(date +%s)")
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD=tuapasswordsicura
+ACCESS_TOKEN_EXPIRE_MINUTES=480
 ADMIN_TOKEN_EXPIRE_MINUTES=120
+OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
+ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
 ALLOWED_ORIGINS=http://localhost:5173,http://$IP:5173
 OLLAMA_BASE_URL=http://$IP:11434
+OLLAMA_MODEL=$OLLAMA_MODEL
+OLLAMA_TIMEOUT_SECONDS=120
+OLLAMA_HEALTH_TIMEOUT_SECONDS=5
+OLLAMA_KEEP_ALIVE=30m
+OLLAMA_NUM_PREDICT_CLASSIFY=4
+OLLAMA_NUM_PREDICT_SELECT=2
+OLLAMA_TOP_K=20
+OLLAMA_TOP_P=0.8
+OLLAMA_TEMPERATURE_CLASSIFY=0.0
+OLLAMA_TEMPERATURE_SELECT=0.0
+OLLAMA_NUM_CTX=2048
+OLLAMA_NUM_THREAD=4
 TTS_ENABLED=true
-PIPER_EXECUTABLE=$PIPER_EXECUTABLE
-PIPER_MODEL_PATH=$PIPER_MODEL_PATH
-PIPER_CONFIG_PATH=$PIPER_CONFIG_PATH
-TTS_SAMPLE_RATE=22050
 EOF
     
     log "SUCCESS" "File .env creato"
@@ -827,9 +832,9 @@ show_summary() {
     echo ""
     echo -e "${CYAN}${BOLD}🎤 Text-to-Speech (Piper):${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "  • Piper eseguibile:    ${GREEN}$PIPER_EXECUTABLE${NC}"
     echo -e "  • Modello vocale:      ${GREEN}$PIPER_MODEL_PATH${NC}"
-    echo -e "  • Test TTS:            echo 'Ciao' | $PIPER_EXECUTABLE --model $PIPER_MODEL_PATH --output_file test.wav${NC}"
+    echo -e "  • Configurazione:      ${GREEN}$PIPER_CONFIG_PATH${NC}"
+    echo -e "  • Runtime:             ${GREEN}libreria Python piper-tts${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}🧠 Modello AI:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -883,7 +888,7 @@ EOF
     check_docker_permissions
     install_nodejs
     install_python
-    install_piper  # Nuova installazione Piper
+    install_piper
     
     # Setup
     setup_database

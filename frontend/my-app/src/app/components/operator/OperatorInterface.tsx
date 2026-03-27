@@ -1,16 +1,29 @@
-import { useState, useEffect } from 'react';
-import { Mic, Radio } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Mic, Radio, X } from 'lucide-react';
 import { AvatarDisplay } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { useAuth } from '../../AuthContext';
-import { playTts } from '../../ttsClient';
+import { playTts, type TtsPlayback } from '../../ttsClient';
+import API_ENDPOINTS from '../../../api/config';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
+type SessionStatusReason = 'ok' | 'machine_released' | 'machine_reassigned' | 'machine_not_found';
+
+type SessionStatusPayload = {
+  session_valid: boolean;
+  machine_assigned: boolean;
+  machine_in_use: boolean;
+  operator_matches: boolean;
+  should_logout: boolean;
+  reason: SessionStatusReason;
+};
 
 export function OperatorInterface() {
   const { 
     isLoggedIn, 
+    isAdmin,
     accessToken, 
+    refreshAccessToken,
     user, 
     machine, 
     login, 
@@ -23,53 +36,322 @@ export function OperatorInterface() {
   const [showSubtitles, setShowSubtitles] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
+  const [logoutMessageKey, setLogoutMessageKey] = useState(0);
   const [questionInput, setQuestionInput] = useState('');
   const [currentTranscription, setCurrentTranscription] = useState('');
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const pollingTimeoutRef = useRef<number | null>(null);
+  const pollingInFlightRef = useRef(false);
+  const mountedAtRef = useRef<number>(Date.now());
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const sseRetryTimeoutRef = useRef<number | null>(null);
+  const sseConnectedRef = useRef(false);
+  const logoutMessageTimeoutRef = useRef<number | null>(null);
+  const manualLogoutInProgressRef = useRef(false);
 
   const API_URL = import.meta.env.VITE_API_URL;
-  
-  useEffect(() => {
-    if (!isLoggedIn || !machine || !user || !accessToken) return;
 
-    const pollMachineStatus = async () => {
-      if (!isLoggedIn || !machine || !user || !accessToken) return;
+  const dismissLogoutMessage = () => {
+    if (logoutMessageTimeoutRef.current !== null) {
+      window.clearTimeout(logoutMessageTimeoutRef.current);
+      logoutMessageTimeoutRef.current = null;
+    }
+    setLogoutMessage(null);
+    setLogoutMessageKey(0);
+  };
+
+  const showTimedLogoutMessage = (message: string) => {
+    setLogoutMessage(message);
+    setLogoutMessageKey(Date.now());
+  };
+
+  useEffect(() => {
+    if (!logoutMessage) {
+      if (logoutMessageTimeoutRef.current !== null) {
+        window.clearTimeout(logoutMessageTimeoutRef.current);
+        logoutMessageTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    logoutMessageTimeoutRef.current = window.setTimeout(() => {
+      dismissLogoutMessage();
+    }, 10_000);
+
+    return () => {
+      if (logoutMessageTimeoutRef.current !== null) {
+        window.clearTimeout(logoutMessageTimeoutRef.current);
+        logoutMessageTimeoutRef.current = null;
+      }
+    };
+  }, [logoutMessage]);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      manualLogoutInProgressRef.current = false;
+    }
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    const clearPollingTimeout = () => {
+      if (pollingTimeoutRef.current !== null) {
+        window.clearTimeout(pollingTimeoutRef.current);
+        pollingTimeoutRef.current = null;
+      }
+    };
+
+    const clearSseRetryTimeout = () => {
+      if (sseRetryTimeoutRef.current !== null) {
+        window.clearTimeout(sseRetryTimeoutRef.current);
+        sseRetryTimeoutRef.current = null;
+      }
+    };
+
+    const closeEventSource = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      sseConnectedRef.current = false;
+    };
+
+    const getLogoutMessage = (reason: SessionStatusReason | string) => {
+      switch (reason) {
+        case 'machine_released':
+          return 'Macchina liberata dall\'amministratore';
+        case 'machine_reassigned':
+          return 'Macchina assegnata a un altro operatore';
+        case 'machine_not_found':
+          return 'Macchinario non più disponibile';
+        default:
+          return 'Sessione non più valida';
+      }
+    };
+
+    const scheduleNextPoll = (delayMs: number) => {
+      if (sseConnectedRef.current) {
+        return;
+      }
+
+      clearPollingTimeout();
+      pollingTimeoutRef.current = window.setTimeout(() => {
+        void pollSessionStatus();
+      }, delayMs);
+    };
+
+    const scheduleSseRetry = (delayMs = 5000) => {
+      clearSseRetryTimeout();
+      sseRetryTimeoutRef.current = window.setTimeout(() => {
+        void startSseConnection();
+      }, delayMs);
+    };
+
+    const getPollingDelay = () => {
+      const elapsedMs = Date.now() - mountedAtRef.current;
+      return elapsedMs < 60_000 ? 10_000 : 30_000;
+    };
+
+    const stopAndLogout = async (message: string) => {
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
+
+      clearPollingTimeout();
+      clearSseRetryTimeout();
+      closeEventSource();
+      pollingInFlightRef.current = false;
+      await handleLogout();
+      showTimedLogoutMessage(message);
+    };
+
+    const handleSessionStatusEvent = async (sessionStatus: SessionStatusPayload) => {
+      if (!sessionStatus.should_logout) {
+        return;
+      }
+
+      await stopAndLogout(getLogoutMessage(sessionStatus.reason));
+    };
+
+    const pollSessionStatus = async () => {
+      if (
+        pollingInFlightRef.current ||
+        sseConnectedRef.current ||
+        !isLoggedIn ||
+        isAdmin ||
+        !machine ||
+        !user ||
+        !accessToken ||
+        document.visibilityState !== 'visible'
+      ) {
+        return;
+      }
+
+      pollingInFlightRef.current = true;
+
       try {
-        const response = await fetch(`${API_URL}/machines/${machine.id}`, {
+        const response = await fetch(API_ENDPOINTS.SESSION_STATUS(machine.id), {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
         });
-        if (response.ok) {
-          const machineData = await response.json();
-          if (!machineData.in_uso) {
-            setLogoutMessage('Macchina liberata dall\'amministratore');
-            await handleLogout();
-          } else if (machineData.operatore_attuale_id && machineData.operatore_attuale_id !== user.id) {
-            setLogoutMessage(`Machine operator mismatch: expected ${user.id}, got ${machineData.operatore_attuale_id}`);
-            await handleLogout();
-          } else if (!machineData.operatore_attuale_id && machineData.in_uso) {
-            setLogoutMessage('Machine inconsistency: in_uso=true but operatore_attuale_id=null');
-            await handleLogout();
+
+        if (response.status === 401) {
+          const refreshSucceeded = await refreshAccessToken();
+          if (!refreshSucceeded) {
+            await stopAndLogout('Sessione scaduta');
+            return;
           }
-        } else if (response.status === 401) {
-          console.error('Token expired during polling');
-        } else {
-          console.error(`Polling failed with status: ${response.status}`);
+
+          scheduleNextPoll(getPollingDelay());
+          return;
         }
+
+        if (!response.ok) {
+          console.error(`Polling session-status failed with status: ${response.status}`);
+          scheduleNextPoll(getPollingDelay());
+          return;
+        }
+
+        const sessionStatus: SessionStatusPayload = await response.json();
+        await handleSessionStatusEvent(sessionStatus);
+        if (sessionStatus.should_logout) return;
+
+        scheduleNextPoll(getPollingDelay());
       } catch (error) {
-        console.error('Error polling machine status:', error);
+        console.error('Error polling session status:', error);
+        scheduleNextPoll(getPollingDelay());
+      } finally {
+        pollingInFlightRef.current = false;
       }
     };
 
-    const pollingInterval = setInterval(pollMachineStatus, 10000);
-    pollMachineStatus();
+    const startPollingFallback = () => {
+      closeEventSource();
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      void pollSessionStatus();
+    };
 
-    return () => clearInterval(pollingInterval);
-  }, [isLoggedIn, machine, user, accessToken, logout, API_URL]);
+    const startSseConnection = async () => {
+      if (
+        !isLoggedIn ||
+        isAdmin ||
+        !machine ||
+        !user ||
+        !accessToken ||
+        document.visibilityState !== 'visible'
+      ) {
+        return;
+      }
+
+      clearSseRetryTimeout();
+      closeEventSource();
+
+      try {
+        const tokenResponse = await fetch(API_ENDPOINTS.SSE_TOKEN, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ machine_id: machine.id }),
+        });
+
+        if (tokenResponse.status === 401) {
+          const refreshSucceeded = await refreshAccessToken();
+          if (!refreshSucceeded) {
+            await stopAndLogout('Sessione scaduta');
+            return;
+          }
+
+          scheduleSseRetry(1000);
+          return;
+        }
+
+        if (!tokenResponse.ok) {
+          console.error(`SSE token creation failed with status: ${tokenResponse.status}`);
+          startPollingFallback();
+          scheduleSseRetry();
+          return;
+        }
+
+        const { token } = await tokenResponse.json();
+        const eventSource = new EventSource(API_ENDPOINTS.SESSION_EVENTS(machine.id, token));
+        eventSourceRef.current = eventSource;
+
+        eventSource.onopen = () => {
+          sseConnectedRef.current = true;
+          clearPollingTimeout();
+          clearSseRetryTimeout();
+        };
+
+        eventSource.addEventListener('session_status', (event) => {
+          try {
+            const payload = JSON.parse((event as MessageEvent<string>).data) as SessionStatusPayload;
+            void handleSessionStatusEvent(payload);
+          } catch (error) {
+            console.error('Errore parsing evento session_status:', error);
+          }
+        });
+
+        eventSource.addEventListener('heartbeat', () => {
+          sseConnectedRef.current = true;
+        });
+
+        eventSource.onerror = () => {
+          closeEventSource();
+          startPollingFallback();
+          scheduleSseRetry();
+        };
+      } catch (error) {
+        console.error('Errore apertura SSE:', error);
+        startPollingFallback();
+        scheduleSseRetry();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        mountedAtRef.current = Date.now();
+        void startSseConnection();
+        return;
+      }
+
+      closeEventSource();
+      clearSseRetryTimeout();
+      clearPollingTimeout();
+    };
+
+    closeEventSource();
+    clearSseRetryTimeout();
+    clearPollingTimeout();
+    mountedAtRef.current = Date.now();
+
+    if (
+      isLoggedIn &&
+      !isAdmin &&
+      machine &&
+      user &&
+      accessToken &&
+      document.visibilityState === 'visible'
+    ) {
+      void startSseConnection();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      closeEventSource();
+      clearSseRetryTimeout();
+      clearPollingTimeout();
+      pollingInFlightRef.current = false;
+    };
+  }, [isLoggedIn, isAdmin, machine, user, accessToken, refreshAccessToken, logout]);
 
   const handleBadgeLogin = async (badgeId: string, machineId: number) => {
     setLoading(true);
@@ -132,7 +414,8 @@ export function OperatorInterface() {
   };
 
   const handleLogout = async () => {
-    setLogoutMessage(null);
+    manualLogoutInProgressRef.current = true;
+    dismissLogoutMessage();
     setAvatarState('idle');
     setTranscript('');
     setQuestionInput('');
@@ -171,11 +454,23 @@ export function OperatorInterface() {
         }
 
         const data = await response.json();
-        handleTTS(data.response);
-        setTimeout(() => {
-          setAvatarState('speaking');
-          startTypingEffect(data.response);
-        }, 1500);
+        const playback = await handleTTS(data.response);
+
+        setAvatarState('speaking');
+        await startTypingEffect(data.response, playback?.durationMs);
+
+        if (playback) {
+          try {
+            await playback.finished;
+          } catch (playbackError) {
+            console.error('Audio playback error:', playbackError);
+          }
+        }
+
+        setIsTyping(false);
+        setAvatarState('idle');
+        setShowSubtitles(false);
+        setShowFollowUp(true);
       } catch (error) {
         console.error('Error asking question:', error);
         setAvatarState('idle');
@@ -185,15 +480,16 @@ export function OperatorInterface() {
     }
   };
 
-    const handleTTS = async (text: string) => {
+    const handleTTS = async (text: string): Promise<TtsPlayback | null> => {
     if (!isLoggedIn) {
-      return;
+      return null;
     }
     try {
-      await playTts(text, accessToken ?? undefined);
+      return await playTts(text, accessToken ?? undefined);
     } catch (error) {
       console.error('TTS test error:', error);
       alert(error instanceof Error ? error.message : 'Errore durante il test TTS');
+      return null;
     }
   };
 
@@ -203,27 +499,36 @@ export function OperatorInterface() {
     setCurrentTranscription('');
   };
 
-  const startTypingEffect = (fullText: string) => {
+  const startTypingEffect = (fullText: string, durationMs?: number) => {
     setCurrentTranscription('');
     setIsTyping(true);
     setShowSubtitles(true);
-    
-    let index = 0;
-    
-    const typeNextChar = () => {
-      if (index < fullText.length) {
-        setCurrentTranscription(fullText.substring(0, index + 1));
-        index++;
-        setTimeout(typeNextChar, 50);
-      } else {
-        setIsTyping(false);
-        setAvatarState('idle');
-        setShowSubtitles(false);
-        setShowFollowUp(true);
-      }
-    };
-    
-    typeNextChar();
+
+    const effectiveDurationMs =
+      durationMs && durationMs > 0
+        ? durationMs
+        : Math.max(fullText.length * 45, 1500);
+    const charDelayMs = Math.max(
+      15,
+      Math.min(90, effectiveDurationMs / Math.max(fullText.length, 1))
+    );
+
+    return new Promise<void>((resolve) => {
+      let index = 0;
+
+      const typeNextChar = () => {
+        if (index < fullText.length) {
+          setCurrentTranscription(fullText.substring(0, index + 1));
+          index++;
+          window.setTimeout(typeNextChar, charDelayMs);
+          return;
+        }
+
+        resolve();
+      };
+
+      typeNextChar();
+    });
   };
 
   /*
@@ -256,7 +561,18 @@ export function OperatorInterface() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white relative overflow-hidden">
       {/* Logout notification */}
       {logoutMessage && (
-        <div className="fixed top-4 left-4 right-4 z-50 bg-red-500/20 border border-red-500/50 rounded-lg p-4 text-red-100 backdrop-blur-md">
+        <div
+          key={logoutMessageKey}
+          className="fixed top-4 left-4 right-4 z-50 bg-red-500/20 border border-red-500/50 rounded-lg p-4 pr-12 text-red-100 backdrop-blur-md"
+        >
+          <button
+            type="button"
+            onClick={dismissLogoutMessage}
+            className="absolute right-3 top-3 text-red-200 transition-colors hover:text-white"
+            aria-label="Chiudi notifica"
+          >
+            <X className="h-4 w-4" />
+          </button>
           <p className="font-semibold">{logoutMessage}</p>
           <p className="text-sm text-red-200 mt-1">Sei stato disconnesso dalla macchina</p>
         </div>

@@ -11,3 +11,4 @@ python-multipart
 python-decouple
 python-dotenv
 httpx
+piper-tts

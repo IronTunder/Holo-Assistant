@@ -1,86 +1,280 @@
 import io
+import json
 import os
-import subprocess
+import threading
 import wave
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
+
+from piper import PiperVoice
+
+
+@dataclass(frozen=True)
+class VoiceModel:
+    key: str
+    language_code: str
+    family: str
+    name: str
+    quality: str
+    model_path: Path
+    config_path: Path
+    aliases: Tuple[str, ...] = ()
 
 
 class PiperTTSService:
-    """Generate WAV audio using a local Piper executable."""
+    """Generate WAV audio using Piper voices stored in the local voice_models repository."""
 
     def __init__(self) -> None:
-        default_piper_path = Path.home() / ".local/share/piper/bin/piper"
-        default_model_path = Path.home() / ".local/share/piper/voices/it_IT-paola-medium.onnx"
-        default_config_path = Path.home() / ".local/share/piper/voices/it_IT-paola-medium.onnx.json"
+        service_dir = Path(__file__).resolve().parent
 
         self.enabled = os.getenv("TTS_ENABLED", "false").lower() == "true"
-        self.sample_rate = int(os.getenv("TTS_SAMPLE_RATE", "22050"))
-        self.piper_executable = Path(os.getenv("PIPER_EXECUTABLE", str(default_piper_path)))
-        self.model_path = Path(os.getenv("PIPER_MODEL_PATH", str(default_model_path)))
-        self.config_path = Path(os.getenv("PIPER_CONFIG_PATH", str(default_config_path)))
+        self.use_cuda = os.getenv("PIPER_USE_CUDA", "false").lower() == "true"
+        self.voice_models_dir = Path(
+            os.getenv("PIPER_VOICE_MODELS_DIR", str(service_dir / "voice_models"))
+        )
+        self.voice_manifest_path = Path(
+            os.getenv("PIPER_VOICES_MANIFEST", str(self.voice_models_dir / "voices.json"))
+        )
+        self.default_voice_key = os.getenv("PIPER_DEFAULT_VOICE", "it_IT-paola-medium")
+        self.default_language = os.getenv("PIPER_DEFAULT_LANGUAGE", "it-IT")
+        self.preferred_qualities = self._parse_quality_order(
+            os.getenv("PIPER_PREFERRED_QUALITIES", "medium,low,x_low,high")
+        )
+
+        self._voice_cache: Dict[str, PiperVoice] = {}
+        self._voice_cache_lock = threading.Lock()
+        self._available_models = self._load_available_models()
+        self._alias_to_key = self._build_alias_index(self._available_models.values())
 
     def get_status(self) -> dict:
+        languages = sorted({model.language_code for model in self._available_models.values()})
         return {
             "enabled": self.enabled,
-            "piper_executable": str(self.piper_executable),
-            "model_path": str(self.model_path),
-            "config_path": str(self.config_path),
+            "voice_models_dir": str(self.voice_models_dir),
+            "voice_manifest_path": str(self.voice_manifest_path),
+            "default_voice_key": self.default_voice_key,
+            "default_language": self.default_language,
+            "preferred_qualities": self.preferred_qualities,
+            "available_models": sorted(self._available_models.keys()),
+            "available_languages": languages,
             "ready": self.is_ready(),
         }
 
     def is_ready(self) -> bool:
-        return (
-            self.enabled
-            and self.piper_executable.exists()
-            and self.model_path.exists()
-            and self.config_path.exists()
-        )
+        return self.enabled and bool(self._available_models)
 
-    def synthesize_wav(self, text: str) -> bytes:
+    def synthesize_wav(self, text: str, language: Optional[str] = None) -> bytes:
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("Il testo TTS non puo essere vuoto")
 
+        voice_model = self.resolve_voice_model(language)
+        voice = self._get_voice(voice_model)
+        wav_buffer = io.BytesIO()
+
+        with wave.open(wav_buffer, "wb") as wav_file:
+            voice.synthesize_wav(clean_text, wav_file)
+
+        return wav_buffer.getvalue()
+
+    def resolve_voice_model(self, language: Optional[str] = None) -> VoiceModel:
         if not self.enabled:
             raise RuntimeError("TTS disabilitato")
 
-        if not self.piper_executable.exists():
-            raise FileNotFoundError(f"Eseguibile Piper non trovato: {self.piper_executable}")
+        if not self._available_models:
+            raise FileNotFoundError(
+                f"Nessun modello Piper disponibile in {self.voice_models_dir}"
+            )
 
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"Modello Piper non trovato: {self.model_path}")
+        requested = language or self.default_language
+        requested_codes = self._expand_language_candidates(requested)
 
-        cmd = [
-            str(self.piper_executable),
-            "--model",
-            str(self.model_path),
-            "--output-raw",
-        ]
+        for code in requested_codes:
+            direct = self._match_direct_key_or_alias(code)
+            if direct is not None:
+                return direct
 
-        process = subprocess.run(
-            cmd,
-            input=clean_text.encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=30,
-            check=False,
+            exact_matches = [
+                model
+                for model in self._available_models.values()
+                if model.language_code.lower() == code.lower()
+            ]
+            if exact_matches:
+                return self._pick_best_model(exact_matches)
+
+            family = self._language_family(code)
+            family_matches = [
+                model
+                for model in self._available_models.values()
+                if model.family.lower() == family.lower()
+            ]
+            if family_matches:
+                return self._pick_best_model(family_matches)
+
+        default_model = self._available_models.get(self.default_voice_key)
+        if default_model is not None:
+            return default_model
+
+        return self._pick_best_model(self._available_models.values())
+
+    def _get_voice(self, voice_model: VoiceModel) -> PiperVoice:
+        cached = self._voice_cache.get(voice_model.key)
+        if cached is not None:
+            return cached
+
+        with self._voice_cache_lock:
+            cached = self._voice_cache.get(voice_model.key)
+            if cached is None:
+                cached = PiperVoice.load(
+                    voice_model.model_path,
+                    config_path=voice_model.config_path,
+                    use_cuda=self.use_cuda,
+                )
+                self._voice_cache[voice_model.key] = cached
+
+        return cached
+
+    def _load_available_models(self) -> Dict[str, VoiceModel]:
+        manifest_models = self._load_models_from_manifest()
+        if manifest_models:
+            return manifest_models
+        return self._scan_models_from_filesystem()
+
+    def _load_models_from_manifest(self) -> Dict[str, VoiceModel]:
+        if not self.voice_manifest_path.exists():
+            return {}
+
+        try:
+            raw_manifest = json.loads(self.voice_manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+        models: Dict[str, VoiceModel] = {}
+        for key, entry in raw_manifest.items():
+            files = entry.get("files") or {}
+            model_relative = next(
+                (Path(relative_path) for relative_path in files if relative_path.endswith(".onnx")),
+                None,
+            )
+            if model_relative is None:
+                continue
+
+            model_path = self.voice_models_dir / model_relative
+            config_path = model_path.with_suffix(f"{model_path.suffix}.json")
+            if not model_path.exists() or not config_path.exists():
+                continue
+
+            language = entry.get("language") or {}
+            aliases = tuple(entry.get("aliases") or [])
+            model = VoiceModel(
+                key=key,
+                language_code=language.get("code", self._extract_language_code_from_key(key)),
+                family=language.get("family", self._language_family(key)),
+                name=entry.get("name", key),
+                quality=entry.get("quality", "medium"),
+                model_path=model_path,
+                config_path=config_path,
+                aliases=aliases,
+            )
+            models[model.key] = model
+
+        return models
+
+    def _scan_models_from_filesystem(self) -> Dict[str, VoiceModel]:
+        models: Dict[str, VoiceModel] = {}
+        for model_path in self.voice_models_dir.rglob("*.onnx"):
+            config_path = model_path.with_suffix(f"{model_path.suffix}.json")
+            if not config_path.exists():
+                continue
+
+            key = model_path.stem
+            parts = key.split("-")
+            language_code = parts[0] if parts else self.default_language.replace("-", "_")
+            quality = parts[-1] if len(parts) > 1 else "medium"
+            voice_name = "-".join(parts[1:-1]) if len(parts) > 2 else key
+
+            models[key] = VoiceModel(
+                key=key,
+                language_code=language_code,
+                family=self._language_family(language_code),
+                name=voice_name or key,
+                quality=quality,
+                model_path=model_path,
+                config_path=config_path,
+            )
+
+        return models
+
+    def _pick_best_model(self, models: Iterable[VoiceModel]) -> VoiceModel:
+        ranked = sorted(
+            models,
+            key=lambda model: (
+                self._quality_rank(model.quality),
+                model.name.lower(),
+                model.key.lower(),
+            ),
         )
+        return ranked[0]
 
-        if process.returncode != 0:
-            error_message = process.stderr.decode("utf-8", errors="ignore").strip()
-            raise RuntimeError(error_message or "Errore durante la sintesi Piper")
+    def _match_direct_key_or_alias(self, value: str) -> Optional[VoiceModel]:
+        if not value:
+            return None
 
-        if not process.stdout:
-            raise RuntimeError("Piper non ha generato audio")
+        direct = self._available_models.get(value)
+        if direct is not None:
+            return direct
 
-        wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(process.stdout)
+        alias_key = self._alias_to_key.get(value.lower())
+        if alias_key is None:
+            return None
 
-        return wav_buffer.getvalue()
+        return self._available_models.get(alias_key)
+
+    def _build_alias_index(self, models: Iterable[VoiceModel]) -> Dict[str, str]:
+        alias_index: Dict[str, str] = {}
+        for model in models:
+            alias_index[model.key.lower()] = model.key
+            alias_index[model.key.replace("_", "-").lower()] = model.key
+            for alias in model.aliases:
+                alias_index[alias.lower()] = model.key
+        return alias_index
+
+    def _expand_language_candidates(self, raw_language: str) -> List[str]:
+        candidates: List[str] = []
+        for token in (raw_language or "").split(","):
+            clean = token.split(";", 1)[0].strip()
+            if not clean:
+                continue
+
+            normalized = clean.replace("-", "_")
+            candidates.append(normalized)
+
+            family = self._language_family(normalized)
+            if family and family not in candidates:
+                candidates.append(family)
+
+        if not candidates:
+            fallback = self.default_language.replace("-", "_")
+            candidates.extend([fallback, self._language_family(fallback)])
+
+        return [candidate for candidate in candidates if candidate]
+
+    def _extract_language_code_from_key(self, key: str) -> str:
+        return key.split("-", 1)[0].replace("-", "_")
+
+    def _language_family(self, language_code: str) -> str:
+        return language_code.replace("-", "_").split("_", 1)[0]
+
+    def _quality_rank(self, quality: str) -> int:
+        try:
+            return self.preferred_qualities.index(quality)
+        except ValueError:
+            return len(self.preferred_qualities)
+
+    def _parse_quality_order(self, raw_value: str) -> List[str]:
+        qualities = [value.strip() for value in raw_value.split(",") if value.strip()]
+        return qualities or ["medium", "low", "x_low", "high"]
 
 
 tts_service = PiperTTSService()

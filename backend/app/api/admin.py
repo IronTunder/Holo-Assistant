@@ -1,18 +1,28 @@
 # backend/app/api/admin.py
 
-from fastapi import APIRouter, HTTPException, status, Depends, Query
-from sqlalchemy.orm import Session
+import asyncio
 from datetime import datetime
-from typing import Optional, List
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.user import User, Ruolo, LivelloEsperienza, Turno
-from app.models.machine import Machine
-from app.models.interaction_log import InteractionLog
+from app.api.auth.auth import (
+    build_admin_machine_event_payload,
+    get_password_hash,
+    publish_admin_machine_event,
+    publish_machine_session_event,
+    verify_admin,
+)
 from app.schemas.user import UserResponse
 from app.schemas.machine import MachineResponse
-from app.api.auth.auth import verify_admin, get_password_hash
+from app.models.interaction_log import InteractionLog
+from app.models.machine import Machine
+from app.models.user import LivelloEsperienza, Ruolo, Turno, User
+from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -67,6 +77,14 @@ class UserListResponse(BaseModel):
     created_at: datetime
 
 class MachineListResponse(BaseModel):
+    class OperatorResponse(BaseModel):
+        id: int
+        nome: str
+        badge_id: str
+        reparto: str
+        turno: str
+        livello_esperienza: str
+
     id: int
     nome: str
     reparto: str
@@ -74,6 +92,8 @@ class MachineListResponse(BaseModel):
     id_postazione: Optional[str]
     in_uso: bool
     operatore_attuale_id: Optional[int]
+    operator: Optional[OperatorResponse] = None
+    deleted: bool = False
 
 class InteractionLogResponse(BaseModel):
     id: int
@@ -85,6 +105,28 @@ class InteractionLogResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+def _build_machine_response(
+    machine: Machine,
+    operator: Optional[User] = None,
+    deleted: bool = False,
+) -> MachineListResponse:
+    return MachineListResponse(**build_admin_machine_event_payload(machine, operator=operator, deleted=deleted))
+
+
+def _load_operator_map(db: Session, machines: List[Machine]) -> dict[int, User]:
+    operator_ids = {
+        machine.operatore_attuale_id
+        for machine in machines
+        if machine.operatore_attuale_id is not None
+    }
+
+    if not operator_ids:
+        return {}
+
+    operators = db.query(User).filter(User.id.in_(operator_ids)).all()
+    return {operator.id: operator for operator in operators}
 
 # ============ Users Management ============
 
@@ -318,16 +360,9 @@ async def list_machines(
 ):
     """Lista tutti i macchinari."""
     machines = db.query(Machine).all()
+    operator_map = _load_operator_map(db, machines)
     return [
-        MachineListResponse(
-            id=m.id,
-            nome=m.nome,
-            reparto=m.reparto,
-            descrizione=m.descrizione,
-            id_postazione=m.id_postazione,
-            in_uso=m.in_uso,
-            operatore_attuale_id=m.operatore_attuale_id
-        )
+        _build_machine_response(m, operator_map.get(m.operatore_attuale_id))
         for m in machines
     ]
 
@@ -344,15 +379,10 @@ async def get_machine(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Macchinario non trovato"
         )
-    return MachineListResponse(
-        id=machine.id,
-        nome=machine.nome,
-        reparto=machine.reparto,
-        descrizione=machine.descrizione,
-        id_postazione=machine.id_postazione,
-        in_uso=machine.in_uso,
-        operatore_attuale_id=machine.operatore_attuale_id
-    )
+    operator = None
+    if machine.operatore_attuale_id is not None:
+        operator = db.query(User).filter(User.id == machine.operatore_attuale_id).first()
+    return _build_machine_response(machine, operator)
 
 @router.post("/machines", response_model=MachineListResponse, status_code=status.HTTP_201_CREATED)
 async def create_machine(
@@ -373,16 +403,9 @@ async def create_machine(
     db.add(machine)
     db.commit()
     db.refresh(machine)
-    
-    return MachineListResponse(
-        id=machine.id,
-        nome=machine.nome,
-        reparto=machine.reparto,
-        descrizione=machine.descrizione,
-        id_postazione=machine.id_postazione,
-        in_uso=machine.in_uso,
-        operatore_attuale_id=machine.operatore_attuale_id
-    )
+    await publish_admin_machine_event(db, machine)
+
+    return _build_machine_response(machine)
 
 @router.put("/machines/{machine_id}", response_model=MachineListResponse)
 async def update_machine(
@@ -411,15 +434,8 @@ async def update_machine(
     db.commit()
     db.refresh(machine)
     
-    return MachineListResponse(
-        id=machine.id,
-        nome=machine.nome,
-        reparto=machine.reparto,
-        descrizione=machine.descrizione,
-        id_postazione=machine.id_postazione,
-        in_uso=machine.in_uso,
-        operatore_attuale_id=machine.operatore_attuale_id
-    )
+    await publish_admin_machine_event(db, machine)
+    return _build_machine_response(machine)
 
 @router.delete("/machines/{machine_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_machine(
@@ -435,8 +451,20 @@ async def delete_machine(
             detail="Macchinario non trovato"
         )
     
+    deleted_machine_id = machine.id
+    deleted_payload_machine = Machine(
+        id=machine.id,
+        nome=machine.nome,
+        reparto=machine.reparto,
+        descrizione=machine.descrizione,
+        id_postazione=machine.id_postazione,
+        in_uso=machine.in_uso,
+        operatore_attuale_id=machine.operatore_attuale_id,
+    )
     db.delete(machine)
     db.commit()
+    await publish_admin_machine_event(db, deleted_payload_machine, deleted=True)
+    await publish_machine_session_event(None, -1, machine_id=deleted_machine_id)
     return None
 
 @router.post("/machines/{machine_id}/reset-status", response_model=dict)
@@ -456,8 +484,39 @@ async def reset_machine_status(
     machine.in_uso = False
     machine.operatore_attuale_id = None
     db.commit()
-    
+    await publish_machine_session_event(machine, -1, db=db)
+
     return {"message": f"Macchinario {machine.nome} liberato"}
+
+
+@router.get("/machine-events")
+async def machine_events(
+    request: Request,
+    admin: User = Depends(verify_admin),
+):
+    del admin
+
+    async def event_generator():
+        stream = session_event_bus.stream(
+            ADMIN_MACHINE_EVENTS_CHANNEL,
+            initial_payload=None,
+            initial_event_name="machine_status",
+            send_initial=False,
+        )
+        async for message in stream:
+            if await request.is_disconnected():
+                break
+            yield message
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 # ============ Audit Logs ============
 

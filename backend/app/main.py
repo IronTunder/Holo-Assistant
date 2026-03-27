@@ -11,11 +11,17 @@ from app.api.machines import router as machines_router
 from app.api.admin import router as admin_router
 from app.api.interactions import router as interactions_router
 from app.api.tts import router as tts_router
+from app.database import apply_compatible_migrations
 
 # Setup logging
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ditto API", version="1.0.0")
+
+
+@app.on_event("startup")
+async def startup_event():
+    apply_compatible_migrations()
 
 # Funzione per rilevare il prefisso di rete locale dinamicamente
 def get_local_network_prefix() -> str:

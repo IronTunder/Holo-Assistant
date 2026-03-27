@@ -1,6 +1,5 @@
 @echo off
 title DITTO Setup - Avvio del sistema
-color 0A
 
 echo ========================================
 echo    DITTO - Avvio del sistema
@@ -65,12 +64,12 @@ goto :wait_postgres
 
 :: Verifica che Ollama sia pronto e pull il modello mistral
 echo Preparazione modello AI (mistral)...
-docker exec ditto_ollama ollama pull mistral >nul 2>&1
+docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M >nul 2>&1
 if errorlevel 1 (
-    echo [AVVISO] Impossibile pullare il modello mistral. Assicurati che Ollama sia accessibile.
-    echo [AVVISO] Puoi pullare manualmente con: docker exec ditto_ollama ollama pull mistral
+    echo [AVVISO] Impossibile pullare il modello mistral:7b-instruct-v0.3-q4_K_M. Assicurati che Ollama sia accessibile.
+    echo [AVVISO] Puoi pullare manualmente con: docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
 ) else (
-    echo [OK] Modello mistral pronto
+    echo [OK] Modello mistral:7b-instruct-v0.3-q4_K_M pronto
 )
 echo.
 
@@ -88,16 +87,26 @@ echo DATABASE_NAME=ditto_db
 echo SECRET_KEY=your-super-secret-key-change-this-in-production
 echo ADMIN_USERNAME=admin
 echo ADMIN_PASSWORD=tuapasswordsicura
+echo ACCESS_TOKEN_EXPIRE_MINUTES=480
 echo ADMIN_TOKEN_EXPIRE_MINUTES=120
+echo OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
+echo ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 echo ALGORITHM=HS256
-echo ACCESS_TOKEN_EXPIRE_MINUTES=30
 echo ALLOWED_ORIGINS=http://localhost:5173,http://%IP%:5173
 echo OLLAMA_BASE_URL=http://%IP%:11434
+echo OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+echo OLLAMA_TIMEOUT_SECONDS=120
+echo OLLAMA_HEALTH_TIMEOUT_SECONDS=5
+echo OLLAMA_KEEP_ALIVE=30m
+echo OLLAMA_NUM_PREDICT_CLASSIFY=4
+echo OLLAMA_NUM_PREDICT_SELECT=2
+echo OLLAMA_TOP_K=20
+echo OLLAMA_TOP_P=0.8
+echo OLLAMA_TEMPERATURE_CLASSIFY=0.0
+echo OLLAMA_TEMPERATURE_SELECT=0.0
+echo OLLAMA_NUM_CTX=2048
+echo OLLAMA_NUM_THREAD=4
 echo TTS_ENABLED=true
-echo PIPER_EXECUTABLE=%USERPROFILE%\.local\share\piper\bin\piper.exe
-echo PIPER_MODEL_PATH=%USERPROFILE%\.local\share\piper\voices\it_IT-paola-medium.onnx
-echo PIPER_CONFIG_PATH=%USERPROFILE%\.local\share\piper\voices\it_IT-paola-medium.onnx.json
-echo TTS_SAMPLE_RATE=22050
 ) > %ROOT_DIR%\backend\.env
 echo [OK] Backend configurato
 echo.
@@ -197,29 +206,6 @@ echo.
 
 :: Torna alla directory root
 cd %ROOT_DIR%
-
-:: Salva informazioni in un file
-(
-echo === DITTO - Informazioni di sistema ===
-echo Data avvio: %date% %time%
-echo IP Server: %IP%
-echo.
-echo URL:
-echo - Frontend locale: http://localhost:5173
-echo - Frontend rete: http://%IP%:5173
-echo - Backend: http://%IP%:8000
-echo - API Docs: http://%IP%:8000/docs
-echo.
-echo Comandi utili:
-echo - Ferma container: cd docker ^&^& docker-compose down
-echo - Log container: docker-compose logs -f
-echo.
-echo Credenziali di test:
-echo - Username: Mario Rossi, Luigi Verdi, Anna Bianchi, Marco Neri
-echo - Password: password123
-) > %ROOT_DIR%\ditto_info.txt
-echo [OK] Informazioni salvate in: %ROOT_DIR%\ditto_info.txt
-echo.
 
 :: Mostra riepilogo
 echo ========================================

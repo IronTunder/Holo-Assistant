@@ -1,302 +1,176 @@
 @echo off
-REM ========================================
-REM Progetto Ditto - Start Services Script
-REM ========================================
-REM Avvia il backend e frontend quando il database è già inizializzato
+title DITTO Start - Avvio servizi
 
-setlocal enabledelayedexpansion
+echo ========================================
+echo    DITTO - Avvio servizi
+echo ========================================
+echo.
 
-:: Imposta colori
-color 0A
-
-:: Variabili configurabili
+set ROOT_DIR=%CD%
 set BACKEND_PORT=8000
 set FRONTEND_PORT=5173
-set IP=
+set OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
 
-echo.
-echo ========================================
-echo  Progetto Ditto - Avvio Servizi
-echo ========================================
-echo.
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4"') do (
+    set IP=%%a
+    goto :ip_found
+)
+:ip_found
+set IP=%IP: =%
+if "%IP%"=="" set IP=localhost
 
-:: Cartella base del progetto
-set BASE_DIR=%~dp0
-echo [INFO] Cartella base: %BASE_DIR%
-
-:: Ottieni IP locale
-call :get_local_ip
-echo [INFO] IP locale: %IP%
-
-:: ========================================
-:: 1. AVVIO DOCKER (PostgreSQL)
-:: ========================================
-echo.
-echo [FASE 1] Verificando Docker e PostgreSQL...
+echo [INFO] IP del server: %IP%
 echo.
 
-:: Verifica se Docker è installato
-docker --version >nul 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo [WARNING] Docker non trovato. Continuando senza contenitori...
-    echo [INFO] Assicurati che PostgreSQL sia in esecuzione sulla macchina!
-    timeout /t 2 /nobreak >nul
-    goto :skip_docker
+echo [1/3] Avvio PostgreSQL e Ollama con Docker...
+cd /d %ROOT_DIR%\docker
+if not exist docker-compose.yml (
+    echo [ERRORE] File docker-compose.yml non trovato in %CD%
+    pause
+    exit /b 1
 )
 
-echo [OK] Docker trovato
-echo [INFO] Avvio PostgreSQL via docker-compose...
-
-cd /d "%BASE_DIR%docker"
-
-:: Ferma container esistenti
 docker-compose down 2>nul
-
-:: Avvia container
 docker-compose up -d
-if !ERRORLEVEL! neq 0 (
-    echo [WARNING] Impossibile avviare docker-compose. 
-    echo [INFO] Assicurati che Docker Desktop sia in esecuzione.
-    timeout /t 2 /nobreak >nul
-    goto :skip_docker
+if errorlevel 1 (
+    echo [AVVISO] Impossibile avviare Docker con docker-compose.
+    echo [AVVISO] Continuo comunque: assicurati che PostgreSQL e Ollama siano gia' in esecuzione.
+) else (
+    echo [OK] Docker avviato correttamente
 )
+echo.
 
-echo [OK] Container avviati
+echo Attendendo l'avvio di PostgreSQL e Ollama...
+timeout /t 8 /nobreak >nul
 
-:: Attendi che PostgreSQL sia pronto
-echo [INFO] Attendendo che PostgreSQL sia pronto...
-set MAX_ATTEMPTS=30
+echo Verifica connessione a PostgreSQL...
+set MAX_ATTEMPTS=20
 set ATTEMPT=1
-
 :wait_postgres
-docker ps 2>nul | findstr postgres >nul
-if !ERRORLEVEL! equ 0 (
-    docker exec ditto_postgres pg_isready -U postgres >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        echo [OK] PostgreSQL e' pronto
-        goto :postgres_ready
-    )
-)
-
-if !ATTEMPT! equ !MAX_ATTEMPTS! (
-    echo [WARNING] PostgreSQL potrebbe non essere pronto
+docker exec ditto_postgres pg_isready -U postgres >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] PostgreSQL e' pronto
     goto :postgres_ready
 )
-
+if %ATTEMPT% equ %MAX_ATTEMPTS% (
+    echo [AVVISO] PostgreSQL potrebbe non essere pronto
+    goto :postgres_ready
+)
 set /a ATTEMPT+=1
-<nul set /p "=."
 timeout /t 2 /nobreak >nul
 goto :wait_postgres
-
 :postgres_ready
 echo.
 
-:skip_docker
+if exist %ROOT_DIR%\backend\.env (
+    for /f "usebackq tokens=1,* delims==" %%A in ("%ROOT_DIR%\backend\.env") do (
+        if /I "%%A"=="OLLAMA_MODEL" set OLLAMA_MODEL=%%B
+    )
+)
 
-:: ========================================
-:: 2. AVVIO BACKEND
-:: ========================================
+echo Preparazione modello AI: %OLLAMA_MODEL%
+docker exec ditto_ollama ollama list 2>nul | findstr /i /c:"%OLLAMA_MODEL%" >nul
+if errorlevel 1 (
+    echo [AVVISO] Modello %OLLAMA_MODEL% non trovato nel container Ollama
+    echo [AVVISO] Esegui setup.bat oppure: docker exec ditto_ollama ollama pull %OLLAMA_MODEL%
+) else (
+    echo [INFO] Warmup modello AI in corso...
+    docker exec ditto_ollama ollama run %OLLAMA_MODEL% "Rispondi solo OK" >nul 2>&1
+    if errorlevel 1 (
+        echo [AVVISO] Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento.
+    ) else (
+        echo [OK] Modello AI pronto
+    )
+)
 echo.
-echo [FASE 2] Avvio Backend FastAPI...
-echo.
 
-cd /d "%BASE_DIR%backend"
+echo [2/3] Avvio backend FastAPI...
+cd /d %ROOT_DIR%\backend
 
-:: Verifica se Python è installato
+if not exist venv\ (
+    echo [ERRORE] Ambiente virtuale non trovato in %CD%\venv
+    echo [INFO] Esegui prima setup.bat
+    pause
+    exit /b 1
+)
+
 python --version >nul 2>&1
-if !ERRORLEVEL! neq 0 (
+if errorlevel 1 (
     echo [ERRORE] Python non trovato. Installa Python prima di procedere.
     pause
     exit /b 1
 )
 
-echo [OK] Python trovato: 
-python --version
-
-:: Verifica se venv esiste
-if not exist "venv" (
-    echo [WARNING] Environment virtuale non trovato. Creazione in corso...
-    python -m venv venv
-    echo [OK] Ambiente virtuale creato
-)
-
-:: Verifica se la porta è libera
-call :is_port_available !BACKEND_PORT!
-if !PORT_AVAILABLE! equ 1 (
-    echo [OK] Avvio server backend su http://!IP!:!BACKEND_PORT!
-    
-    :: Crea script temporaneo per avviare il backend
-    set BACKEND_SCRIPT=%TEMP%\ditto_backend_%RANDOM%.bat
-    (
-        echo @echo off
-        echo cd /d "%BASE_DIR%backend"
-        echo call venv\Scripts\activate.bat
-        echo echo.
-        echo echo Backend Ditto in esecuzione su http://0.0.0.0:!BACKEND_PORT!
-        echo echo.
-        echo python -m uvicorn app.main:app --reload --host 0.0.0.0 --port !BACKEND_PORT! --no-use-colors
-        echo echo.
-        echo echo Backend terminato. Premi un tasto per chiudere...
-        echo pause
-        echo del "%%~f0"
-    ) > "!BACKEND_SCRIPT!"
-    
-    :: Avvia in una nuova finestra
-    start "Ditto Backend Server" cmd /k "call \"!BACKEND_SCRIPT!\""
-    
-) else (
-    echo [WARNING] Porta !BACKEND_PORT! gia' in uso: backend non avviato.
-    echo [INFO] Se Ditto e' gia' attivo, puoi usare http://!IP!:!BACKEND_PORT!
-    echo [INFO] Per usare un'altra porta: set BACKEND_PORT=8001 ^&^& start.bat
-)
-
-:: Attendi un momento per lo startup
-timeout /t 3 /nobreak >nul
-
-:: ========================================
-:: 3. AVVIO FRONTEND
-:: ========================================
-echo.
-echo [FASE 3] Avvio Frontend (React + Vite)...
+start "DITTO Backend" cmd /k "cd /d %ROOT_DIR%\backend && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT% --no-use-colors"
+echo [OK] Backend avviato su http://%IP%:%BACKEND_PORT%
 echo.
 
-cd /d "%BASE_DIR%frontend\my-app"
+echo Attendendo l'avvio del backend...
+timeout /t 5 /nobreak >nul
 
-:: Verifica se Node.js è installato
+echo [3/3] Avvio frontend...
+cd /d %ROOT_DIR%\frontend\my-app
+
 node --version >nul 2>&1
-if !ERRORLEVEL! neq 0 (
+if errorlevel 1 (
     echo [ERRORE] Node.js non trovato. Installa Node.js prima di procedere.
     pause
     exit /b 1
 )
 
-echo [OK] Node.js trovato: 
-node --version
-echo [OK] npm trovato: 
-npm --version
-
-:: Crea .env se non esiste
-if not exist ".env" (
-    echo [INFO] Creazione file .env con VITE_API_URL=http://!IP!:!BACKEND_PORT!
-    echo VITE_API_URL=http://!IP!:!BACKEND_PORT! > .env
-)
-
-:: Installa dipendenze se necessario
-if not exist "node_modules" (
-    echo [WARNING] node_modules non trovato. Installazione in corso (potrebbe richiedere tempo)...
-    call npm install
-    echo [OK] Dipendenze installate
-)
-
-:: Verifica se la porta è libera
-call :is_port_available !FRONTEND_PORT!
-if !PORT_AVAILABLE! equ 1 (
-    echo [OK] Avvio dev server frontend su http://localhost:!FRONTEND_PORT!
-    
-    :: Crea script temporaneo per avviare il frontend
-    set FRONTEND_SCRIPT=%TEMP%\ditto_frontend_%RANDOM%.bat
-    (
-        echo @echo off
-        echo cd /d "%BASE_DIR%frontend\my-app"
-        echo echo.
-        echo echo Frontend Ditto in esecuzione su http://0.0.0.0:!FRONTEND_PORT!
-        echo echo.
-        echo npm run dev -- --host 0.0.0.0
-        echo echo.
-        echo echo Frontend terminato. Premi un tasto per chiudere...
-        echo pause
-        echo del "%%~f0"
-    ) > "!FRONTEND_SCRIPT!"
-    
-    :: Avvia in una nuova finestra
-    start "Ditto Frontend Dev Server" cmd /k "call \"!FRONTEND_SCRIPT!\""
-    
-) else (
-    echo [WARNING] Porta !FRONTEND_PORT! gia' in uso: frontend non avviato.
-    echo [INFO] Se il frontend e' gia' attivo, puoi usare http://localhost:!FRONTEND_PORT!
-)
-
-timeout /t 3 /nobreak >nul
-
-:: ========================================
-:: 4. RIEPILOGO
-:: ========================================
-echo.
-echo ========================================
-echo  Servizi Avviati Con Successo!
-echo ========================================
-echo.
-echo Docker:   postgres:5432 (in docker-compose)
-echo Backend:  http://!IP!:!BACKEND_PORT!
-echo Frontend: http://localhost:!FRONTEND_PORT!
-echo.
-echo Documentazione API: http://!IP!:!BACKEND_PORT!/docs
-echo Health Check:       http://!IP!:!BACKEND_PORT!/health
-echo.
-echo [INFO] I servizi sono in esecuzione in finestre separate.
-echo [INFO] Per fermare i servizi:
-echo        - Chiudi le finestre del terminale
-echo        - Oppure esegui: cd docker ^&^& docker-compose down
-echo.
-
-:: Salva informazioni in un file
 (
-    echo === DITTO - Informazioni di sistema ===
-    echo Data avvio: %date% %time%
-    echo IP Server: !IP!
-    echo.
-    echo URL:
-    echo - Frontend locale: http://localhost:!FRONTEND_PORT!
-    echo - Frontend rete: http://!IP!:!FRONTEND_PORT!
-    echo - Backend: http://!IP!:!BACKEND_PORT!
-    echo - API Docs: http://!IP!:!BACKEND_PORT!/docs
-    echo.
-    echo Comandi utili:
-    echo - Ferma container: cd docker ^&^& docker-compose down
-    echo - Log container: docker-compose logs -f
-    echo.
-    echo Credenziali di test:
-    echo - Username: Mario Rossi, Luigi Verdi, Anna Bianchi, Marco Neri
-    echo - Password: password123
-) > "%BASE_DIR%ditto_info.txt"
-echo [OK] Informazioni salvate in: %BASE_DIR%ditto_info.txt
+echo VITE_API_URL=http://%IP%:%BACKEND_PORT%
+) > .env
+
+if not exist node_modules\ (
+    echo Installazione dipendenze Node.js...
+    call npm install
+    if errorlevel 1 (
+        echo [ERRORE] Installazione dipendenze frontend fallita
+        pause
+        exit /b 1
+    )
+) else (
+    echo Dipendenze Node.js gia' installate
+)
+
+start "DITTO Frontend" cmd /k "cd /d %ROOT_DIR%\frontend\my-app && npm run dev -- --host 0.0.0.0"
+echo [OK] Frontend avviato su http://%IP%:%FRONTEND_PORT%
+echo.
+
+cd /d %ROOT_DIR%
+
+(
+echo === DITTO - Informazioni di sistema ===
+echo Data avvio: %date% %time%
+echo IP Server: %IP%
+echo.
+echo URL:
+echo - Frontend locale: http://localhost:%FRONTEND_PORT%
+echo - Frontend rete: http://%IP%:%FRONTEND_PORT%
+echo - Backend: http://%IP%:%BACKEND_PORT%
+echo - API Docs: http://%IP%:%BACKEND_PORT%/docs
+echo.
+echo Comandi utili:
+echo - Ferma container: cd docker ^&^& docker-compose down
+echo - Log container: docker-compose logs -f
+echo.
+) > %ROOT_DIR%\ditto_info.txt
+echo [OK] Informazioni salvate in: %ROOT_DIR%\ditto_info.txt
+echo.
+
+echo ========================================
+echo    [OK] SERVIZI AVVIATI
+echo ========================================
+echo.
+echo Frontend locale: http://localhost:%FRONTEND_PORT%
+echo Frontend rete:   http://%IP%:%FRONTEND_PORT%
+echo Backend API:     http://%IP%:%BACKEND_PORT%
+echo API Docs:        http://%IP%:%BACKEND_PORT%/docs
+echo Adminer DB:      http://localhost:8080
+echo.
+echo Per fermare il sistema, chiudi le finestre del terminale
+echo oppure esegui: cd docker ^&^& docker-compose down
 echo.
 
 pause
-
-endlocal
-goto :eof
-
-:: ========================================
-:: FUNZIONI
-:: ========================================
-
-:get_local_ip
-    :: Ottieni IP locale (escludendo 127.0.0.1)
-    set IP=
-    for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
-        set "temp=%%a"
-        set "temp=!temp: =!"
-        if not "!temp!"=="127.0.0.1" (
-            set IP=!temp!
-            goto :ip_found
-        )
-    )
-    
-    :: Se non trovato, usa localhost
-    if "!IP!"=="" set IP=localhost
-    
-    :ip_found
-    exit /b
-
-:is_port_available
-    set PORT_AVAILABLE=0
-    set PORT=%~1
-    
-    :: Usa netstat per verificare se la porta è in uso
-    netstat -an 2>nul | findstr /c":!PORT! " | findstr /c:"LISTENING" >nul
-    if !ERRORLEVEL! neq 0 (
-        set PORT_AVAILABLE=1
-    )
-    
-    exit /b

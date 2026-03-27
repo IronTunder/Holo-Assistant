@@ -25,7 +25,13 @@ export const API_ENDPOINTS = {
   CREDENTIALS_LOGIN: `${API_BASE_URL}/auth/credentials-login`,
   ADMIN_LOGIN: `${API_BASE_URL}/auth/admin-login`,
   REFRESH_TOKEN: `${API_BASE_URL}/auth/refresh`,
+  REFRESH_TOKEN_STATUS: `${API_BASE_URL}/auth/refresh-token-status`,
   LOGOUT: `${API_BASE_URL}/auth/logout`,
+  AUTH_ME: `${API_BASE_URL}/auth/me`,
+  SSE_TOKEN: `${API_BASE_URL}/auth/sse-token`,
+  SESSION_EVENTS: (machineId: number, token: string) =>
+    `${API_BASE_URL}/auth/session-events?machine_id=${machineId}&token=${encodeURIComponent(token)}`,
+  SESSION_STATUS: (machineId: number) => `${API_BASE_URL}/auth/session-status?machine_id=${machineId}`,
 
   // Machines endpoints
   GET_MACHINES: `${API_BASE_URL}/machines`,
@@ -45,6 +51,7 @@ export const API_ENDPOINTS = {
   RESET_PASSWORD: (id: number) => `${API_BASE_URL}/admin/users/${id}/reset-password`,
 
   LIST_MACHINES: `${API_BASE_URL}/admin/machines`,
+  ADMIN_MACHINE_EVENTS: `${API_BASE_URL}/admin/machine-events`,
   GET_ADMIN_MACHINE: (id: number) => `${API_BASE_URL}/admin/machines/${id}`,
   CREATE_ADMIN_MACHINE: `${API_BASE_URL}/admin/machines`,
   UPDATE_ADMIN_MACHINE: (id: number) => `${API_BASE_URL}/admin/machines/${id}`,
