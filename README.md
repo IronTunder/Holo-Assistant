@@ -1,11 +1,22 @@
 # Progetto Ditto
 
-Sistema di gestione macchinari industriali con:
-- interfaccia operatore;
-- dashboard amministrativa;
+Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
+- frontend React/Vite per operatori e amministratori;
 - backend FastAPI;
 - database PostgreSQL;
-- supporto AI con retrieval deterministico e Ollama usato solo per i casi ambigui.
+- servizi AI locali con retrieval deterministico, chiarimenti guidati e fallback controllati;
+- sintesi vocale TTS e avatar operatore.
+
+## Architettura in breve
+
+- `frontend/my-app` contiene l'applicazione web.
+- `frontend/my-app/src/features/operator` gestisce login operatore, console assistente, avatar e sessione macchina.
+- `frontend/my-app/src/features/admin` contiene dashboard e strumenti di amministrazione.
+- `frontend/my-app/src/shared` raccoglie API client, auth e componenti UI condivisi.
+- `backend/app` contiene API, modelli, servizi AI e logica applicativa.
+- `backend/scripts` contiene bootstrap database e utility operative.
+- `docker` contiene i servizi locali PostgreSQL, Adminer e Ollama.
+- `scripts/windows` e `scripts/unix` contengono gli script reali di setup e avvio; i file in root sono wrapper.
 
 ## Quick Start
 
@@ -21,12 +32,14 @@ Linux:
 ./setup.sh
 ```
 
-Lo script:
-- avvia Docker con PostgreSQL, Adminer e Ollama;
-- prepara il modello `mistral:7b-instruct-v0.3-q4_K_M`;
+Lo script di setup:
+- esegue `docker-compose down` e poi `docker-compose up -d`;
+- aspetta PostgreSQL;
+- prepara il modello `mistral:7b-instruct-v0.3-q4_K_M` in Ollama;
 - crea `backend/.env` e `frontend/my-app/.env`;
-- installa dipendenze backend/frontend;
-- inizializza e popola il database.
+- installa dipendenze backend e frontend;
+- esegue `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py`;
+- avvia backend e frontend.
 
 ### Avvio successivo
 
@@ -40,61 +53,78 @@ Linux:
 ./start.sh
 ```
 
-Lo script:
-- riallinea Docker senza forzare un cold start dei container;
+Lo script di start:
+- riallinea Docker con `docker-compose up -d` senza forzare il reset dei container;
 - aspetta PostgreSQL;
-- legge `OLLAMA_MODEL` da `backend/.env`;
-- prova un warmup reale del modello AI via `/api/generate`;
-- avvia backend e frontend in finestre separate;
-- aggiorna `ditto_info.txt`.
+- legge `OLLAMA_MODEL` e i parametri principali da `backend/.env`;
+- controlla la presenza del modello con `ollama list`;
+- prova il warmup del modello via `POST /api/generate`;
+- aggiorna `frontend/my-app/.env` con `VITE_API_URL`;
+- avvia backend e frontend.
 
-## URL principali
+## Prerequisiti
+
+- Docker Desktop o Docker Engine con Compose
+- Python 3 con `venv`
+- Node.js e `npm`
+
+Dipendenze backend notevoli presenti in `backend/requirements.txt`:
+- `fastapi`
+- `uvicorn[standard]`
+- `sqlalchemy`
+- `psycopg2-binary`
+- `python-jose[cryptography]`
+- `piper-tts`
+- `rapidfuzz`
+
+## URL utili
 
 - Frontend locale: `http://localhost:5173`
 - Frontend rete: `http://{server-ip}:5173`
 - Backend API: `http://{server-ip}:8000`
 - Swagger: `http://{server-ip}:8000/docs`
+- Admin login: `http://localhost:5173/admin-login`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
 
-## Login
+## Flussi applicativi
 
-### Operatore
+### Esperienza operatore
 
-Flussi supportati:
+Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
+- selezione macchina tra quelle disponibili;
+- login con badge o credenziali;
+- area avatar con stati `idle`, `listening`, `thinking`, `speaking`;
+- console laterale per domanda, risposta, chiarimenti e follow-up;
+- azioni rapide visibili senza scroll dell'intera pagina.
+
+Endpoint principali usati dal frontend operatore:
 - `POST /auth/badge-login`
 - `POST /auth/credentials-login`
+- `GET /machines/available`
+- `POST /api/interactions/ask`
+- `POST /tts/synthesize`
 
-L’operatore accede associandosi a una macchina.
+### Sessione operatore in tempo reale
 
-### Admin
+La sessione macchina viene monitorata in tempo reale:
+- il frontend richiede un token via `POST /auth/sse-token`;
+- apre il canale `GET /auth/session-events`;
+- riceve eventi `session_status` e heartbeat;
+- se SSE non e disponibile, usa fallback su `GET /auth/session-status`.
 
-Endpoint:
-```http
-POST /auth/admin-login
-```
+I motivi di logout remoto gestiti lato frontend sono:
+- `machine_released`
+- `machine_reassigned`
+- `machine_not_found`
 
-Credenziali di default generate dal setup:
-```ini
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=tuapasswordsicura
-```
+### Dashboard admin
 
-## Sessioni e token
+L'area admin gestisce autenticazione dedicata, macchine, utenti, metadati e knowledge base tecnica. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
 
-Variabili attuali:
-```ini
-ACCESS_TOKEN_EXPIRE_MINUTES=480
-ADMIN_TOKEN_EXPIRE_MINUTES=120
-OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
-ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
-```
+## AI, retrieval e TTS
 
-Nota importante:
-- se scade solo l’`access_token`, la sessione può essere recuperata se il `refresh_token` è ancora valido;
-- per testare davvero la scadenza completa bisogna ridurre anche `OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES` o `ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES`.
-
-## AI con Ollama
+### Motore AI
 
 Configurazione attuale:
 ```ini
@@ -115,10 +145,20 @@ OLLAMA_NUM_THREAD=4
 ```
 
 Comportamento attuale:
-- il backend prova direttamente la generazione con Ollama;
-- se Ollama fallisce o il modello non è pronto, entra in fallback controllato;
-- la selezione di fallback usa euristiche keyword-based, non il “primo risultato” fisso;
-- `start.bat` e `start.sh` provano a fare warmup del modello con `ollama run`.
+- il backend privilegia retrieval deterministico e selezione controllata dei contenuti;
+- Ollama viene usato per classificazione, selezione o casi ambigui, non come unica fonte;
+- se il modello non e disponibile, il backend usa fallback espliciti;
+- le risposte possono produrre chiarimenti guidati o messaggi di out-of-scope;
+- il frontend puo sintetizzare la risposta via TTS e riprodurla attraverso avatar o audio fallback.
+
+### TTS
+
+Configurazione minima:
+```ini
+TTS_ENABLED=true
+```
+
+Il frontend chiama `POST /tts/synthesize` e prova a far parlare l'avatar; se la riproduzione avatar non e disponibile, usa playback audio diretto.
 
 ## Variabili ambiente
 
@@ -168,69 +208,75 @@ TTS_ENABLED=true
 VITE_API_URL=http://{server-ip}:8000
 ```
 
-Il frontend usa solo `VITE_API_URL`.
+In sviluppo il frontend conserva porta e path di `VITE_API_URL`, ma riallinea l'hostname a quello della pagina corrente per mantenere coerenti host e cookie auth durante i reload.
 
-## Struttura progetto
+## Sessioni e token
 
-    Progetto-Ditto/
-    |- backend/
-    |- docs/
-    |- docker/
-    |- frontend/my-app/
-    |- scripts/
-    |  |- unix/
-    |  \- windows/
-    |- setup.bat      (wrapper)
-    |- setup.sh       (wrapper)
-    |- start.bat      (wrapper)
-    \- start.sh       (wrapper)
+Valori attuali:
+```ini
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+ADMIN_TOKEN_EXPIRE_MINUTES=120
+OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
+ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
+```
 
-Dettagli principali:
-- `backend/app/` contiene il runtime FastAPI.
-- `backend/scripts/` contiene script operativi e di bootstrap database.
-- `frontend/my-app/src/features/` contiene le feature `admin` e `operator`.
-- `frontend/my-app/src/shared/` contiene UI, auth e client condivisi.
-- I file `setup/start` in root restano disponibili ma delegano agli script reali dentro `scripts/`.
+Note pratiche:
+- se scade solo l'access token, il frontend prova il refresh della sessione;
+- per simulare una vera scadenza completa bisogna ridurre anche i refresh token;
+- il monitoraggio sessione operatore puo forzare il logout se la macchina cambia stato lato admin.
 
 ## Troubleshooting rapido
 
-### Ollama risponde a `/api/tags` ma fallisce su `/api/generate`
+### Ollama risponde a `/api/tags` ma il warmup o le richieste AI falliscono
 
 Controlla:
-- che `OLLAMA_MODEL` esista davvero nel container:
-  ```bash
-  docker exec ditto_ollama ollama list
-  ```
-- che il modello configurato coincida con quello scaricato;
-- che il cold start non stia andando in timeout.
+```bash
+docker exec ditto_ollama ollama list
+docker compose logs -f ollama
+```
 
-Per scaricare manualmente il modello corretto:
+Verifica che:
+- `OLLAMA_MODEL` in `backend/.env` esista davvero nel container;
+- non ci sia mismatch tra nome configurato e modello scaricato;
+- il cold start non stia superando il timeout.
+
+Download manuale:
 ```bash
 docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
 ```
 
-### Prima richiesta AI molto lenta
+### Prima richiesta AI lenta
 
-È normale al primo load del modello. Gli script di start provano già un warmup. Se serve più margine:
+Il primo caricamento del modello puo essere sensibilmente piu lento. Gli script di start provano gia un warmup reale via `/api/generate`. Se serve piu margine:
 - aumenta `OLLAMA_TIMEOUT_SECONDS`;
-- verifica che il warmup non fallisca;
-- controlla i log di Ollama per timeout di load.
+- controlla i log di Ollama;
+- verifica che il warmup non stia fallendo.
+
+### Problemi di sessione operatore
+
+Se l'operatore viene disconnesso:
+- verifica se la macchina e stata liberata o riassegnata lato admin;
+- controlla gli endpoint auth di sessione e il token SSE;
+- verifica che il browser possa mantenere aperta la connessione `session-events`.
 
 ### Errore database
 
-Verifica:
-- container Postgres attivo;
-- `DATABASE_HOST` corretto;
-- `docker exec ditto_postgres pg_isready -U postgres`.
+Controlla:
+```bash
+docker exec ditto_postgres pg_isready -U postgres
+docker compose logs -f postgres
+```
 
-## Documentazione
+Verifica anche che `DATABASE_HOST` punti all'host corretto.
+
+## Documentazione correlata
 
 - Guida operativa: [docs/STARTUP_GUIDE.md](/e:/Scuola/Progetto-Ditto/docs/STARTUP_GUIDE.md)
+- README frontend: [frontend/my-app/README.md](/e:/Scuola/Progetto-Ditto/frontend/my-app/README.md)
 - Backend entrypoint: [backend/app/main.py](/e:/Scuola/Progetto-Ditto/backend/app/main.py)
-- Auth: [backend/app/api/auth/auth.py](/e:/Scuola/Progetto-Ditto/backend/app/api/auth/auth.py)
-- Interactions AI: [backend/app/api/interactions.py](/e:/Scuola/Progetto-Ditto/backend/app/api/interactions.py)
+- Config API frontend: [frontend/my-app/src/shared/api/config.ts](/e:/Scuola/Progetto-Ditto/frontend/my-app/src/shared/api/config.ts)
 
 ## Stato attuale
 
-- ultimo aggiornamento: Marzo 2026
-- source of truth per setup/avvio: `setup.bat` e `start.bat`
+- ultimo aggiornamento documentazione: 28 marzo 2026
+- source of truth operativa: `scripts/windows/setup.bat` e `scripts/windows/start.bat`

@@ -14,30 +14,51 @@ Guida pratica per avviare Ditto con il flusso attuale degli script.
 - setup iniziale: `./setup.sh`
 - avvio successivo: `./start.sh`
 
-Gli script Windows sono la source of truth e quelli Linux sono allineati allo stesso flusso.
+Gli script Windows restano la source of truth operativa; quelli Unix seguono lo stesso flusso.
+
+## Prerequisiti
+
+- Docker con Compose
+- Python 3 e supporto `venv`
+- Node.js con `npm`
+
+Servizi Docker previsti da `docker/docker-compose.yml`:
+- `ditto_postgres`
+- `ditto_adminer`
+- `ditto_ollama`
 
 ## Cosa fa `setup`
 
-`setup.bat` / `setup.sh`:
-- avviano Docker con PostgreSQL, Adminer e Ollama;
-- aspettano che PostgreSQL sia pronto;
-- scaricano il modello `mistral:7b-instruct-v0.3-q4_K_M` se manca;
-- generano `backend/.env` e `frontend/my-app/.env`;
-- installano dipendenze Python e Node.js;
-- eseguono `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py` se presenti;
+`setup.bat` e `setup.sh` eseguono il bootstrap completo dell'ambiente.
+
+Passi principali:
+- eseguono `docker-compose down`;
+- eseguono `docker-compose up -d`;
+- aspettano che PostgreSQL sia pronto con `pg_isready`;
+- preparano il modello `mistral:7b-instruct-v0.3-q4_K_M` in Ollama;
+- generano `backend/.env`;
+- generano `frontend/my-app/.env`;
+- creano il virtual environment backend se manca;
+- installano le dipendenze Python da `backend/requirements.txt`;
+- eseguono `backend/scripts/init_db.py`;
+- eseguono `backend/scripts/populate.py`;
+- eseguono `backend/scripts/seed_categories.py`;
+- installano le dipendenze frontend se `node_modules` non e presente;
 - avviano backend e frontend.
 
 ## Cosa fa `start`
 
-`start.bat` / `start.sh`:
-- riallineano Docker con `docker compose up -d` senza forzare un cold start dei container;
-- aspettano PostgreSQL con `pg_isready`;
-- leggono `OLLAMA_MODEL` da `backend/.env`;
-- verificano che il modello sia presente con `ollama list`;
-- fanno warmup del modello via `/api/generate` dopo aver verificato `/api/tags`;
-- aggiornano `frontend/my-app/.env` con `VITE_API_URL`;
-- avviano backend e frontend;
-- scrivono `ditto_info.txt`.
+`start.bat` e `start.sh` servono per l'avvio quotidiano senza reinstallare tutto.
+
+Passi principali:
+- eseguono `docker-compose up -d`;
+- aspettano che PostgreSQL sia pronto;
+- leggono `OLLAMA_MODEL`, `OLLAMA_BASE_URL` e gli altri parametri AI da `backend/.env` se presente;
+- verificano la presenza del modello con `docker exec ditto_ollama ollama list`;
+- provano il warmup del modello via `POST /api/generate` dopo il check su `GET /api/tags`;
+- aggiornano `frontend/my-app/.env` con `VITE_API_URL=http://{server-ip}:8000`;
+- avviano backend FastAPI in una finestra dedicata;
+- avviano frontend Vite in una finestra dedicata.
 
 ## Configurazione attuale
 
@@ -87,7 +108,7 @@ TTS_ENABLED=true
 VITE_API_URL=http://{server-ip}:8000
 ```
 
-Il frontend usa solo `VITE_API_URL`.
+Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quello della pagina corrente.
 
 ## URL utili
 
@@ -125,14 +146,29 @@ Linux:
 ./start.sh
 ```
 
+## Sessioni operatore in tempo reale
+
+Il frontend operatore protegge la sessione macchina con due livelli:
+- canale SSE via `POST /auth/sse-token` e `GET /auth/session-events`;
+- fallback polling via `GET /auth/session-status`.
+
+Se la sessione non e piu valida, il frontend forza il logout e mostra un messaggio locale.
+
+Motivi principali gestiti dal frontend:
+- `machine_released`
+- `machine_reassigned`
+- `machine_not_found`
+
+Questo copre i casi in cui un amministratore libera la macchina, la assegna a un altro operatore oppure la postazione non e piu disponibile.
+
 ## Troubleshooting
 
-### `GET /api/tags` va ma `POST /api/generate` fallisce
+### `GET /api/tags` funziona ma warmup o richieste AI falliscono
 
 Cause tipiche:
-- `OLLAMA_MODEL` non presente nel container;
-- timeout sul cold start del modello;
-- mismatch tra `backend/.env` e il modello realmente scaricato.
+- modello non presente nel container;
+- timeout durante il cold start;
+- mismatch tra `OLLAMA_MODEL` configurato e modello realmente scaricato.
 
 Controlli:
 ```bash
@@ -145,33 +181,25 @@ Download manuale:
 docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
 ```
 
-### Prima richiesta AI molto lenta o interrotta
+### Prima richiesta AI molto lenta
 
-Sintomi tipici nei log:
-- `load_tensors: loading model tensors`
-- `client connection closed before server finished loading`
-- `499`
-- timeout lato backend
-
-Significa che il modello sta facendo cold start e il backend chiude la richiesta troppo presto. La configurazione attuale usa già:
+Sintomo normale al primo caricamento del modello. La configurazione attuale usa gia:
 - `OLLAMA_TIMEOUT_SECONDS=120`
 - `OLLAMA_KEEP_ALIVE=30m`
-- warmup del modello in start
+- warmup automatico durante `start`
 
-Se serve ancora più margine:
+Se serve ancora piu margine:
 - aumenta `OLLAMA_TIMEOUT_SECONDS`;
 - verifica che il warmup non fallisca;
-- controlla che non ci sia mismatch del modello.
+- controlla i log di Ollama.
 
-### Ollama non usa il modello configurato
+### L'operatore viene disconnesso inaspettatamente
 
-Verifica che `backend/.env` e il container siano coerenti:
-```bash
-grep '^OLLAMA_MODEL=' backend/.env
-docker exec ditto_ollama ollama list
-```
-
-Se i nomi non coincidono, il backend andrà in fallback controllato invece che usare l’AI vera.
+Controlla:
+- se la macchina e stata liberata o riassegnata lato admin;
+- se il token SSE e stato emesso correttamente;
+- se il browser riceve heartbeat o eventi `session_status`;
+- se il fallback `session-status` risponde correttamente quando SSE cade.
 
 ### PostgreSQL non pronto
 
@@ -192,7 +220,14 @@ npm run dev -- --host 0.0.0.0
 
 ### Backend non parte
 
-Controlli:
+Controlli Windows:
+```bat
+cd backend
+venv\Scripts\activate.bat
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-use-colors
+```
+
+Controlli Unix:
 ```bash
 cd backend
 source venv/bin/activate
@@ -201,18 +236,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Note su auth e sessioni
 
-- operatori: login via `badge-login` o `credentials-login`;
-- admin: login via `admin-login`;
-- l’`access_token` da solo non rappresenta l’intera sessione;
-- per testare una vera scadenza bisogna ridurre anche i refresh token;
-- i refresh token sono uno per utente e vengono ripuliti nei flussi auth.
+- operatori: login via badge o credenziali, sempre associati a una macchina;
+- admin: login dedicato via `POST /auth/admin-login`;
+- l'access token da solo non rappresenta l'intera sessione;
+- per testare una scadenza completa bisogna ridurre anche i refresh token;
+- il frontend prova il refresh prima di considerare scaduta la sessione.
 
 ## Verifica finale
 
 Dopo `setup` o `start` controlla:
 - `backend/.env` creato correttamente;
 - `frontend/my-app/.env` aggiornato con `VITE_API_URL`;
-- `ditto_info.txt` presente;
 - `docker compose ps` con `ditto_postgres`, `ditto_ollama`, `ditto_adminer`;
-- backend su `8000`;
-- frontend su `5173`.
+- backend raggiungibile su `8000`;
+- frontend raggiungibile su `5173`;
+- accesso admin disponibile su `/admin-login`;
+- selezione macchina e login operatore funzionanti dal frontend.
