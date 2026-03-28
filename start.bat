@@ -140,25 +140,6 @@ echo.
 
 cd /d %ROOT_DIR%
 
-(
-echo === DITTO - Informazioni di sistema ===
-echo Data avvio: %date% %time%
-echo IP Server: %IP%
-echo.
-echo URL:
-echo - Frontend locale: http://localhost:%FRONTEND_PORT%
-echo - Frontend rete: http://%IP%:%FRONTEND_PORT%
-echo - Backend: http://%IP%:%BACKEND_PORT%
-echo - API Docs: http://%IP%:%BACKEND_PORT%/docs
-echo.
-echo Comandi utili:
-echo - Ferma container: cd docker ^&^& docker-compose down
-echo - Log container: docker-compose logs -f
-echo.
-) > %ROOT_DIR%\ditto_info.txt
-echo [OK] Informazioni salvate in: %ROOT_DIR%\ditto_info.txt
-echo.
-
 echo ========================================
 echo    [OK] SERVIZI AVVIATI
 echo ========================================

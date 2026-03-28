@@ -1,199 +1,244 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
+import { TalkingHead } from '@met4citizen/talkinghead';
 
-type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
+import {
+  avatarDefinition,
+  avatarOptions,
+  avatarStatePresets,
+  type AvatarState,
+} from './avatarDisplay.config';
 
 interface AvatarDisplayProps {
   state: AvatarState;
 }
 
-type MouthShape = 'closed' | 'neutral' | 'open' | 'wide' | 'round';
+function supportsWebGL() {
+  const canvas = document.createElement('canvas');
+
+  return Boolean(
+    canvas.getContext('webgl2') ||
+      canvas.getContext('webgl') ||
+      canvas.getContext('experimental-webgl'),
+  );
+}
+
+function hasUserActivation() {
+  return typeof navigator !== 'undefined' && (navigator.userActivation?.hasBeenActive ?? false);
+}
+
+function getGlowClass(state: AvatarState) {
+  switch (state) {
+    case 'listening':
+      return 'bg-sky-400/30';
+    case 'thinking':
+      return 'bg-amber-400/30';
+    case 'speaking':
+      return 'bg-violet-400/35';
+    default:
+      return 'bg-emerald-400/20';
+  }
+}
 
 export function AvatarDisplay({ state }: AvatarDisplayProps) {
-  const [mouthShape, setMouthShape] = useState<MouthShape>('closed');
-  const [eyeExpression, setEyeExpression] = useState<'normal' | 'focused' | 'thinking'>('normal');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const headRef = useRef<TalkingHead | null>(null);
+  const stateRef = useRef<AvatarState>(state);
+  const [isActivated, setIsActivated] = useState(hasUserActivation);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Simula il lip-sync durante la parlata
+  stateRef.current = state;
+
   useEffect(() => {
-    if (state === 'speaking') {
-      const shapes: MouthShape[] = ['open', 'wide', 'neutral', 'round', 'open', 'neutral', 'closed'];
-      let index = 0;
-      const interval = setInterval(() => {
-        setMouthShape(shapes[index % shapes.length]);
-        index++;
-      }, 150);
-      return () => clearInterval(interval);
-    } else if (state === 'thinking') {
-      setMouthShape('neutral');
-      setEyeExpression('thinking');
-    } else if (state === 'listening') {
-      setMouthShape('neutral');
-      setEyeExpression('focused');
-    } else {
-      setMouthShape('closed');
-      setEyeExpression('normal');
+    if (isActivated || hasUserActivation()) {
+      if (!isActivated) {
+        setIsActivated(true);
+      }
+      return;
     }
-  }, [state]);
 
-  const getMouthPath = () => {
-    switch (mouthShape) {
-      case 'closed':
-        return 'M 40 55 Q 50 55 60 55';
-      case 'neutral':
-        return 'M 40 55 Q 50 57 60 55';
-      case 'open':
-        return 'M 40 52 Q 50 62 60 52';
-      case 'wide':
-        return 'M 35 55 Q 50 65 65 55';
-      case 'round':
-        return 'M 42 52 Q 50 60 58 52 Q 50 58 42 52 Z';
+    const activate = () => setIsActivated(true);
+
+    window.addEventListener('pointerdown', activate, { once: true });
+    window.addEventListener('keydown', activate, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', activate);
+      window.removeEventListener('keydown', activate);
+    };
+  }, [isActivated]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const initializeAvatar = async () => {
+      if (!isActivated || !containerRef.current) {
+        return;
+      }
+
+      if (!supportsWebGL()) {
+        setErrorMessage('WebGL non disponibile su questo dispositivo');
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setErrorMessage(null);
+      setLoadProgress(0);
+
+      try {
+        const head = new TalkingHead(containerRef.current, avatarOptions);
+        headRef.current = head;
+
+        await head.showAvatar(avatarDefinition, (_url, event) => {
+          if (
+            cancelled ||
+            !event ||
+            typeof event.loaded !== 'number' ||
+            typeof event.total !== 'number' ||
+            !event.lengthComputable ||
+            event.total <= 0
+          ) {
+            return;
+          }
+
+          setLoadProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        });
+
+        if (cancelled) {
+          head.dispose();
+          return;
+        }
+
+        setIsLoading(false);
+        applyStatePreset(head, stateRef.current);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error('TalkingHead initialization failed:', error);
+        setErrorMessage('Avatar 3D non disponibile al momento');
+        setIsLoading(false);
+      }
+    };
+
+    void initializeAvatar();
+
+    return () => {
+      cancelled = true;
+      headRef.current?.dispose();
+      headRef.current = null;
+    };
+  }, [isActivated]);
+
+  useEffect(() => {
+    const head = headRef.current;
+    if (!head || isLoading || errorMessage) {
+      return;
     }
-  };
 
-  const getEyeShape = () => {
-    switch (eyeExpression) {
-      case 'focused':
-        return { left: 'M 30 35 Q 35 33 40 35', right: 'M 60 35 Q 65 33 70 35' };
-      case 'thinking':
-        return { left: 'M 30 35 Q 35 32 40 35', right: 'M 60 32 Q 65 30 70 32' };
-      default:
-        return { left: 'M 30 35 Q 35 34 40 35', right: 'M 60 35 Q 65 34 70 35' };
+    applyStatePreset(head, state);
+  }, [errorMessage, isLoading, state]);
+
+  useEffect(() => {
+    const head = headRef.current;
+    if (!head || isLoading || errorMessage) {
+      return;
     }
-  };
 
-  const eyeShape = getEyeShape();
+    if (state !== 'speaking') {
+      resetSpeakingMorphs(head);
+      return;
+    }
+
+    const animateMouth = () => {
+      const jawOpen = 0.12 + Math.random() * 0.28;
+      const mouthOpen = Math.min(0.55, jawOpen + 0.12);
+      const mouthFunnel = Math.random() > 0.65 ? 0.18 + Math.random() * 0.22 : 0.02;
+      const mouthPucker = Math.random() > 0.75 ? 0.1 + Math.random() * 0.18 : 0;
+
+      head.setValue('jawOpen', jawOpen, 90);
+      head.setValue('mouthOpen', mouthOpen, 90);
+      head.setValue('mouthFunnel', mouthFunnel, 110);
+      head.setValue('mouthPucker', mouthPucker, 110);
+    };
+
+    animateMouth();
+    const interval = window.setInterval(animateMouth, 120);
+
+    return () => {
+      window.clearInterval(interval);
+      resetSpeakingMorphs(head);
+    };
+  }, [errorMessage, isLoading, state]);
+
+  const showOverlay = !isActivated || isLoading || errorMessage;
 
   return (
     <motion.div
-      initial={{ scale: 0.8, opacity: 0 }}
+      initial={{ scale: 0.82, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
-      transition={{ duration: 0.5 }}
+      transition={{ duration: 0.45 }}
       className="relative"
     >
-      {/* Glow effect */}
-      <div className={`absolute inset-0 rounded-full blur-3xl transition-all duration-500 ${
-        state === 'listening' ? 'bg-blue-500/30' :
-        state === 'thinking' ? 'bg-yellow-500/30' :
-        state === 'speaking' ? 'bg-purple-500/30' :
-        'bg-green-500/20'
-      }`}></div>
+      <div className={`absolute inset-0 rounded-full blur-3xl transition-all duration-500 ${getGlowClass(state)}`} />
 
-      {/* Avatar container */}
-      <div className="relative w-80 h-80 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-full border-4 border-white/20 backdrop-blur-sm flex items-center justify-center overflow-hidden">
-        {/* Avatar face */}
-        <svg viewBox="0 0 100 100" className="w-full h-full">
-          {/* Head */}
-          <ellipse cx="50" cy="50" rx="35" ry="40" fill="#E8D4C0" />
-          
-          {/* Eyes */}
-          <motion.path
-            d={eyeShape.left}
-            stroke="#2C3E50"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            fill="none"
-            animate={{ d: eyeShape.left }}
-            transition={{ duration: 0.2 }}
-          />
-          <motion.path
-            d={eyeShape.right}
-            stroke="#2C3E50"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            fill="none"
-            animate={{ d: eyeShape.right }}
-            transition={{ duration: 0.2 }}
-          />
+      <div className="relative flex h-80 w-80 items-center justify-center overflow-hidden rounded-full border-4 border-white/20 bg-gradient-to-br from-slate-900/85 via-slate-800/70 to-slate-950/90 backdrop-blur-sm">
+        <div
+          ref={containerRef}
+          className={`h-full w-full transition-opacity duration-500 ${showOverlay ? 'opacity-0' : 'opacity-100'}`}
+        />
 
-          {/* Pupils */}
-          {eyeExpression !== 'thinking' ? (
-            <>
-              <circle cx="35" cy="37" r="2.5" fill="#2C3E50" />
-              <circle cx="65" cy="37" r="2.5" fill="#2C3E50" />
-            </>
-          ) : (
-            <>
-              <circle cx="36" cy="34" r="2.5" fill="#2C3E50" />
-              <circle cx="66" cy="32" r="2.5" fill="#2C3E50" />
-            </>
-          )}
+        {showOverlay && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-8 text-center">
+            {!isActivated ? (
+              <>
+                <div className="flex h-24 w-24 items-center justify-center rounded-full border border-cyan-400/40 bg-cyan-500/10">
+                  <div className="h-12 w-12 rounded-full border-2 border-cyan-300/70" />
+                </div>
+                <div>
+                  <p className="font-semibold text-cyan-100">Attiva l'ologramma</p>
+                  <p className="mt-1 text-sm text-cyan-100/75">Tocca o premi un tasto per inizializzare audio e avatar</p>
+                </div>
+              </>
+            ) : errorMessage ? (
+              <>
+                <div className="flex h-24 w-24 items-center justify-center rounded-full border border-red-400/40 bg-red-500/10">
+                  <div className="h-12 w-12 rounded-full border-2 border-red-300/70" />
+                </div>
+                <div>
+                  <p className="font-semibold text-red-100">Avatar non disponibile</p>
+                  <p className="mt-1 text-sm text-red-200/80">{errorMessage}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="h-16 w-16 rounded-full border-4 border-blue-300/30 border-t-blue-300 animate-spin" />
+                <div>
+                  <p className="font-semibold text-white">Caricamento ologramma</p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {loadProgress > 0 ? `${loadProgress}%` : 'Preparazione scena'}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
-          {/* Eyebrows */}
-          <motion.path
-            d={state === 'thinking' ? 'M 27 28 Q 32 25 37 27' : 'M 27 30 Q 32 28 37 30'}
-            stroke="#8B6F47"
-            strokeWidth="2"
-            strokeLinecap="round"
-            fill="none"
-            animate={{ d: state === 'thinking' ? 'M 27 28 Q 32 25 37 27' : 'M 27 30 Q 32 28 37 30' }}
-            transition={{ duration: 0.3 }}
-          />
-          <motion.path
-            d={state === 'thinking' ? 'M 63 27 Q 68 25 73 28' : 'M 63 30 Q 68 28 73 30'}
-            stroke="#8B6F47"
-            strokeWidth="2"
-            strokeLinecap="round"
-            fill="none"
-            animate={{ d: state === 'thinking' ? 'M 63 27 Q 68 25 73 28' : 'M 63 30 Q 68 28 73 30' }}
-            transition={{ duration: 0.3 }}
-          />
-
-          {/* Nose */}
-          <path d="M 50 45 L 48 50 L 52 50 Z" fill="#D4B5A0" opacity="0.5" />
-
-          {/* Mouth */}
-          <motion.path
-            d={getMouthPath()}
-            stroke="#C1554A"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            fill={mouthShape === 'round' || mouthShape === 'wide' ? '#C1554A' : 'none'}
-            fillOpacity="0.3"
-            animate={{ d: getMouthPath() }}
-            transition={{ duration: 0.1 }}
-          />
-
-          {/* Cheeks - show when speaking */}
-          {state === 'speaking' && (
-            <>
-              <motion.circle
-                cx="25"
-                cy="52"
-                r="5"
-                fill="#FF9999"
-                opacity="0.4"
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ duration: 0.2 }}
-              />
-              <motion.circle
-                cx="75"
-                cy="52"
-                r="5"
-                fill="#FF9999"
-                opacity="0.4"
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ duration: 0.2 }}
-              />
-            </>
-          )}
-        </svg>
-
-        {/* Voice wave animation when speaking */}
-        {state === 'speaking' && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1">
-            {[...Array(5)].map((_, i) => (
+        {state === 'speaking' && !showOverlay && (
+          <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-1">
+            {[...Array(5)].map((_, index) => (
               <motion.div
-                key={i}
-                className="w-1 bg-white rounded-full"
-                animate={{
-                  height: [8, 20, 8],
-                }}
+                key={index}
+                className="w-1 rounded-full bg-white/80"
+                animate={{ height: [8, 22, 8] }}
                 transition={{
                   duration: 0.5,
                   repeat: Infinity,
-                  delay: i * 0.1,
+                  delay: index * 0.08,
                 }}
               />
             ))}
@@ -202,4 +247,27 @@ export function AvatarDisplay({ state }: AvatarDisplayProps) {
       </div>
     </motion.div>
   );
+}
+
+function applyStatePreset(head: TalkingHead, state: AvatarState) {
+  const preset = avatarStatePresets[state];
+
+  head.setMood(preset.mood);
+
+  if (preset.view) {
+    head.setView(preset.view);
+  }
+
+  head.setLighting(preset.lighting);
+
+  if (preset.lookAtCameraMs) {
+    head.lookAtCamera(preset.lookAtCameraMs);
+  }
+}
+
+function resetSpeakingMorphs(head: TalkingHead) {
+  head.setValue('jawOpen', 0, 120);
+  head.setValue('mouthOpen', 0, 120);
+  head.setValue('mouthFunnel', 0, 140);
+  head.setValue('mouthPucker', 0, 140);
 }
