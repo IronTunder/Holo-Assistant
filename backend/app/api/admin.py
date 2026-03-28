@@ -27,6 +27,7 @@ from app.api.presenters import (
     serialize_machine,
     serialize_user,
 )
+from app.services.knowledge_retrieval import knowledge_retrieval_service
 from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -79,6 +80,7 @@ class KnowledgeItemRequest(BaseModel):
     question_title: str
     answer_text: str
     keywords: Optional[str] = None
+    example_questions: Optional[str] = None
     is_active: bool = True
     sort_order: int = 0
     machine_ids: List[int] = Field(default_factory=list)
@@ -203,6 +205,13 @@ def _apply_machine_assignments(
                 is_enabled=True,
             )
         )
+
+
+def _invalidate_knowledge_cache(machine_ids: List[int] | None = None) -> None:
+    if machine_ids is None:
+        knowledge_retrieval_service.invalidate_all()
+        return
+    knowledge_retrieval_service.invalidate_machines(machine_ids)
 
 
 @router.get("/dashboard-summary", response_model=DashboardSummaryResponse)
@@ -551,6 +560,7 @@ async def delete_machine(
     deleted_payload_machine.department = machine.department
     db.delete(machine)
     db.commit()
+    knowledge_retrieval_service.invalidate_machine(deleted_machine_id)
     await publish_admin_machine_event(db, deleted_payload_machine, deleted=True)
     await publish_machine_session_event(None, -1, machine_id=deleted_machine_id)
     return None
@@ -627,6 +637,7 @@ async def create_category(
     db.add(category)
     db.commit()
     db.refresh(category)
+    _invalidate_knowledge_cache()
     return serialize_category(category)
 
 
@@ -645,6 +656,7 @@ async def update_category(
     category.description = request.description
     db.commit()
     db.refresh(category)
+    _invalidate_knowledge_cache()
     return serialize_category(category)
 
 
@@ -729,6 +741,7 @@ async def create_knowledge_item(
         question_title=request.question_title.strip(),
         answer_text=request.answer_text.strip(),
         keywords=request.keywords,
+        example_questions=request.example_questions.strip() if request.example_questions else None,
         is_active=request.is_active,
         sort_order=request.sort_order,
     )
@@ -737,6 +750,7 @@ async def create_knowledge_item(
     _apply_machine_assignments(db, knowledge_item, request.machine_ids)
     db.commit()
     db.refresh(knowledge_item)
+    _invalidate_knowledge_cache(request.machine_ids)
     knowledge_item = (
         db.query(KnowledgeItem)
         .options(joinedload(KnowledgeItem.category), joinedload(KnowledgeItem.machine_assignments))
@@ -766,14 +780,19 @@ async def update_knowledge_item(
     if db.query(Category).filter(Category.id == request.category_id).first() is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria non valida")
 
+    previous_machine_ids = [
+        assignment.machine_id for assignment in knowledge_item.machine_assignments if assignment.is_enabled
+    ]
     knowledge_item.category_id = request.category_id
     knowledge_item.question_title = request.question_title.strip()
     knowledge_item.answer_text = request.answer_text.strip()
     knowledge_item.keywords = request.keywords
+    knowledge_item.example_questions = request.example_questions.strip() if request.example_questions else None
     knowledge_item.is_active = request.is_active
     knowledge_item.sort_order = request.sort_order
     _apply_machine_assignments(db, knowledge_item, request.machine_ids)
     db.commit()
+    _invalidate_knowledge_cache(previous_machine_ids + request.machine_ids)
 
     knowledge_item = (
         db.query(KnowledgeItem)
@@ -794,8 +813,18 @@ async def delete_knowledge_item(
     knowledge_item = db.query(KnowledgeItem).filter(KnowledgeItem.id == knowledge_item_id).first()
     if knowledge_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge item non trovato")
+    machine_ids = [
+        assignment.machine_id
+        for assignment in db.query(MachineKnowledgeItem)
+        .filter(
+            MachineKnowledgeItem.knowledge_item_id == knowledge_item_id,
+            MachineKnowledgeItem.is_enabled.is_(True),
+        )
+        .all()
+    ]
     db.delete(knowledge_item)
     db.commit()
+    _invalidate_knowledge_cache(machine_ids)
     return None
 
 

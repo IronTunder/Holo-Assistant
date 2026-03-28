@@ -30,14 +30,11 @@ Gli script Windows sono la source of truth e quelli Linux sono allineati allo st
 ## Cosa fa `start`
 
 `start.bat` / `start.sh`:
-- fanno `docker compose down` e `docker compose up -d`;
+- riallineano Docker con `docker compose up -d` senza forzare un cold start dei container;
 - aspettano PostgreSQL con `pg_isready`;
 - leggono `OLLAMA_MODEL` da `backend/.env`;
 - verificano che il modello sia presente con `ollama list`;
-- fanno warmup del modello con:
-  ```bash
-  ollama run "<model>" "Rispondi solo OK"
-  ```
+- fanno warmup del modello via `/api/generate` dopo aver verificato `/api/tags`;
 - aggiornano `frontend/my-app/.env` con `VITE_API_URL`;
 - avviano backend e frontend;
 - scrivono `ditto_info.txt`.
@@ -66,13 +63,14 @@ ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 
 ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
 
-OLLAMA_BASE_URL=http://{server-ip}:11434
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
 OLLAMA_NUM_PREDICT_CLASSIFY=4
 OLLAMA_NUM_PREDICT_SELECT=2
+OLLAMA_NUM_PREDICT_RERANK=12
 OLLAMA_TOP_K=20
 OLLAMA_TOP_P=0.8
 OLLAMA_TEMPERATURE_CLASSIFY=0.0

@@ -57,6 +57,7 @@ export interface KnowledgeItem {
   question_title: string;
   answer_text: string;
   keywords?: string | null;
+  example_questions?: string | null;
   is_active: boolean;
   sort_order: number;
   assigned_machine_ids: number[];

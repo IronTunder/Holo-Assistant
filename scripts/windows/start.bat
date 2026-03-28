@@ -11,6 +11,12 @@ for %%I in ("%SCRIPT_DIR%..\..") do set ROOT_DIR=%%~fI
 set BACKEND_PORT=8000
 set FRONTEND_PORT=5173
 set OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+set OLLAMA_BASE_URL=http://127.0.0.1:11434
+set OLLAMA_KEEP_ALIVE=30m
+set OLLAMA_TOP_K=20
+set OLLAMA_TOP_P=0.8
+set OLLAMA_NUM_CTX=2048
+set OLLAMA_NUM_THREAD=4
 
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4"') do (
     set IP=%%a
@@ -31,7 +37,6 @@ if not exist docker-compose.yml (
     exit /b 1
 )
 
-docker-compose down 2>nul
 docker-compose up -d
 if errorlevel 1 (
     echo [AVVISO] Impossibile avviare Docker con docker-compose.
@@ -66,6 +71,12 @@ echo.
 if exist %ROOT_DIR%\backend\.env (
     for /f "usebackq tokens=1,* delims==" %%A in ("%ROOT_DIR%\backend\.env") do (
         if /I "%%A"=="OLLAMA_MODEL" set OLLAMA_MODEL=%%B
+        if /I "%%A"=="OLLAMA_BASE_URL" set OLLAMA_BASE_URL=%%B
+        if /I "%%A"=="OLLAMA_KEEP_ALIVE" set OLLAMA_KEEP_ALIVE=%%B
+        if /I "%%A"=="OLLAMA_TOP_K" set OLLAMA_TOP_K=%%B
+        if /I "%%A"=="OLLAMA_TOP_P" set OLLAMA_TOP_P=%%B
+        if /I "%%A"=="OLLAMA_NUM_CTX" set OLLAMA_NUM_CTX=%%B
+        if /I "%%A"=="OLLAMA_NUM_THREAD" set OLLAMA_NUM_THREAD=%%B
     )
 )
 
@@ -75,13 +86,7 @@ if errorlevel 1 (
     echo [AVVISO] Modello %OLLAMA_MODEL% non trovato nel container Ollama
     echo [AVVISO] Esegui setup.bat oppure: docker exec ditto_ollama ollama pull %OLLAMA_MODEL%
 ) else (
-    echo [INFO] Warmup modello AI in corso...
-    docker exec ditto_ollama ollama run %OLLAMA_MODEL% "Rispondi solo OK" >nul 2>&1
-    if errorlevel 1 (
-        echo [AVVISO] Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento.
-    ) else (
-        echo [OK] Modello AI pronto
-    )
+    call :warmup_ollama
 )
 echo.
 
@@ -156,3 +161,28 @@ echo oppure esegui: cd docker ^&^& docker-compose down
 echo.
 
 pause
+goto :eof
+
+:warmup_ollama
+echo [INFO] Attendo che Ollama risponda su %OLLAMA_BASE_URL%...
+set MAX_OLLAMA_ATTEMPTS=30
+set OLLAMA_ATTEMPT=1
+:wait_ollama
+powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-RestMethod -Uri '%OLLAMA_BASE_URL%/api/tags' -Method Get -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 goto :ollama_ready
+if %OLLAMA_ATTEMPT% equ %MAX_OLLAMA_ATTEMPTS% (
+    echo [AVVISO] Ollama non risponde ancora all'endpoint /api/tags
+    goto :eof
+)
+set /a OLLAMA_ATTEMPT+=1
+timeout /t 2 /nobreak >nul
+goto :wait_ollama
+:ollama_ready
+echo [INFO] Warmup modello AI in corso...
+powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; $body = '{\"model\":\"%OLLAMA_MODEL%\",\"prompt\":\"Rispondi solo OK\",\"stream\":false,\"keep_alive\":\"%OLLAMA_KEEP_ALIVE%\",\"options\":{\"temperature\":0,\"top_k\":%OLLAMA_TOP_K%,\"top_p\":%OLLAMA_TOP_P%,\"num_predict\":12,\"num_ctx\":%OLLAMA_NUM_CTX%,\"num_thread\":%OLLAMA_NUM_THREAD%}}'; try { Invoke-RestMethod -Uri '%OLLAMA_BASE_URL%/api/generate' -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+if errorlevel 1 (
+    echo [AVVISO] Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento.
+) else (
+    echo [OK] Modello AI pronto
+)
+goto :eof

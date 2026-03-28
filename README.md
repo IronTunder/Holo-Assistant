@@ -5,7 +5,7 @@ Sistema di gestione macchinari industriali con:
 - dashboard amministrativa;
 - backend FastAPI;
 - database PostgreSQL;
-- supporto AI con Ollama per classificazione/selezione risposte preset.
+- supporto AI con retrieval deterministico e Ollama usato solo per i casi ambigui.
 
 ## Quick Start
 
@@ -41,10 +41,10 @@ Linux:
 ```
 
 Lo script:
-- riavvia Docker;
+- riallinea Docker senza forzare un cold start dei container;
 - aspetta PostgreSQL;
 - legge `OLLAMA_MODEL` da `backend/.env`;
-- prova il warmup del modello AI;
+- prova un warmup reale del modello AI via `/api/generate`;
 - avvia backend e frontend in finestre separate;
 - aggiorna `ditto_info.txt`.
 
@@ -98,13 +98,14 @@ Nota importante:
 
 Configurazione attuale:
 ```ini
-OLLAMA_BASE_URL=http://{server-ip}:11434
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
 OLLAMA_NUM_PREDICT_CLASSIFY=4
 OLLAMA_NUM_PREDICT_SELECT=2
+OLLAMA_NUM_PREDICT_RERANK=12
 OLLAMA_TOP_K=20
 OLLAMA_TOP_P=0.8
 OLLAMA_TEMPERATURE_CLASSIFY=0.0
@@ -143,13 +144,14 @@ ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 
 ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
 
-OLLAMA_BASE_URL=http://{server-ip}:11434
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
 OLLAMA_NUM_PREDICT_CLASSIFY=4
 OLLAMA_NUM_PREDICT_SELECT=2
+OLLAMA_NUM_PREDICT_RERANK=12
 OLLAMA_TOP_K=20
 OLLAMA_TOP_P=0.8
 OLLAMA_TEMPERATURE_CLASSIFY=0.0

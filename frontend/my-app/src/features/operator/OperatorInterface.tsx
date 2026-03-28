@@ -18,6 +18,24 @@ type SessionStatusPayload = {
   reason: SessionStatusReason;
 };
 
+type ClarificationOption = {
+  knowledge_item_id: number;
+  label: string;
+  category_name?: string | null;
+};
+
+type AskQuestionApiResponse = {
+  response: string;
+  mode: 'answer' | 'clarification' | 'fallback';
+  reason_code: 'matched' | 'clarification' | 'no_match' | 'out_of_scope';
+  confidence: number;
+  clarification_options: ClarificationOption[];
+  category_id?: number | null;
+  category_name?: string | null;
+  knowledge_item_id?: number | null;
+  knowledge_item_title?: string | null;
+};
+
 export function OperatorInterface() {
   const { 
     isLoggedIn, 
@@ -41,6 +59,9 @@ export function OperatorInterface() {
   const [currentTranscription, setCurrentTranscription] = useState('');
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[]>([]);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
   const pollingInFlightRef = useRef(false);
   const mountedAtRef = useRef<number>(Date.now());
@@ -421,67 +442,91 @@ export function OperatorInterface() {
     setQuestionInput('');
     setCurrentTranscription('');
     setShowFollowUp(false);
+    setClarificationOptions([]);
+    setPendingQuestion(null);
+    setFallbackReasonCode(null);
     setIsTyping(false);
     setShowSubtitles(false);
     setWakeWordActive(true);
     await logout();
   };
 
+  const submitQuestion = async (userQuestion: string, selectedKnowledgeItemId?: number) => {
+    if (!user || !machine || !accessToken) {
+      return;
+    }
+
+    setAvatarState('thinking');
+    setShowFollowUp(false);
+    setClarificationOptions([]);
+    setFallbackReasonCode(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/interactions/ask`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          machine_id: machine.id,
+          user_id: user.id,
+          question: userQuestion,
+          selected_knowledge_item_id: selectedKnowledgeItemId,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Errore nel processamento della domanda');
+      }
+
+      const data = (await response.json()) as AskQuestionApiResponse;
+      const speechPayload = await handleTTS(data.response);
+      let playback: TtsPlayback | null = null;
+
+      if (speechPayload) {
+        setAvatarState('speaking');
+        playback = await startSpeechPlayback(speechPayload);
+      }
+
+      await startTypingEffect(data.response, speechPayload?.durationMs);
+
+      if (playback) {
+        try {
+          await playback.finished;
+        } catch (playbackError) {
+          console.error('Audio playback error:', playbackError);
+        }
+      }
+
+      setIsTyping(false);
+      setAvatarState('idle');
+      setShowSubtitles(false);
+
+      if (data.mode === 'clarification') {
+        setPendingQuestion(userQuestion);
+        setClarificationOptions(data.clarification_options);
+        return;
+      }
+
+      setPendingQuestion(null);
+      setClarificationOptions([]);
+      setFallbackReasonCode(data.mode === 'fallback' ? data.reason_code : null);
+      setShowFollowUp(data.mode === 'answer');
+    } catch (error) {
+      console.error('Error asking question:', error);
+      setAvatarState('idle');
+      const errorMsg = error instanceof Error ? error.message : 'Errore sconosciuto';
+      alert(`Errore: ${errorMsg}`);
+    }
+  };
+
   const handleQuestionSubmit = async () => {
     if (questionInput.trim() && user && machine) {
-      const userQuestion = questionInput;
+      const userQuestion = questionInput.trim();
       setQuestionInput('');
-      setAvatarState('thinking');
-      
-      try {
-        // Chiama il backend per ottenere la risposta
-        const response = await fetch(`${API_BASE_URL}/api/interactions/ask`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            machine_id: machine.id,
-            user_id: user.id,
-            question: userQuestion,
-          }),
-        });
-
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.detail || 'Errore nel processamento della domanda');
-        }
-
-        const data = await response.json();
-        const speechPayload = await handleTTS(data.response);
-        let playback: TtsPlayback | null = null;
-
-        if (speechPayload) {
-          setAvatarState('speaking');
-          playback = await startSpeechPlayback(speechPayload);
-        }
-
-        await startTypingEffect(data.response, speechPayload?.durationMs);
-
-        if (playback) {
-          try {
-            await playback.finished;
-          } catch (playbackError) {
-            console.error('Audio playback error:', playbackError);
-          }
-        }
-
-        setIsTyping(false);
-        setAvatarState('idle');
-        setShowSubtitles(false);
-        setShowFollowUp(true);
-      } catch (error) {
-        console.error('Error asking question:', error);
-        setAvatarState('idle');
-        const errorMsg = error instanceof Error ? error.message : 'Errore sconosciuto';
-        alert(`Errore: ${errorMsg}`);
-      }
+      await submitQuestion(userQuestion);
     }
   };
 
@@ -516,6 +561,13 @@ export function OperatorInterface() {
     console.log(`Problema risolto: ${resolved}`);
     setShowFollowUp(false);
     setCurrentTranscription('');
+  };
+
+  const handleClarificationSelection = async (knowledgeItemId: number) => {
+    if (!pendingQuestion) {
+      return;
+    }
+    await submitQuestion(pendingQuestion, knowledgeItemId);
   };
 
   const startTypingEffect = (fullText: string, durationMs?: number) => {
@@ -709,6 +761,9 @@ export function OperatorInterface() {
                       if (currentTranscription && !isTyping) {
                         setCurrentTranscription('');
                         setShowFollowUp(false);
+                        setClarificationOptions([]);
+                        setPendingQuestion(null);
+                        setFallbackReasonCode(null);
                       }
                     }}
                     placeholder="Scrivi la tua domanda..."
@@ -734,6 +789,37 @@ export function OperatorInterface() {
                     <div className="text-sm text-gray-200 whitespace-pre-line">
                       {currentTranscription}
                       {isTyping && <span className="animate-pulse">|</span>}
+                    </div>
+                    {!isTyping && fallbackReasonCode === 'out_of_scope' && (
+                      <p className="mt-3 text-xs text-amber-200">
+                        Questa richiesta sembra fuori ambito rispetto al supporto macchina.
+                      </p>
+                    )}
+                    {!isTyping && fallbackReasonCode === 'no_match' && (
+                      <p className="mt-3 text-xs text-gray-400">
+                        Non ho trovato una procedura tecnica affidabile per questa richiesta.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {clarificationOptions.length > 0 && (
+                <div className="mt-6 w-full max-w-2xl mx-auto px-6">
+                  <div className="bg-amber-500/10 border border-amber-400/30 rounded-lg p-4">
+                    <h3 className="text-sm font-semibold text-amber-200 mb-3">Aiutami a capire meglio</h3>
+                    <div className="grid gap-3">
+                      {clarificationOptions.map((option) => (
+                        <button
+                          key={option.knowledge_item_id}
+                          type="button"
+                          onClick={() => handleClarificationSelection(option.knowledge_item_id)}
+                          disabled={isTyping}
+                          className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-gray-100 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>

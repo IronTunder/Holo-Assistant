@@ -1,0 +1,32 @@
+[
+  {
+    "machine_id": 1,
+    "question": "Come faccio il cambio olio della pressa?",
+    "expected_knowledge_item_id": 1,
+    "expected_mode": "answer"
+  },
+  {
+    "machine_id": 1,
+    "question": "Come sostituisco la cingia di trasmisione?",
+    "expected_knowledge_item_id": 2,
+    "expected_mode": "answer"
+  },
+  {
+    "machine_id": 1,
+    "question": "Come fermo subito la macchina?",
+    "expected_knowledge_item_id": 3,
+    "expected_mode": "answer"
+  },
+  {
+    "machine_id": 1,
+    "question": "roblox",
+    "expected_knowledge_item_id": null,
+    "expected_mode": "fallback"
+  },
+  {
+    "machine_id": 1,
+    "question": "napoli juve aperol",
+    "expected_knowledge_item_id": null,
+    "expected_mode": "fallback"
+  }
+]

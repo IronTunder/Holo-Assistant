@@ -1,5 +1,4 @@
-# backend/app/main.py
-
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import ipaddress
@@ -12,6 +11,7 @@ from app.api.admin import router as admin_router
 from app.api.interactions import router as interactions_router
 from app.api.tts import router as tts_router
 from app.core.database import apply_compatible_migrations
+from app.services.ollama_service import warmup_model
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -19,9 +19,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Ditto API", version="1.0.0")
 
 
+async def _warmup_ollama_background():
+    await asyncio.sleep(0.1)
+    await warmup_model()
+
+
 @app.on_event("startup")
 async def startup_event():
     apply_compatible_migrations()
+    asyncio.create_task(_warmup_ollama_background())
 
 # Funzione per rilevare il prefisso di rete locale dinamicamente
 def get_local_network_prefix() -> str:

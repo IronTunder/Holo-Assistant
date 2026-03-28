@@ -96,6 +96,7 @@ def serialize_knowledge_item(
         "question_title": knowledge_item.question_title,
         "answer_text": knowledge_item.answer_text,
         "keywords": knowledge_item.keywords,
+        "example_questions": knowledge_item.example_questions,
         "is_active": knowledge_item.is_active,
         "sort_order": knowledge_item.sort_order,
         "assigned_machine_ids": assigned_machine_ids,

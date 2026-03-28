@@ -1,92 +1,43 @@
 import logging
-import re
+from time import perf_counter
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.api.auth.auth import ADMIN_MACHINE_EVENTS_CHANNEL
 from app.core.database import get_db
-from app.models.category import Category
 from app.models.interaction_log import InteractionLog
-from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.schemas.interaction import AskQuestionRequest, AskQuestionResponse
-from app.services.ollama_service import OllamaServiceError, classify_question, select_best_response
+from app.services.knowledge_retrieval import FALLBACK_MESSAGE, knowledge_retrieval_service
 from app.services.session_events import session_event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/interactions", tags=["interactions"])
 
-FALLBACK_RESPONSE = {
-    "response": (
-        "Mi dispiace, non sono riuscito a trovare una risposta appropriata alla tua domanda. "
-        "Ti consiglio di contattare direttamente l'assistenza per ricevere aiuto."
-    ),
-    "category_id": None,
-    "category_name": "Fallback",
-    "knowledge_item_id": None,
-    "knowledge_item_title": None,
-}
-WORD_PATTERN = re.compile(r"\w+", re.UNICODE)
-MIN_TOKEN_LENGTH = 3
 
-
-def _tokenize(text: str) -> set[str]:
-    return {
-        token.lower()
-        for token in WORD_PATTERN.findall(text or "")
-        if len(token) >= MIN_TOKEN_LENGTH
-    }
-
-
-def _knowledge_score(question_tokens: set[str], item: dict) -> int:
-    title_tokens = _tokenize(item.get("question_title", ""))
-    answer_tokens = _tokenize(item.get("answer_text", ""))
-    keyword_tokens = _tokenize(item.get("keywords", ""))
-
-    score = 0
-    score += len(question_tokens & keyword_tokens) * 4
-    score += len(question_tokens & title_tokens) * 3
-    score += len(question_tokens & answer_tokens)
-    return score
-
-
-def _format_knowledge_item(item: KnowledgeItem) -> dict:
-    return {
-        "id": item.id,
-        "category_id": item.category_id,
-        "category_name": item.category.name if item.category else None,
-        "question_title": item.question_title,
-        "text": item.answer_text,
-        "answer_text": item.answer_text,
-        "keywords": item.keywords,
-        "knowledge_item_id": item.id,
-        "knowledge_item_title": item.question_title,
-    }
-
-
-def _select_response_by_keywords(question: str, knowledge_items: list[dict]) -> dict | None:
-    question_tokens = _tokenize(question)
-    if not question_tokens:
-        return None
-
-    scored_items = []
-    for item in knowledge_items:
-        score = _knowledge_score(question_tokens, item)
-        if score > 0:
-            scored_items.append((score, item))
-
-    if not scored_items:
-        return None
-
-    scored_items.sort(key=lambda payload: (payload[0], payload[1].get("id", 0)), reverse=True)
-    return scored_items[0][1]
-
-
-def _build_fallback_response(reason: str) -> AskQuestionResponse:
-    logger.warning("Returning fallback interaction response: %s", reason)
-    return AskQuestionResponse(**FALLBACK_RESPONSE)
+def _build_response(
+    mode: str,
+    reason_code: str,
+    response: str,
+    confidence: float,
+    selected_response: dict | None = None,
+    clarification_options: list[dict] | None = None,
+) -> AskQuestionResponse:
+    clarification_options = clarification_options or []
+    selected_response = selected_response or {}
+    return AskQuestionResponse(
+        response=response,
+        mode=mode,
+        reason_code=reason_code,
+        confidence=confidence,
+        clarification_options=clarification_options,
+        category_id=selected_response.get("category_id"),
+        category_name=selected_response.get("category_name"),
+        knowledge_item_id=selected_response.get("knowledge_item_id"),
+        knowledge_item_title=selected_response.get("knowledge_item_title"),
+    )
 
 
 @router.post("/ask", response_model=AskQuestionResponse)
@@ -94,83 +45,65 @@ async def ask_question(
     request: AskQuestionRequest,
     db: Session = Depends(get_db),
 ):
+    overall_start = perf_counter()
     try:
         machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
         if machine is None:
             logger.warning("Machine %s not found", request.machine_id)
             raise HTTPException(status_code=404, detail="Machine not found")
 
-        categories = db.query(Category).order_by(Category.name.asc()).all()
-        if not categories:
-            return _build_fallback_response("no categories found")
-
-        category_names = [category.name for category in categories]
-        knowledge_query = (
-            db.query(KnowledgeItem)
-            .join(MachineKnowledgeItem, MachineKnowledgeItem.knowledge_item_id == KnowledgeItem.id)
-            .options(joinedload(KnowledgeItem.category))
-            .filter(
-                MachineKnowledgeItem.machine_id == request.machine_id,
-                MachineKnowledgeItem.is_enabled.is_(True),
-                KnowledgeItem.is_active.is_(True),
-            )
+        retrieval_result = await knowledge_retrieval_service.resolve_question(
+            db,
+            machine_id=request.machine_id,
+            question=request.question,
+            selected_knowledge_item_id=request.selected_knowledge_item_id,
         )
-        all_knowledge_items = knowledge_query.order_by(KnowledgeItem.sort_order.asc(), KnowledgeItem.id.asc()).all()
-        if not all_knowledge_items:
-            logger.warning("No knowledge items assigned to machine %s", request.machine_id)
-            return _build_fallback_response("no knowledge items available")
 
-        selected_response = None
-        fallback_reason = None
+        total_latency_ms = round((perf_counter() - overall_start) * 1000, 2)
+        top_candidates = [
+            {
+                "knowledge_item_id": candidate.item.knowledge_item_id,
+                "title": candidate.item.question_title,
+                "score": candidate.score,
+            }
+            for candidate in retrieval_result.top_candidates
+        ]
+        logger.info(
+            "interaction route=%s machine_id=%s user_id=%s confidence=%.3f latency_ms=%.2f ollama_latency_ms=%s top_candidates=%s",
+            retrieval_result.route,
+            request.machine_id,
+            request.user_id,
+            retrieval_result.confidence,
+            total_latency_ms,
+            retrieval_result.ollama_latency_ms,
+            top_candidates,
+        )
 
-        try:
-            classified_category = await classify_question(request.question, category_names)
-            selected_category = next(
-                (category for category in categories if category.name.lower() == classified_category.lower()),
-                None,
-            )
-            if selected_category is None:
-                raise OllamaServiceError(f"Categoria classificata non valida: {classified_category}")
-
-            category_items = [
-                item for item in all_knowledge_items if item.category_id == selected_category.id
-            ]
-            if not category_items:
-                raise OllamaServiceError(
-                    f"Nessun knowledge item assegnato alla macchina nella categoria {selected_category.name}"
-                )
-
-            selected_response = await select_best_response(
-                request.question,
-                [_format_knowledge_item(item) for item in category_items],
-            )
-        except OllamaServiceError as exc:
-            fallback_reason = f"ollama degraded: {exc}"
-            logger.warning(
-                "Falling back from Ollama for machine_id=%s question=%r reason=%s",
-                request.machine_id,
-                request.question,
-                exc,
+        if retrieval_result.mode == "clarification":
+            return _build_response(
+                mode="clarification",
+                reason_code=retrieval_result.reason_code,
+                response=retrieval_result.response,
+                confidence=retrieval_result.confidence,
+                clarification_options=retrieval_result.clarification_options,
             )
 
-        if selected_response is None:
-            selected_response = _select_response_by_keywords(
-                request.question,
-                [_format_knowledge_item(item) for item in all_knowledge_items],
-            )
-            if selected_response is None:
-                return _build_fallback_response(fallback_reason or "no keyword match")
+        selected_response = retrieval_result.response_payload
+        response_text = retrieval_result.response
+        if selected_response is None and retrieval_result.reason_code != "out_of_scope":
+            response_text = FALLBACK_MESSAGE
 
         interaction = InteractionLog(
             user_id=request.user_id,
             machine_id=request.machine_id,
-            category_id=selected_response.get("category_id"),
-            knowledge_item_id=selected_response.get("knowledge_item_id"),
+            category_id=selected_response.get("category_id") if selected_response else None,
+            knowledge_item_id=selected_response.get("knowledge_item_id") if selected_response else None,
             domanda=request.question,
-            risposta=selected_response["text"],
+            risposta=response_text,
         )
         db.add(interaction)
         db.commit()
+
         await session_event_bus.publish(
             ADMIN_MACHINE_EVENTS_CHANNEL,
             "interaction_created",
@@ -178,21 +111,25 @@ async def ask_question(
                 "interaction_id": interaction.id,
                 "user_id": request.user_id,
                 "machine_id": request.machine_id,
-                "category_id": selected_response.get("category_id"),
-                "category_name": selected_response.get("category_name"),
-                "knowledge_item_id": selected_response.get("knowledge_item_id"),
-                "knowledge_item_title": selected_response.get("knowledge_item_title"),
+                "category_id": selected_response.get("category_id") if selected_response else None,
+                "category_name": selected_response.get("category_name") if selected_response else None,
+                "knowledge_item_id": selected_response.get("knowledge_item_id") if selected_response else None,
+                "knowledge_item_title": selected_response.get("knowledge_item_title") if selected_response else None,
                 "question": request.question,
-                "response": selected_response["text"],
+                "response": response_text,
+                "mode": retrieval_result.mode,
+                "reason_code": retrieval_result.reason_code,
+                "confidence": retrieval_result.confidence,
+                "route": retrieval_result.route,
             },
         )
 
-        return AskQuestionResponse(
-            response=selected_response["text"],
-            category_id=selected_response.get("category_id"),
-            category_name=selected_response.get("category_name"),
-            knowledge_item_id=selected_response.get("knowledge_item_id"),
-            knowledge_item_title=selected_response.get("knowledge_item_title"),
+        return _build_response(
+            mode=retrieval_result.mode,
+            reason_code=retrieval_result.reason_code,
+            response=response_text,
+            confidence=retrieval_result.confidence,
+            selected_response=selected_response,
         )
     except OperationalError as exc:
         db.rollback()
@@ -203,7 +140,12 @@ async def ask_question(
     except Exception as exc:
         db.rollback()
         logger.error("Unexpected interaction error: %s", exc, exc_info=True)
-        return _build_fallback_response("unexpected interaction error")
+        return _build_response(
+            mode="fallback",
+            reason_code="no_match",
+            response=FALLBACK_MESSAGE,
+            confidence=0.0,
+        )
 
 
 @router.get("/health")

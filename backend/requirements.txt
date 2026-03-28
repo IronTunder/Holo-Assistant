@@ -12,3 +12,4 @@ python-decouple
 python-dotenv
 httpx
 piper-tts
+rapidfuzz

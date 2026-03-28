@@ -25,6 +25,7 @@ const emptyForm = {
   question_title: '',
   answer_text: '',
   keywords: '',
+  example_questions: '',
   sort_order: '0',
   machine_ids: [] as number[],
   is_active: true,
@@ -89,6 +90,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
       question_title: item.question_title,
       answer_text: item.answer_text,
       keywords: item.keywords || '',
+      example_questions: item.example_questions || '',
       sort_order: String(item.sort_order),
       machine_ids: item.assigned_machine_ids,
       is_active: item.is_active,
@@ -119,6 +121,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
         question_title: formState.question_title.trim(),
         answer_text: formState.answer_text.trim(),
         keywords: formState.keywords.trim() || null,
+        example_questions: formState.example_questions.trim() || null,
         sort_order: Number(formState.sort_order) || 0,
         machine_ids: formState.machine_ids,
         is_active: formState.is_active,
@@ -380,6 +383,18 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
                   value={formState.keywords}
                   onChange={(event) => setFormState((currentState) => ({ ...currentState, keywords: event.target.value }))}
                   placeholder="es. olio, manutenzione ordinaria, filtro"
+                />
+              </div>
+
+              <div className="space-y-2 sm:col-span-2">
+                <label className="text-sm font-medium">Esempi di domande</label>
+                <Textarea
+                  className="min-h-28"
+                  value={formState.example_questions}
+                  onChange={(event) =>
+                    setFormState((currentState) => ({ ...currentState, example_questions: event.target.value }))
+                  }
+                  placeholder={"Una domanda per riga\nCome cambio l'olio?\nLa pressa fa rumore, cosa controllo?"}
                 />
               </div>
             </div>

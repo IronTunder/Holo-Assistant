@@ -213,6 +213,15 @@ def apply_compatible_migrations():
                 "CREATE INDEX ix_interaction_logs_knowledge_item_id ON interaction_logs (knowledge_item_id)",
             )
 
+        if "knowledge_items" in inspector.get_table_names():
+            _ensure_column(
+                connection,
+                inspector,
+                "knowledge_items",
+                "example_questions",
+                "example_questions TEXT",
+            )
+
     _backfill_departments()
     _migrate_legacy_preset_responses()
 

@@ -2,17 +2,21 @@ import logging
 import os
 from typing import List
 
-import httpx
+try:
+    import httpx
+except ImportError:  # pragma: no cover - optional in lightweight test environments
+    httpx = None
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 MODEL = os.getenv("OLLAMA_MODEL", "mistral:7b-instruct-v0.3-q4_K_M")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "20"))
 OLLAMA_HEALTH_TIMEOUT = float(os.getenv("OLLAMA_HEALTH_TIMEOUT_SECONDS", "3"))
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "10m")
 OLLAMA_NUM_PREDICT_CLASSIFY = int(os.getenv("OLLAMA_NUM_PREDICT_CLASSIFY", "4"))
 OLLAMA_NUM_PREDICT_SELECT = int(os.getenv("OLLAMA_NUM_PREDICT_SELECT", "2"))
+OLLAMA_NUM_PREDICT_RERANK = int(os.getenv("OLLAMA_NUM_PREDICT_RERANK", str(max(OLLAMA_NUM_PREDICT_SELECT, 12))))
 OLLAMA_TOP_K = int(os.getenv("OLLAMA_TOP_K", "20"))
 OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.8"))
 OLLAMA_TEMPERATURE_CLASSIFY = float(os.getenv("OLLAMA_TEMPERATURE_CLASSIFY", "0.0"))
@@ -48,14 +52,20 @@ def _build_options(temperature: float, num_predict: int) -> dict:
     return options
 
 
-_async_client = httpx.AsyncClient(
-    base_url=OLLAMA_BASE_URL,
-    timeout=httpx.Timeout(OLLAMA_TIMEOUT),
-    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+_async_client = (
+    httpx.AsyncClient(
+        base_url=OLLAMA_BASE_URL,
+        timeout=httpx.Timeout(OLLAMA_TIMEOUT),
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    )
+    if httpx is not None
+    else None
 )
 
 
 async def _generate(prompt: str, temperature: float, num_predict: int) -> str:
+    if httpx is None or _async_client is None:
+        raise OllamaConfigurationError("Dipendenza httpx non disponibile nel runtime corrente")
     try:
         response = await _async_client.post(
             "/api/generate",
@@ -87,6 +97,28 @@ async def _generate(prompt: str, temperature: float, num_predict: int) -> str:
     if not generated_response:
         raise OllamaServiceError("Ollama ha restituito una risposta vuota")
     return generated_response
+
+
+def _extract_choice_index(selection: str, max_candidates: int) -> int:
+    normalized = selection.strip()
+
+    for marker in ('"choice"', "'choice'", '"index"', "'index'"):
+        marker_index = normalized.find(marker)
+        if marker_index >= 0:
+            tail = normalized[marker_index:]
+            digits = "".join(char for char in tail if char.isdigit())
+            if digits:
+                idx = int(digits) - 1
+                if 0 <= idx < max_candidates:
+                    return idx
+
+    for char in normalized:
+        if char.isdigit():
+            idx = int(char) - 1
+            if 0 <= idx < max_candidates:
+                return idx
+
+    raise OllamaServiceError(f"Ollama ha restituito una scelta non valida: {selection}")
 
 
 async def classify_question(question: str, categories: List[str]) -> str:
@@ -169,6 +201,45 @@ async def select_best_response(question: str, preset_responses: List[dict]) -> d
         raise
 
 
+async def rerank_knowledge_candidates(question: str, candidates: List[dict]) -> int:
+    if not candidates:
+        raise OllamaServiceError("Nessun candidato disponibile per il reranking")
+    if len(candidates) == 1:
+        return 0
+
+    candidates_text = "\n".join(
+        (
+            f"{index + 1}. Titolo: {candidate.get('question_title', '')}\n"
+            f"Categoria: {candidate.get('category_name') or 'N/D'}\n"
+            f"Keyword: {candidate.get('keywords') or 'N/D'}\n"
+            f"Risposta: {candidate.get('answer_text', '')[:280].replace(chr(10), ' ')}"
+        )
+        for index, candidate in enumerate(candidates)
+    )
+
+    prompt = (
+        "Scegli il candidato che risponde meglio alla domanda dell'operatore.\n"
+        "Restituisci solo JSON valido nel formato {\"choice\": N} dove N e un numero da 1 a "
+        f"{len(candidates)}.\n"
+        "Non aggiungere testo extra.\n"
+        f"Domanda: {question}\n"
+        f"Candidati:\n{candidates_text}"
+    )
+
+    try:
+        selection = await _generate(
+            prompt,
+            temperature=OLLAMA_TEMPERATURE_SELECT,
+            num_predict=OLLAMA_NUM_PREDICT_RERANK,
+        )
+    except OllamaServiceError as exc:
+        logger.error("Error reranking knowledge candidates with Ollama: %s", exc, exc_info=True)
+        logger.error("Attempted to connect to: %s", OLLAMA_BASE_URL)
+        raise
+
+    return _extract_choice_index(selection, len(candidates))
+
+
 async def is_ollama_available() -> bool:
     """Verifica se Ollama è disponibile e pronto."""
     try:
@@ -176,4 +247,21 @@ async def is_ollama_available() -> bool:
         return response.status_code == 200
     except Exception as exc:
         logger.warning(f"Ollama not available at {OLLAMA_BASE_URL}: {exc}")
+        return False
+
+
+async def warmup_model() -> bool:
+    try:
+        if not await is_ollama_available():
+            return False
+
+        await _generate(
+            "Rispondi solo OK",
+            temperature=0.0,
+            num_predict=max(OLLAMA_NUM_PREDICT_RERANK, 8),
+        )
+        logger.info("Ollama warmup completato per il modello %s", MODEL)
+        return True
+    except OllamaServiceError as exc:
+        logger.warning("Warmup Ollama fallito per il modello %s: %s", MODEL, exc)
         return False

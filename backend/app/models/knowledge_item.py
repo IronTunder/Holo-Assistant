@@ -12,6 +12,7 @@ class KnowledgeItem(Base):
     question_title = Column(String(255), nullable=False)
     answer_text = Column(Text, nullable=False)
     keywords = Column(String(500), nullable=True)
+    example_questions = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     sort_order = Column(Integer, nullable=False, default=0)
 

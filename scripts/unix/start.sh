@@ -11,6 +11,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
 OLLAMA_MODEL="mistral:7b-instruct-v0.3-q4_K_M"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+OLLAMA_KEEP_ALIVE="30m"
+OLLAMA_TOP_K="20"
+OLLAMA_TOP_P="0.8"
+OLLAMA_NUM_CTX="2048"
+OLLAMA_NUM_THREAD="4"
 
 get_local_ip() {
     local ip
@@ -50,7 +56,6 @@ if [ ! -f docker-compose.yml ]; then
     exit 1
 fi
 
-docker compose down 2>/dev/null || true
 if docker compose up -d; then
     echo "[OK] Docker avviato correttamente"
 else
@@ -86,15 +91,55 @@ if [ -f "$ROOT_DIR/backend/.env" ]; then
     if [ -n "$env_model" ]; then
         OLLAMA_MODEL="$env_model"
     fi
+    env_base_url="$(grep '^OLLAMA_BASE_URL=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    if [ -n "$env_base_url" ]; then
+        OLLAMA_BASE_URL="$env_base_url"
+    fi
+    env_keep_alive="$(grep '^OLLAMA_KEEP_ALIVE=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    if [ -n "$env_keep_alive" ]; then
+        OLLAMA_KEEP_ALIVE="$env_keep_alive"
+    fi
+    env_top_k="$(grep '^OLLAMA_TOP_K=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    if [ -n "$env_top_k" ]; then
+        OLLAMA_TOP_K="$env_top_k"
+    fi
+    env_top_p="$(grep '^OLLAMA_TOP_P=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    if [ -n "$env_top_p" ]; then
+        OLLAMA_TOP_P="$env_top_p"
+    fi
+    env_num_ctx="$(grep '^OLLAMA_NUM_CTX=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    if [ -n "$env_num_ctx" ]; then
+        OLLAMA_NUM_CTX="$env_num_ctx"
+    fi
+    env_num_thread="$(grep '^OLLAMA_NUM_THREAD=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    if [ -n "$env_num_thread" ]; then
+        OLLAMA_NUM_THREAD="$env_num_thread"
+    fi
 fi
 
 echo "Preparazione modello AI: $OLLAMA_MODEL"
 if docker exec ditto_ollama ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "$OLLAMA_MODEL"; then
-    echo "[INFO] Warmup modello AI in corso..."
-    if docker exec ditto_ollama ollama run "$OLLAMA_MODEL" "Rispondi solo OK" >/dev/null 2>&1; then
-        echo "[OK] Modello AI pronto"
+    echo "[INFO] Attendo che Ollama risponda su $OLLAMA_BASE_URL..."
+    ollama_ready=false
+    for attempt in $(seq 1 30); do
+        if curl -fsS "$OLLAMA_BASE_URL/api/tags" >/dev/null 2>&1; then
+            ollama_ready=true
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$ollama_ready" = false ]; then
+        echo "[AVVISO] Ollama non risponde ancora all'endpoint /api/tags"
     else
-        echo "[AVVISO] Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento."
+        echo "[INFO] Warmup modello AI in corso..."
+        if curl -fsS "$OLLAMA_BASE_URL/api/generate" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"$OLLAMA_MODEL\",\"prompt\":\"Rispondi solo OK\",\"stream\":false,\"keep_alive\":\"$OLLAMA_KEEP_ALIVE\",\"options\":{\"temperature\":0,\"top_k\":$OLLAMA_TOP_K,\"top_p\":$OLLAMA_TOP_P,\"num_predict\":12,\"num_ctx\":$OLLAMA_NUM_CTX,\"num_thread\":$OLLAMA_NUM_THREAD}}" >/dev/null 2>&1; then
+            echo "[OK] Modello AI pronto"
+        else
+            echo "[AVVISO] Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento."
+        fi
     fi
 else
     echo "[AVVISO] Modello $OLLAMA_MODEL non trovato nel container Ollama"
