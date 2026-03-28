@@ -18,6 +18,7 @@ from app.models.user import User, RefreshToken, Ruolo
 from app.models.machine import Machine
 from app.schemas.user import UserResponse
 from app.schemas.machine import MachineResponse
+from app.presenters import serialize_machine, serialize_operator, serialize_user
 from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 load_dotenv()
@@ -139,17 +140,7 @@ class SessionStatusResponse(BaseModel):
 
 
 def _build_operator_payload(user: Optional[User]) -> Optional[dict]:
-    if user is None:
-        return None
-
-    return {
-        "id": user.id,
-        "nome": user.nome,
-        "badge_id": user.badge_id,
-        "reparto": user.reparto,
-        "turno": user.turno.value,
-        "livello_esperienza": user.livello_esperienza.value,
-    }
+    return serialize_operator(user)
 
 
 def build_admin_machine_event_payload(
@@ -157,17 +148,37 @@ def build_admin_machine_event_payload(
     operator: Optional[User] = None,
     deleted: bool = False,
 ) -> dict:
-    return {
-        "id": machine.id,
-        "nome": machine.nome,
-        "reparto": machine.reparto,
-        "descrizione": machine.descrizione,
-        "id_postazione": machine.id_postazione,
-        "in_uso": machine.in_uso,
-        "operatore_attuale_id": machine.operatore_attuale_id,
-        "operator": _build_operator_payload(operator),
-        "deleted": deleted,
-    }
+    return serialize_machine(machine, operator=operator, deleted=deleted)
+
+
+def build_user_response_model(user: User) -> UserResponse:
+    payload = serialize_user(user)
+    return UserResponse(
+        id=payload["id"],
+        nome=payload["nome"],
+        badge_id=payload["badge_id"],
+        livello_esperienza=payload["livello_esperienza"],
+        department_id=payload["department_id"],
+        department_name=payload["department_name"],
+        reparto=payload["reparto"],
+        turno=payload["turno"],
+        created_at=payload["created_at"],
+    )
+
+
+def build_machine_response_model(machine: Machine) -> MachineResponse:
+    payload = serialize_machine(machine)
+    return MachineResponse(
+        id=payload["id"],
+        nome=payload["nome"],
+        department_id=payload["department_id"],
+        department_name=payload["department_name"],
+        reparto=payload["reparto"],
+        descrizione=payload["descrizione"],
+        id_postazione=payload["id_postazione"],
+        in_uso=payload["in_uso"],
+        operatore_attuale_id=payload["operatore_attuale_id"],
+    )
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -474,15 +485,7 @@ async def get_current_session_user(
     current_user: User = Depends(get_current_user),
 ):
     return CurrentUserResponse(
-        user=UserResponse(
-            id=current_user.id,
-            nome=current_user.nome,
-            badge_id=current_user.badge_id,
-            livello_esperienza=current_user.livello_esperienza.value,
-            reparto=current_user.reparto,
-            turno=current_user.turno.value,
-            created_at=current_user.created_at,
-        ),
+        user=build_user_response_model(current_user),
         is_admin=current_user.ruolo == Ruolo.ADMIN,
     )
 
@@ -630,15 +633,7 @@ async def badge_login(
         )
     
     # Prepara risposta
-    user_response = UserResponse(
-        id=user.id,
-        nome=user.nome,
-        badge_id=user.badge_id,
-        livello_esperienza=user.livello_esperienza.value,
-        reparto=user.reparto,
-        turno=user.turno.value,
-        created_at=user.created_at
-    )
+    user_response = build_user_response_model(user)
     
     # Occupa macchinario
     machine.in_uso = True
@@ -660,14 +655,7 @@ async def badge_login(
     )
     set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
     
-    machine_response = MachineResponse(
-        id=machine.id,
-        nome=machine.nome,
-        reparto=machine.reparto,
-        descrizione=machine.descrizione,
-        id_postazione=machine.id_postazione,
-        in_uso=True
-    )
+    machine_response = build_machine_response_model(machine)
     
     return LoginResponse(
         access_token=access_token,
@@ -720,15 +708,7 @@ async def credentials_login(
         )
     
     # Prepara risposta
-    user_response = UserResponse(
-        id=user.id,
-        nome=user.nome,
-        badge_id=user.badge_id,
-        livello_esperienza=user.livello_esperienza.value,
-        reparto=user.reparto,
-        turno=user.turno.value,
-        created_at=user.created_at
-    )
+    user_response = build_user_response_model(user)
     
     # Occupa macchinario
     machine.in_uso = True
@@ -750,14 +730,7 @@ async def credentials_login(
     )
     set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
     
-    machine_response = MachineResponse(
-        id=machine.id,
-        nome=machine.nome,
-        reparto=machine.reparto,
-        descrizione=machine.descrizione,
-        id_postazione=machine.id_postazione,
-        in_uso=True
-    )
+    machine_response = build_machine_response_model(machine)
     
     return LoginResponse(
         access_token=access_token,
@@ -898,15 +871,7 @@ async def admin_login(
         )
     
     # Prepara risposta
-    user_response = UserResponse(
-        id=user.id,
-        nome=user.nome,
-        badge_id=user.badge_id,
-        livello_esperienza=user.livello_esperienza.value,
-        reparto=user.reparto,
-        turno=user.turno.value,
-        created_at=user.created_at
-    )
+    user_response = build_user_response_model(user)
     
     # Crea token di accesso (2 ore per admin, più corto)
     admin_access_token_expiry = ADMIN_TOKEN_EXPIRE_MINUTES

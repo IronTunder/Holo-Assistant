@@ -1,47 +1,62 @@
-from app.database import engine, Base, SessionLocal
-from app.models.user import User, RefreshToken, Ruolo, LivelloEsperienza, Turno
-from app.models.machine import Machine
-from app.models.interaction_log import InteractionLog
-from app.models.role import Role
-from app.api.auth.auth import get_password_hash
 import os
+
 from dotenv import load_dotenv
+from sqlalchemy import text
+
+from app import models  # noqa: F401
+from app.api.auth.auth import get_password_hash
+from app.database import Base, SessionLocal, apply_compatible_migrations, engine
+from app.models.department import Department
+from app.models.user import LivelloEsperienza, Ruolo, Turno, User
 
 load_dotenv()
 
 print("Eliminazione tabelle vecchie...")
-Base.metadata.drop_all(bind=engine)
+with engine.begin() as connection:
+    connection.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+    connection.execute(text("CREATE SCHEMA public"))
+    connection.execute(text("GRANT ALL ON SCHEMA public TO postgres"))
+    connection.execute(text("GRANT ALL ON SCHEMA public TO public"))
 print("Creazione tabelle...")
 Base.metadata.create_all(bind=engine)
-print("✅ Tabelle create con successo")
+apply_compatible_migrations()
+print("Tabelle create con successo")
 
-# Seed admin user from environment variables
 admin_username = os.getenv("ADMIN_USERNAME")
 admin_password = os.getenv("ADMIN_PASSWORD")
 
 if admin_username and admin_password:
-    print("\n🔐 Creazione utente admin...")
+    print("\nCreazione utente admin...")
     db = SessionLocal()
-    
-    # Check if admin already exists
-    existing_admin = db.query(User).filter(User.nome == admin_username).first()
-    if existing_admin:
-        print(f"✅ Utente admin '{admin_username}' già esiste")
-    else:
-        # Create admin user
-        admin_user = User(
-            nome=admin_username,
-            badge_id=f"admin_{admin_username}",  # Unique badge_id for admin
-            password_hash=get_password_hash(admin_password),
-            ruolo=Ruolo.ADMIN,
-            livello_esperienza=LivelloEsperienza.SENIOR,  # Admin gets SENIOR level
-            reparto="AMMINISTRAZIONE",
-            turno=Turno.MATTINA
-        )
-        db.add(admin_user)
-        db.commit()
-        print(f"✅ Utente admin '{admin_username}' creato con successo")
-    
-    db.close()
+    try:
+        existing_admin = db.query(User).filter(User.nome == admin_username).first()
+        if existing_admin:
+            print(f"Utente admin '{admin_username}' gia esiste")
+        else:
+            admin_department = db.query(Department).filter(Department.name == "AMMINISTRAZIONE").first()
+            if admin_department is None:
+                admin_department = Department(
+                    name="AMMINISTRAZIONE",
+                    code="amministrazione",
+                    is_active=True,
+                )
+                db.add(admin_department)
+                db.flush()
+
+            admin_user = User(
+                nome=admin_username,
+                badge_id=f"admin_{admin_username}",
+                password_hash=get_password_hash(admin_password),
+                ruolo=Ruolo.ADMIN,
+                livello_esperienza=LivelloEsperienza.SENIOR,
+                department_id=admin_department.id,
+                reparto_legacy=admin_department.name,
+                turno=Turno.MATTINA,
+            )
+            db.add(admin_user)
+            db.commit()
+            print(f"Utente admin '{admin_username}' creato con successo")
+    finally:
+        db.close()
 else:
-    print("⚠️  Variabili ADMIN_USERNAME e ADMIN_PASSWORD non configurate in .env")
+    print("Variabili ADMIN_USERNAME e ADMIN_PASSWORD non configurate in .env")

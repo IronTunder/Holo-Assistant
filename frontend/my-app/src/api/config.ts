@@ -57,6 +57,12 @@ export const API_ENDPOINTS = {
   UPDATE_MACHINE_STATUS: (id: number) => `${API_BASE_URL}/machines/${id}/status`,
 
   // Admin endpoints
+  ADMIN_DASHBOARD_SUMMARY: `${API_BASE_URL}/admin/dashboard-summary`,
+  ADMIN_METADATA_DEPARTMENTS: `${API_BASE_URL}/admin/metadata/departments`,
+  ADMIN_METADATA_CATEGORIES: `${API_BASE_URL}/admin/metadata/categories`,
+  ADMIN_METADATA_MACHINES: `${API_BASE_URL}/admin/metadata/machines`,
+  ADMIN_METADATA_USERS: `${API_BASE_URL}/admin/metadata/users`,
+
   LIST_USERS: `${API_BASE_URL}/admin/users`,
   GET_USER: (id: number) => `${API_BASE_URL}/admin/users/${id}`,
   CREATE_USER: `${API_BASE_URL}/admin/users`,
@@ -71,6 +77,15 @@ export const API_ENDPOINTS = {
   UPDATE_ADMIN_MACHINE: (id: number) => `${API_BASE_URL}/admin/machines/${id}`,
   DELETE_ADMIN_MACHINE: (id: number) => `${API_BASE_URL}/admin/machines/${id}`,
   RESET_MACHINE_STATUS: (id: number) => `${API_BASE_URL}/admin/machines/${id}/reset-status`,
+
+  LIST_ADMIN_CATEGORIES: `${API_BASE_URL}/admin/categories`,
+  CREATE_ADMIN_CATEGORY: `${API_BASE_URL}/admin/categories`,
+  UPDATE_ADMIN_CATEGORY: (id: number) => `${API_BASE_URL}/admin/categories/${id}`,
+  LIST_KNOWLEDGE_ITEMS: `${API_BASE_URL}/admin/knowledge-items`,
+  CREATE_KNOWLEDGE_ITEM: `${API_BASE_URL}/admin/knowledge-items`,
+  UPDATE_KNOWLEDGE_ITEM: (id: number) => `${API_BASE_URL}/admin/knowledge-items/${id}`,
+  DELETE_KNOWLEDGE_ITEM: (id: number) => `${API_BASE_URL}/admin/knowledge-items/${id}`,
+  LIST_MACHINE_KNOWLEDGE: (machineId: number) => `${API_BASE_URL}/admin/machines/${machineId}/knowledge`,
 
   LIST_LOGS: `${API_BASE_URL}/admin/logs`,
 

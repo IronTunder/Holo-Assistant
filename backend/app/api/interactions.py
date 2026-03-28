@@ -2,21 +2,16 @@ import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import and_
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models.category import Category
 from app.models.interaction_log import InteractionLog
+from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
-from app.models.preset_response import PresetResponse
 from app.schemas.interaction import AskQuestionRequest, AskQuestionResponse
-from app.services.ollama_service import (
-    OllamaServiceError,
-    classify_question,
-    select_best_response,
-)
+from app.services.ollama_service import OllamaServiceError, classify_question, select_best_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/interactions", tags=["interactions"])
@@ -28,6 +23,8 @@ FALLBACK_RESPONSE = {
     ),
     "category_id": None,
     "category_name": "Fallback",
+    "knowledge_item_id": None,
+    "knowledge_item_title": None,
 }
 WORD_PATTERN = re.compile(r"\w+", re.UNICODE)
 MIN_TOKEN_LENGTH = 3
@@ -41,50 +38,48 @@ def _tokenize(text: str) -> set[str]:
     }
 
 
-def _keyword_score(question_tokens: set[str], response: dict) -> int:
-    response_tokens = _tokenize(response.get("text", ""))
-    keyword_tokens = _tokenize(response.get("keywords", ""))
+def _knowledge_score(question_tokens: set[str], item: dict) -> int:
+    title_tokens = _tokenize(item.get("question_title", ""))
+    answer_tokens = _tokenize(item.get("answer_text", ""))
+    keyword_tokens = _tokenize(item.get("keywords", ""))
 
     score = 0
     score += len(question_tokens & keyword_tokens) * 4
-    score += len(question_tokens & response_tokens)
-
-    if response.get("machine_id") is not None:
-        score += 1
-
+    score += len(question_tokens & title_tokens) * 3
+    score += len(question_tokens & answer_tokens)
     return score
 
 
-def _format_preset_response(response: PresetResponse, category_name: str | None = None) -> dict:
+def _format_knowledge_item(item: KnowledgeItem) -> dict:
     return {
-        "id": response.id,
-        "text": response.text,
-        "keywords": response.keywords,
-        "category_id": response.category_id,
-        "category_name": category_name,
-        "machine_id": response.machine_id,
+        "id": item.id,
+        "category_id": item.category_id,
+        "category_name": item.category.name if item.category else None,
+        "question_title": item.question_title,
+        "text": item.answer_text,
+        "answer_text": item.answer_text,
+        "keywords": item.keywords,
+        "knowledge_item_id": item.id,
+        "knowledge_item_title": item.question_title,
     }
 
 
-def _select_response_by_keywords(question: str, preset_responses: list[dict]) -> dict | None:
+def _select_response_by_keywords(question: str, knowledge_items: list[dict]) -> dict | None:
     question_tokens = _tokenize(question)
     if not question_tokens:
         return None
 
-    scored_responses = []
-    for response in preset_responses:
-        score = _keyword_score(question_tokens, response)
+    scored_items = []
+    for item in knowledge_items:
+        score = _knowledge_score(question_tokens, item)
         if score > 0:
-            scored_responses.append((score, response))
+            scored_items.append((score, item))
 
-    if not scored_responses:
+    if not scored_items:
         return None
 
-    scored_responses.sort(
-        key=lambda item: (item[0], item[1].get("machine_id") is not None, item[1].get("id", 0)),
-        reverse=True,
-    )
-    return scored_responses[0][1]
+    scored_items.sort(key=lambda payload: (payload[0], payload[1].get("id", 0)), reverse=True)
+    return scored_items[0][1]
 
 
 def _build_fallback_response(reason: str) -> AskQuestionResponse:
@@ -97,90 +92,55 @@ async def ask_question(
     request: AskQuestionRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Processa una domanda da parte dell'operatore.
-
-    1. Verifica il macchinario e le sue categorie disponibili
-    2. Classifica la domanda in una categoria usando Ollama
-    3. Seleziona la migliore risposta preset per quella categoria e macchinario
-    4. Salva l'interazione nel database
-    5. Ritorna la risposta al frontend
-    6. Se fallisce, ritorna una risposta di fallback
-    """
-
     try:
         machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
-        if not machine:
+        if machine is None:
             logger.warning("Machine %s not found", request.machine_id)
             raise HTTPException(status_code=404, detail="Machine not found")
 
-        categories_for_machine = machine.categories
-        if not categories_for_machine:
-            logger.warning("No categories assigned to machine %s", machine.nome)
-            categories_for_machine = db.query(Category).all()
-
-        if not categories_for_machine:
-            logger.warning(
-                "No categories found in database for machine_id=%s question=%r",
-                request.machine_id,
-                request.question,
-            )
+        categories = db.query(Category).order_by(Category.name.asc()).all()
+        if not categories:
             return _build_fallback_response("no categories found")
 
-        category_map = {category.id: category.name for category in categories_for_machine}
-        all_preset_responses = db.query(PresetResponse).filter(
-            and_(
-                PresetResponse.category_id.in_(list(category_map.keys())),
-                (
-                    (PresetResponse.machine_id == request.machine_id) |
-                    (PresetResponse.machine_id == None)
-                ),
+        category_names = [category.name for category in categories]
+        knowledge_query = (
+            db.query(KnowledgeItem)
+            .join(MachineKnowledgeItem, MachineKnowledgeItem.knowledge_item_id == KnowledgeItem.id)
+            .options(joinedload(KnowledgeItem.category))
+            .filter(
+                MachineKnowledgeItem.machine_id == request.machine_id,
+                MachineKnowledgeItem.is_enabled.is_(True),
+                KnowledgeItem.is_active.is_(True),
             )
-        ).all()
-
-        if not all_preset_responses:
-            logger.warning(
-                "No preset responses available for machine_id=%s question=%r",
-                request.machine_id,
-                request.question,
-            )
-            return _build_fallback_response("no preset responses available")
+        )
+        all_knowledge_items = knowledge_query.order_by(KnowledgeItem.sort_order.asc(), KnowledgeItem.id.asc()).all()
+        if not all_knowledge_items:
+            logger.warning("No knowledge items assigned to machine %s", request.machine_id)
+            return _build_fallback_response("no knowledge items available")
 
         selected_response = None
         fallback_reason = None
 
         try:
-            category_names = [category.name for category in categories_for_machine]
             classified_category = await classify_question(request.question, category_names)
-            category = next(
-                (
-                    candidate
-                    for candidate in categories_for_machine
-                    if candidate.name.lower() == classified_category.lower()
-                ),
+            selected_category = next(
+                (category for category in categories if category.name.lower() == classified_category.lower()),
                 None,
             )
-            if not category:
-                raise OllamaServiceError(
-                    f"Categoria classificata non valida per il macchinario: {classified_category}"
-                )
+            if selected_category is None:
+                raise OllamaServiceError(f"Categoria classificata non valida: {classified_category}")
 
-            preset_responses = [
-                response
-                for response in all_preset_responses
-                if response.category_id == category.id
+            category_items = [
+                item for item in all_knowledge_items if item.category_id == selected_category.id
             ]
-            if not preset_responses:
+            if not category_items:
                 raise OllamaServiceError(
-                    f"Nessuna risposta preset per la categoria {category.name}"
+                    f"Nessun knowledge item assegnato alla macchina nella categoria {selected_category.name}"
                 )
 
             selected_response = await select_best_response(
                 request.question,
-                [
-                    _format_preset_response(response, category.name)
-                    for response in preset_responses
-                ],
+                [_format_knowledge_item(item) for item in category_items],
             )
         except OllamaServiceError as exc:
             fallback_reason = f"ollama degraded: {exc}"
@@ -194,86 +154,41 @@ async def ask_question(
         if selected_response is None:
             selected_response = _select_response_by_keywords(
                 request.question,
-                [
-                    _format_preset_response(response, category_map.get(response.category_id))
-                    for response in all_preset_responses
-                ],
+                [_format_knowledge_item(item) for item in all_knowledge_items],
             )
             if selected_response is None:
-                logger.warning(
-                    "No heuristic response match for machine_id=%s question=%r reason=%s",
-                    request.machine_id,
-                    request.question,
-                    fallback_reason or "no keyword match",
-                )
                 return _build_fallback_response(fallback_reason or "no keyword match")
-
-            logger.warning(
-                "Using keyword fallback for machine_id=%s question=%r selected_response_id=%s reason=%s",
-                request.machine_id,
-                request.question,
-                selected_response.get("id"),
-                fallback_reason or "keyword heuristic",
-            )
 
         interaction = InteractionLog(
             user_id=request.user_id,
             machine_id=request.machine_id,
             category_id=selected_response.get("category_id"),
+            knowledge_item_id=selected_response.get("knowledge_item_id"),
             domanda=request.question,
             risposta=selected_response["text"],
         )
-
         db.add(interaction)
         db.commit()
-        db.refresh(interaction)
-
-        logger.info(
-            "Question processed - User: %s, Machine: %s, Category: %s, Response ID: %s",
-            request.user_id,
-            machine.nome,
-            selected_response.get("category_name") or "Fallback",
-            selected_response.get("id"),
-        )
 
         return AskQuestionResponse(
             response=selected_response["text"],
             category_id=selected_response.get("category_id"),
             category_name=selected_response.get("category_name"),
+            knowledge_item_id=selected_response.get("knowledge_item_id"),
+            knowledge_item_title=selected_response.get("knowledge_item_title"),
         )
     except OperationalError as exc:
         db.rollback()
-        logger.error(
-            "Database error processing question=%r machine_id=%s: %s",
-            request.question,
-            request.machine_id,
-            exc,
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Database temporarily unavailable",
-        ) from exc
+        logger.error("Database error processing interaction: %s", exc, exc_info=True)
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
     except HTTPException:
         raise
     except Exception as exc:
         db.rollback()
-        logger.error(
-            "Unexpected error processing question=%r machine_id=%s: %s",
-            request.question,
-            request.machine_id,
-            exc,
-            exc_info=True,
-        )
+        logger.error("Unexpected interaction error: %s", exc, exc_info=True)
         return _build_fallback_response("unexpected interaction error")
 
 
 @router.get("/health")
 async def health_check():
-    """Verifica che il servizio e Ollama siano disponibili."""
-    ollama_available = await is_ollama_available()
-
-    return {
-        "status": "ok" if ollama_available else "degraded",
-        "ollama_available": ollama_available,
-    }
+    return {"status": "ok"}

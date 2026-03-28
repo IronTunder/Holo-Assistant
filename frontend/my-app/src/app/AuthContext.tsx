@@ -7,6 +7,8 @@ export interface AuthUser {
   nome: string;
   badge_id: string;
   livello_esperienza: string;
+  department_id?: number | null;
+  department_name?: string | null;
   reparto: string;
   turno: string;
   created_at: string;
@@ -15,6 +17,8 @@ export interface AuthUser {
 export interface AuthMachine {
   id: number;
   nome: string;
+  department_id?: number | null;
+  department_name?: string | null;
   reparto: string;
   descrizione: string;
   id_postazione: string;

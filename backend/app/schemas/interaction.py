@@ -41,3 +41,5 @@ class AskQuestionResponse(BaseModel):
     response: str
     category_id: Optional[int] = None
     category_name: Optional[str] = None
+    knowledge_item_id: Optional[int] = None
+    knowledge_item_title: Optional[str] = None

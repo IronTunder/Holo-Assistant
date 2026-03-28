@@ -1,24 +1,31 @@
-# backend/app/schemas/user.py
-
-from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
+
+from pydantic import BaseModel
+
 from app.models.user import LivelloEsperienza, Turno
+
 
 class UserBase(BaseModel):
     nome: str
     badge_id: str
     livello_esperienza: LivelloEsperienza
-    reparto: str
     turno: Turno
 
+
 class UserCreate(UserBase):
-    password: Optional[str] = None  # Password opzionale per il login
+    password: Optional[str] = None
+    department_id: Optional[int] = None
+    reparto: Optional[str] = None
+
 
 class UserResponse(UserBase):
     id: int
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    reparto: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

@@ -1,57 +1,39 @@
-// frontend/my-app/src/app/components/admin/MachineList.tsx
-
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from '../../AuthContext';
-import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
-import { Card } from '../../components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '../../components/ui/dialog';
-import { Plus, Edit2, Trash2, RotateCw, Eye } from 'lucide-react';
-import { toast } from 'sonner';
+
 import API_ENDPOINTS from '../../../api/config';
-import { MachineForm } from './MachineForm';
+import { useAuth } from '../../AuthContext';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Card } from '../../components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Input } from '../../components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { Cpu, Edit2, Eye, Plus, RotateCw, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import type { AdminMachine, DepartmentOption } from './adminTypes';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
+import { MachineForm } from './MachineForm';
 
-interface MachineOperator {
-  id: number;
-  nome: string;
-  badge_id: string;
-  reparto: string;
-  turno: string;
-  livello_esperienza: string;
-}
-
-interface Machine {
-  id: number;
-  nome: string;
-  reparto: string;
-  descrizione?: string;
-  id_postazione?: string;
-  in_uso: boolean;
-  operatore_attuale_id?: number;
-  operator?: MachineOperator | null;
-  deleted?: boolean;
+interface MachineListProps {
+  departments: DepartmentOption[];
+  onMetadataRefresh: () => Promise<void>;
 }
 
 const POLLING_WARMUP_MS = 60_000;
 const POLLING_WARMUP_INTERVAL_MS = 10_000;
 const POLLING_STEADY_INTERVAL_MS = 30_000;
 
-export const MachineList = () => {
+export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps) => {
   const { accessToken, isAdmin, refreshAccessToken } = useAuth();
-  const [machines, setMachines] = useState<Machine[]>([]);
+  const [machines, setMachines] = useState<AdminMachine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingMachine, setEditingMachine] = useState<Machine | null>(null);
-  const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
+  const [editingMachine, setEditingMachine] = useState<AdminMachine | null>(null);
+  const [selectedMachine, setSelectedMachine] = useState<AdminMachine | null>(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsMachineId, setDetailsMachineId] = useState<number | null>(null);
@@ -88,21 +70,18 @@ export const MachineList = () => {
     [accessToken, refreshAccessToken]
   );
 
-  const sortMachines = useCallback((items: Machine[]) => {
+  const sortMachines = useCallback((items: AdminMachine[]) => {
     return [...items].sort((left, right) => left.nome.localeCompare(right.nome, 'it'));
   }, []);
 
-  const applyMachineUpdate = useCallback((incoming: Machine) => {
+  const applyMachineUpdate = useCallback((incoming: AdminMachine) => {
     setMachines((currentMachines) => {
       if (incoming.deleted) {
         return currentMachines.filter((machine) => machine.id !== incoming.id);
       }
 
       const nextMachines = currentMachines.filter((machine) => machine.id !== incoming.id);
-      nextMachines.push({
-        ...incoming,
-        deleted: false,
-      });
+      nextMachines.push({ ...incoming, deleted: false });
       return sortMachines(nextMachines);
     });
   }, [sortMachines]);
@@ -115,13 +94,15 @@ export const MachineList = () => {
 
     try {
       const response = await authorizedFetch(API_ENDPOINTS.LIST_MACHINES);
+      if (!response.ok) {
+        throw new Error('Errore nel caricamento macchinari');
+      }
 
-      if (!response.ok) throw new Error('Errore');
-      const data = await response.json();
+      const data = (await response.json()) as AdminMachine[];
       setMachines(sortMachines(data));
       return true;
     } catch (error) {
-      console.error('Errore:', error);
+      console.error(error);
       if (!silent) {
         toast.error('Errore nel caricamento macchinari');
       }
@@ -172,19 +153,13 @@ export const MachineList = () => {
       }
     };
 
-    const getPollingDelay = () => {
-      return Date.now() - effectStartedAt < POLLING_WARMUP_MS
+    const getPollingDelay = () =>
+      Date.now() - effectStartedAt < POLLING_WARMUP_MS
         ? POLLING_WARMUP_INTERVAL_MS
         : POLLING_STEADY_INTERVAL_MS;
-    };
 
     const runPollingCycle = async () => {
-      if (
-        isCancelled ||
-        !pollingActive ||
-        pollingInFlight ||
-        !isVisible()
-      ) {
+      if (isCancelled || !pollingActive || pollingInFlight || !isVisible()) {
         return;
       }
 
@@ -212,7 +187,6 @@ export const MachineList = () => {
       if (retryTimeoutId || isCancelled || !isVisible()) {
         return;
       }
-
       retryTimeoutId = setTimeout(() => {
         retryTimeoutId = null;
         void connectMachineStream();
@@ -220,16 +194,12 @@ export const MachineList = () => {
     };
 
     const handleMachineEvent = (eventName: string, rawData: string) => {
-      if (eventName === 'heartbeat' || !rawData) {
-        return;
-      }
-
-      if (eventName !== 'machine_status') {
+      if (eventName === 'heartbeat' || !rawData || eventName !== 'machine_status') {
         return;
       }
 
       try {
-        const payload = JSON.parse(rawData) as Machine;
+        const payload = JSON.parse(rawData) as AdminMachine;
         applyMachineUpdate(payload);
       } catch (error) {
         console.error('Errore nel parsing evento admin SSE:', error);
@@ -265,16 +235,15 @@ export const MachineList = () => {
       }
 
       abortStream();
-      streamAbortController = new AbortController();
+      const controller = new AbortController();
+      streamAbortController = controller;
 
       try {
         const response = await authorizedFetch(
           API_ENDPOINTS.ADMIN_MACHINE_EVENTS,
           {
-            headers: {
-              Accept: 'text/event-stream',
-            },
-            signal: streamAbortController.signal,
+            headers: { Accept: 'text/event-stream' },
+            signal: controller.signal,
           }
         );
 
@@ -309,7 +278,11 @@ export const MachineList = () => {
           scheduleRetry();
         }
       } catch (error) {
-        if (streamAbortController?.signal.aborted || isCancelled) {
+        if (
+          controller.signal.aborted ||
+          isCancelled ||
+          (error instanceof DOMException && error.name === 'AbortError')
+        ) {
           return;
         }
 
@@ -349,18 +322,44 @@ export const MachineList = () => {
     };
   }, [accessToken, applyMachineUpdate, authorizedFetch, fetchMachines, isAdmin]);
 
+  const filteredMachines = useMemo(() => {
+    return machines.filter((machine) => {
+      const matchesSearch =
+        machine.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (machine.id_postazione || '').toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesDepartment =
+        departmentFilter === 'all' || String(machine.department_id ?? '') === departmentFilter;
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'busy' ? machine.in_uso : !machine.in_uso);
+
+      return matchesSearch && matchesDepartment && matchesStatus;
+    });
+  }, [departmentFilter, machines, searchTerm, statusFilter]);
+
+  const detailsMachine = useMemo(() => {
+    if (detailsMachineId === null) {
+      return null;
+    }
+    return machines.find((machine) => machine.id === detailsMachineId) ?? null;
+  }, [detailsMachineId, machines]);
+
   const handleDeleteMachine = async (machineId: number) => {
     try {
       const response = await authorizedFetch(API_ENDPOINTS.DELETE_ADMIN_MACHINE(machineId), {
         method: 'DELETE',
       });
-
-      if (!response.ok) throw new Error('Errore');
+      if (!response.ok) {
+        throw new Error('Errore');
+      }
       toast.success('Macchinario eliminato');
       setIsDeleteOpen(false);
+      setSelectedMachine(null);
+      await fetchMachines({ silent: true });
+      await onMetadataRefresh();
     } catch (error) {
-      console.error('Errore:', error);
-      toast.error('Errore nella eliminazione');
+      console.error(error);
+      toast.error('Errore nella eliminazione del macchinario');
     }
   };
 
@@ -368,94 +367,122 @@ export const MachineList = () => {
     try {
       const response = await authorizedFetch(API_ENDPOINTS.RESET_MACHINE_STATUS(machineId), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
-
-      if (!response.ok) throw new Error('Errore');
+      if (!response.ok) {
+        throw new Error('Errore');
+      }
       toast.success('Stato macchinario resettato');
+      await fetchMachines({ silent: true });
     } catch (error) {
-      console.error('Errore:', error);
+      console.error(error);
       toast.error('Errore nel reset stato');
     }
   };
 
-  const filteredMachines = useMemo(() => {
-    return machines.filter((machine) =>
-      machine.nome.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [machines, searchTerm]);
-
-  const detailsMachine = useMemo(() => {
-    if (detailsMachineId === null) {
-      return null;
-    }
-
-    return machines.find((machine) => machine.id === detailsMachineId) ?? null;
-  }, [detailsMachineId, machines]);
-
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-2 justify-between">
-        <Input
-          placeholder="Cerca per nome..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="sm:max-w-xs"
-        />
-        <Button
-          onClick={() => {
-            setEditingMachine(null);
-            setIsFormOpen(true);
-          }}
-          className="gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Nuovo Macchinario
-        </Button>
-      </div>
+      <Card className="border-slate-200 bg-white">
+        <div className="flex flex-col gap-4 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-slate-900">
+                <Cpu className="h-5 w-5 text-sky-600" />
+                <h3 className="text-lg font-semibold">Macchinari</h3>
+              </div>
+              <p className="text-sm text-slate-500">
+                {filteredMachines.length} macchinari visibili, {machines.filter((machine) => machine.in_uso).length} attivi ora
+              </p>
+            </div>
+            <Button
+              onClick={() => {
+                setEditingMachine(null);
+                setIsFormOpen(true);
+              }}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Nuovo macchinario
+            </Button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <Input
+              placeholder="Cerca per nome o postazione..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+            />
+            <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="Tutti i reparti" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tutti i reparti</SelectItem>
+                {departments.map((department) => (
+                  <SelectItem key={department.id} value={String(department.id)}>
+                    {department.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="Tutti gli stati" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tutti gli stati</SelectItem>
+                <SelectItem value="free">Liberi</SelectItem>
+                <SelectItem value="busy">In uso</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </Card>
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="bg-slate-50">
-                <TableHead className="font-semibold">Nome</TableHead>
-                <TableHead className="font-semibold">Reparto</TableHead>
-                <TableHead className="font-semibold">Stato</TableHead>
-                <TableHead className="font-semibold">Postazione</TableHead>
-                <TableHead className="font-semibold text-right">Azioni</TableHead>
+                <TableHead>Macchinario</TableHead>
+                <TableHead>Reparto</TableHead>
+                <TableHead>Stato</TableHead>
+                <TableHead>Postazione</TableHead>
+                <TableHead className="text-right">Azioni</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-slate-500">
-                    Caricamento...
+                  <TableCell colSpan={5} className="py-10 text-center text-slate-500">
+                    Caricamento macchinari...
                   </TableCell>
                 </TableRow>
               ) : filteredMachines.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-slate-500">
-                    Nessun macchinario trovato
+                  <TableCell colSpan={5} className="py-10 text-center text-slate-500">
+                    Nessun macchinario trovato con i filtri correnti
                   </TableCell>
                 </TableRow>
               ) : (
                 filteredMachines.map((machine) => (
-                  <TableRow key={machine.id} className="hover:bg-slate-50">
-                    <TableCell className="font-medium">{machine.nome}</TableCell>
-                    <TableCell className="text-sm">{machine.reparto}</TableCell>
+                  <TableRow key={machine.id} className="hover:bg-slate-50/80">
                     <TableCell>
-                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                        machine.in_uso 
-                          ? 'bg-yellow-100 text-yellow-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}>
-                        {machine.in_uso ? 'In uso' : 'Libero'}
-                      </span>
+                      <div className="space-y-1">
+                        <p className="font-medium text-slate-900">{machine.nome}</p>
+                        <p className="text-xs text-slate-500">{machine.descrizione || 'Nessuna descrizione'}</p>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-sm">{machine.id_postazione || '-'}</TableCell>
+                    <TableCell>{machine.department_name || machine.reparto || '-'}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={machine.in_uso ? 'secondary' : 'outline'}
+                        className={machine.in_uso ? 'bg-amber-100 text-amber-900' : 'bg-emerald-50 text-emerald-800'}
+                      >
+                        {machine.in_uso ? 'In uso' : 'Libero'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{machine.id_postazione || '-'}</TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
                         <Button
@@ -465,44 +492,34 @@ export const MachineList = () => {
                             setEditingMachine(machine);
                             setIsFormOpen(true);
                           }}
-                          title="Modifica"
                         >
-                          <Edit2 className="w-4 h-4" />
+                          <Edit2 className="h-4 w-4" />
                         </Button>
-                        {machine.in_uso && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              setDetailsMachineId(machine.id);
-                              setIsDetailsOpen(true);
-                            }}
-                            title="Dettagli operatore"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
-                        )}
-                        {machine.in_uso && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handleResetStatus(machine.id)}
-                            title="Libera macchinario"
-                          >
-                            <RotateCw className="w-4 h-4" />
-                          </Button>
-                        )}
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="text-red-600 hover:text-red-800 hover:bg-red-50"
+                          onClick={() => {
+                            setDetailsMachineId(machine.id);
+                            setIsDetailsOpen(true);
+                          }}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        {machine.in_uso ? (
+                          <Button size="sm" variant="ghost" onClick={() => handleResetStatus(machine.id)}>
+                            <RotateCw className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50 hover:text-red-800"
                           onClick={() => {
                             setSelectedMachine(machine);
                             setIsDeleteOpen(true);
                           }}
-                          title="Elimina"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </TableCell>
@@ -521,14 +538,16 @@ export const MachineList = () => {
           setEditingMachine(null);
         }}
         machine={editingMachine}
+        departments={departments}
         onSuccess={() => {
           void fetchMachines();
+          void onMetadataRefresh();
           setIsFormOpen(false);
           setEditingMachine(null);
         }}
       />
 
-      {selectedMachine && (
+      {selectedMachine ? (
         <DeleteConfirmDialog
           isOpen={isDeleteOpen}
           onClose={() => {
@@ -536,10 +555,10 @@ export const MachineList = () => {
             setSelectedMachine(null);
           }}
           title="Eliminare macchinario?"
-          description={`Sei certo di voler eliminare "${selectedMachine.nome}"? Questa azione non può essere annullata.`}
+          description={`Sei certo di voler eliminare "${selectedMachine.nome}"? Questa azione non puo essere annullata.`}
           onConfirm={() => handleDeleteMachine(selectedMachine.id)}
         />
-      )}
+      ) : null}
 
       <Dialog
         open={isDetailsOpen}
@@ -550,11 +569,11 @@ export const MachineList = () => {
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Dettagli utilizzo macchinario</DialogTitle>
             <DialogDescription>
-              Stato in tempo reale dell&apos;operatore associato alla macchina selezionata.
+              Stato in tempo reale del macchinario e dell operatore associato.
             </DialogDescription>
           </DialogHeader>
 
@@ -562,43 +581,64 @@ export const MachineList = () => {
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               Macchinario non piu disponibile.
             </div>
-          ) : !detailsMachine.in_uso ? (
-            <div className="space-y-2 rounded-lg border border-green-200 bg-green-50 p-4">
-              <p className="text-sm font-semibold text-green-800">{detailsMachine.nome}</p>
-              <p className="text-sm text-green-700">La macchina e ora libera.</p>
-            </div>
-          ) : detailsMachine.operator ? (
+          ) : (
             <div className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-500">Macchinario</p>
-                <p className="font-semibold text-slate-900">{detailsMachine.nome}</p>
-              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Operatore</p>
-                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.nome}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Macchinario</p>
+                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.nome}</p>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Badge ID</p>
-                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.badge_id}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Stato</p>
+                  <p className="mt-1 font-medium text-slate-900">
+                    {detailsMachine.in_uso ? 'In uso' : 'Libero'}
+                  </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Reparto</p>
-                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.reparto}</p>
+                  <p className="mt-1 font-medium text-slate-900">
+                    {detailsMachine.department_name || detailsMachine.reparto || '-'}
+                  </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Turno</p>
-                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.turno}</p>
-                </div>
-                <div className="rounded-lg border border-slate-200 p-3 sm:col-span-2">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Livello esperienza</p>
-                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.livello_esperienza}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Postazione</p>
+                  <p className="mt-1 font-medium text-slate-900">{detailsMachine.id_postazione || '-'}</p>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-              Operatore non disponibile per questo macchinario.
+
+              {detailsMachine.operator ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">Operatore attuale</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Nome</p>
+                      <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.nome}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Badge ID</p>
+                      <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.badge_id}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Reparto</p>
+                      <p className="mt-1 font-medium text-slate-900">
+                        {detailsMachine.operator.department_name || detailsMachine.operator.reparto || '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Turno</p>
+                      <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.turno}</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Livello esperienza</p>
+                      <p className="mt-1 font-medium text-slate-900">{detailsMachine.operator.livello_esperienza}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                  Nessun operatore associato al momento.
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
