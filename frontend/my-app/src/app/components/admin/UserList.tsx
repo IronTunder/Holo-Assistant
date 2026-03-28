@@ -1,7 +1,6 @@
 // frontend/my-app/src/app/components/admin/UserList.tsx
 
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../AuthContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Card } from '../../components/ui/card';
@@ -9,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Plus, Edit2, Trash2, Key } from 'lucide-react';
 import { toast } from 'sonner';
 import API_ENDPOINTS from '../../../api/config';
+import { useApiClient } from '../../apiClient';
 import { UserForm } from './UserForm';
 import { ResetPasswordDialog } from './ResetPasswordDialog';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
@@ -25,7 +25,7 @@ interface User {
 }
 
 export const UserList = () => {
-  const { accessToken } = useAuth();
+  const { apiCall } = useApiClient();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -38,11 +38,7 @@ export const UserList = () => {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(API_ENDPOINTS.LIST_USERS, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
+      const response = await apiCall(API_ENDPOINTS.LIST_USERS);
 
       if (!response.ok) throw new Error('Errore nel caricamento utenti');
 
@@ -57,16 +53,13 @@ export const UserList = () => {
   };
 
   useEffect(() => {
-    fetchUsers();
-  }, [accessToken]);
+    void fetchUsers();
+  }, [apiCall]);
 
   const handleDeleteUser = async (userId: number) => {
     try {
-      const response = await fetch(API_ENDPOINTS.DELETE_USER(userId), {
+      const response = await apiCall(API_ENDPOINTS.DELETE_USER(userId), {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
       });
 
       if (!response.ok) throw new Error('Errore nella eliminazione');
@@ -202,7 +195,7 @@ export const UserList = () => {
         }}
         user={editingUser}
         onSuccess={() => {
-          fetchUsers();
+          void fetchUsers();
           setIsFormOpen(false);
           setEditingUser(null);
         }}

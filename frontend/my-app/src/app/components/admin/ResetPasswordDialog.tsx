@@ -1,12 +1,12 @@
 // frontend/my-app/src/app/components/admin/ResetPasswordDialog.tsx
 
 import { useState } from 'react';
-import { useAuth } from '../../AuthContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { toast } from 'sonner';
 import API_ENDPOINTS from '../../../api/config';
+import { useApiClient } from '../../apiClient';
 
 interface User {
   id: number;
@@ -21,7 +21,7 @@ interface ResetPasswordDialogProps {
 }
 
 export const ResetPasswordDialog = ({ isOpen, onClose, user, onSuccess }: ResetPasswordDialogProps) => {
-  const { accessToken } = useAuth();
+  const { apiCall } = useApiClient();
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -42,10 +42,9 @@ export const ResetPasswordDialog = ({ isOpen, onClose, user, onSuccess }: ResetP
     setIsLoading(true);
 
     try {
-      const response = await fetch(API_ENDPOINTS.RESET_PASSWORD(user.id), {
+      const response = await apiCall(API_ENDPOINTS.RESET_PASSWORD(user.id), {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ new_password: newPassword }),

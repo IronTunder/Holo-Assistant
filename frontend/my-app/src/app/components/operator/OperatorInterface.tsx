@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, Radio, X } from 'lucide-react';
-import { AvatarDisplay } from './AvatarDisplay';
+import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { useAuth } from '../../AuthContext';
-import { playTts, type TtsPlayback } from '../../ttsClient';
-import API_ENDPOINTS from '../../../api/config';
+import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '../../ttsClient';
+import { API_BASE_URL, API_ENDPOINTS } from '../../../api/config';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
 type SessionStatusReason = 'ok' | 'machine_released' | 'machine_reassigned' | 'machine_not_found';
@@ -49,8 +49,7 @@ export function OperatorInterface() {
   const sseConnectedRef = useRef(false);
   const logoutMessageTimeoutRef = useRef<number | null>(null);
   const manualLogoutInProgressRef = useRef(false);
-
-  const API_URL = import.meta.env.VITE_API_URL;
+  const avatarDisplayRef = useRef<AvatarDisplayHandle | null>(null);
 
   const dismissLogoutMessage = () => {
     if (logoutMessageTimeoutRef.current !== null) {
@@ -356,8 +355,9 @@ export function OperatorInterface() {
   const handleBadgeLogin = async (badgeId: string, machineId: number) => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/auth/badge-login`, {
+      const response = await fetch(API_ENDPOINTS.BADGE_LOGIN, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -370,7 +370,6 @@ export function OperatorInterface() {
       const data = await response.json();
       login(
         data.access_token,
-        data.refresh_token,
         data.user,
         data.machine,
         data.expires_in
@@ -386,8 +385,9 @@ export function OperatorInterface() {
   const handleCredentialsLogin = async (username: string, password: string, machineId: number) => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/auth/credentials-login`, {
+      const response = await fetch(API_ENDPOINTS.CREDENTIALS_LOGIN, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -400,7 +400,6 @@ export function OperatorInterface() {
       const data = await response.json();
       login(
         data.access_token,
-        data.refresh_token,
         data.user,
         data.machine,
         data.expires_in
@@ -416,6 +415,7 @@ export function OperatorInterface() {
   const handleLogout = async () => {
     manualLogoutInProgressRef.current = true;
     dismissLogoutMessage();
+    avatarDisplayRef.current?.stopSpeech();
     setAvatarState('idle');
     setTranscript('');
     setQuestionInput('');
@@ -435,7 +435,7 @@ export function OperatorInterface() {
       
       try {
         // Chiama il backend per ottenere la risposta
-        const response = await fetch(`${API_URL}/api/interactions/ask`, {
+        const response = await fetch(`${API_BASE_URL}/api/interactions/ask`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -454,10 +454,15 @@ export function OperatorInterface() {
         }
 
         const data = await response.json();
-        const playback = await handleTTS(data.response);
+        const speechPayload = await handleTTS(data.response);
+        let playback: TtsPlayback | null = null;
 
-        setAvatarState('speaking');
-        await startTypingEffect(data.response, playback?.durationMs);
+        if (speechPayload) {
+          setAvatarState('speaking');
+          playback = await startSpeechPlayback(speechPayload);
+        }
+
+        await startTypingEffect(data.response, speechPayload?.durationMs);
 
         if (playback) {
           try {
@@ -480,17 +485,31 @@ export function OperatorInterface() {
     }
   };
 
-    const handleTTS = async (text: string): Promise<TtsPlayback | null> => {
+    const handleTTS = async (text: string): Promise<TtsSpeechPayload | null> => {
     if (!isLoggedIn) {
       return null;
     }
     try {
-      return await playTts(text, accessToken ?? undefined);
+      return await synthesizeTts(text, accessToken ?? undefined);
     } catch (error) {
       console.error('TTS test error:', error);
       alert(error instanceof Error ? error.message : 'Errore durante il test TTS');
       return null;
     }
+  };
+
+  const startSpeechPlayback = async (payload: TtsSpeechPayload): Promise<TtsPlayback> => {
+    const avatar = avatarDisplayRef.current;
+
+    if (avatar?.canPlaySpeech()) {
+      try {
+        return await avatar.speak(payload);
+      } catch (error) {
+        console.warn('Avatar playback failed, using audio fallback:', error);
+      }
+    }
+
+    return playTtsAudio(payload);
   };
 
   const handleFollowUpResponse = (resolved: boolean) => {
@@ -642,7 +661,7 @@ export function OperatorInterface() {
           ) : (
             <>
               {/* Avatar Display */}
-              <AvatarDisplay state={avatarState} />
+              <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
 
               {/* Status indicator */}
               <div className="mt-8 text-center">

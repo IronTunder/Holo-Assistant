@@ -1,12 +1,13 @@
+import { useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 
 /**
  * Hook personalizzato per fare richieste API autenticate con auto-refresh del token
  */
 export const useApiClient = () => {
-  const auth = useAuth();
+  const { accessToken, refreshAccessToken, logout } = useAuth();
 
-  const apiCall = async (
+  const apiCall = useCallback(async (
     url: string,
     options: RequestInit = {}
   ): Promise<Response> => {
@@ -17,39 +18,41 @@ export const useApiClient = () => {
     };
 
     // Aggiungi il token di accesso
-    if (auth.accessToken) {
-      headers['Authorization'] = `Bearer ${auth.accessToken}`;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     // Effettua la richiesta
     let response = await fetch(url, {
       ...options,
       headers,
+      credentials: 'include',
     });
 
     // Se ricevi 401 (Unauthorized), prova a refreshare il token
     if (response.status === 401) {
-      const refreshed = await auth.refreshAccessToken();
+      const refreshedToken = await refreshAccessToken();
       
-      if (refreshed && auth.accessToken) {
-        headers['Authorization'] = `Bearer ${auth.accessToken}`;
+      if (refreshedToken) {
+        headers['Authorization'] = `Bearer ${refreshedToken}`;
         // Riprova la richiesta con il nuovo token
         response = await fetch(url, {
           ...options,
           headers,
+          credentials: 'include',
         });
       } else {
         // Refresh fallito, fai logout
-        await auth.logout();
+        await logout();
         // Reindirizza a login (questo sarà gestito da Root.tsx)
         window.location.href = '/';
       }
     }
 
     return response;
-  };
+  }, [accessToken, logout, refreshAccessToken]);
 
-  return { apiCall };
+  return useMemo(() => ({ apiCall }), [apiCall]);
 };
 
 export const createApiClient = (auth: any) => {
@@ -66,6 +69,7 @@ export const createApiClient = (auth: any) => {
       const response = await fetch(url, {
         method: 'GET',
         headers,
+        credentials: 'include',
       });
 
       if (response.status === 401) {
@@ -73,7 +77,7 @@ export const createApiClient = (auth: any) => {
         const refreshResponse = await fetch(`${import.meta.env.VITE_API_URL}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: auth.refreshToken }),
+          credentials: 'include',
         });
 
         if (refreshResponse.ok) {
@@ -82,7 +86,7 @@ export const createApiClient = (auth: any) => {
 
           // Riprova la richiesta originale
           headers['Authorization'] = `Bearer ${newTokenData.access_token}`;
-          return fetch(url, { method: 'GET', headers });
+          return fetch(url, { method: 'GET', headers, credentials: 'include' });
         } else {
           // Refresh fallito, logout
           await auth.logout();
@@ -106,13 +110,14 @@ export const createApiClient = (auth: any) => {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
+        credentials: 'include',
       });
 
       if (response.status === 401) {
         const refreshResponse = await fetch(`${import.meta.env.VITE_API_URL}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: auth.refreshToken }),
+          credentials: 'include',
         });
 
         if (refreshResponse.ok) {
@@ -124,6 +129,7 @@ export const createApiClient = (auth: any) => {
             method: 'POST',
             headers,
             body: JSON.stringify(body),
+            credentials: 'include',
           });
         } else {
           await auth.logout();

@@ -1,12 +1,12 @@
 // frontend/my-app/src/app/components/admin/MachineForm.tsx
 
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../AuthContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { toast } from 'sonner';
 import API_ENDPOINTS from '../../../api/config';
+import { useApiClient } from '../../apiClient';
 
 interface Machine {
   id: number;
@@ -25,7 +25,7 @@ interface MachineFormProps {
 }
 
 export const MachineForm = ({ isOpen, onClose, machine, onSuccess }: MachineFormProps) => {
-  const { accessToken } = useAuth();
+  const { apiCall } = useApiClient();
   const [nome, setNome] = useState('');
   const [reparto, setReparto] = useState('');
   const [descrizione, setDescrizione] = useState('');
@@ -68,10 +68,9 @@ export const MachineForm = ({ isOpen, onClose, machine, onSuccess }: MachineForm
 
       const method = machine ? 'PUT' : 'POST';
 
-      const response = await fetch(endpoint, {
+      const response = await apiCall(endpoint, {
         method,
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(data),

@@ -56,13 +56,14 @@ export const MachineList = () => {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsMachineId, setDetailsMachineId] = useState<number | null>(null);
 
-  const getCurrentAccessToken = useCallback(() => {
-    return localStorage.getItem('accessToken') || accessToken;
-  }, [accessToken]);
-
   const authorizedFetch = useCallback(
-    async (input: RequestInfo | URL, init: RequestInit = {}, allowRetry = true): Promise<Response> => {
-      const token = getCurrentAccessToken();
+    async (
+      input: RequestInfo | URL,
+      init: RequestInit = {},
+      allowRetry = true,
+      tokenOverride?: string
+    ): Promise<Response> => {
+      const token = tokenOverride ?? accessToken;
       const headers = new Headers(init.headers);
 
       if (token) {
@@ -72,18 +73,19 @@ export const MachineList = () => {
       const response = await fetch(input, {
         ...init,
         headers,
+        credentials: 'include',
       });
 
       if (response.status === 401 && allowRetry) {
-        const refreshed = await refreshAccessToken();
-        if (refreshed) {
-          return authorizedFetch(input, init, false);
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) {
+          return authorizedFetch(input, init, false, refreshedToken);
         }
       }
 
       return response;
     },
-    [getCurrentAccessToken, refreshAccessToken]
+    [accessToken, refreshAccessToken]
   );
 
   const sortMachines = useCallback((items: Machine[]) => {

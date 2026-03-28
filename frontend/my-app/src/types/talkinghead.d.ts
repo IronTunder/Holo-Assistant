@@ -45,11 +45,27 @@ declare module '@met4citizen/talkinghead' {
       avatar: TalkingHeadAvatar,
       onprogress?: ((url: string, event: ProgressEvent<EventTarget>) => void) | null
     ): Promise<void>;
+    speakAudio(
+      payload: {
+        audio?: AudioBuffer | ArrayBuffer[];
+        words?: string[];
+        wtimes?: number[];
+        wdurations?: number[];
+        visemes?: string[];
+        vtimes?: number[];
+        vdurations?: number[];
+        markers?: Array<() => void>;
+        mtimes?: number[];
+      },
+      opt?: { lipsyncLang?: string } | null,
+      onsubtitles?: ((text: string) => void) | null
+    ): void;
     setMood(mood: string): void;
     setView(view: TalkingHeadView, opt?: Partial<TalkingHeadOptions> | null): void;
     setLighting(opt: Partial<TalkingHeadOptions>): void;
     lookAtCamera(durationMs: number): void;
     setValue(morphTarget: string, value: number, durationMs?: number | null): void;
+    stopSpeaking(): void;
     start(): void;
     stop(): void;
     dispose(): void;

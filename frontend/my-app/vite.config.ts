@@ -19,6 +19,35 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['@met4citizen/talkinghead'],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replace(/\\/g, '/');
+
+          if (normalizedId.includes('/node_modules/')) {
+            if (
+              normalizedId.includes('@met4citizen/talkinghead') ||
+              normalizedId.includes('/three/')
+            ) {
+              return 'operator-3d';
+            }
+          }
+
+          if (normalizedId.includes('/src/app/components/admin/')) {
+            return 'admin';
+          }
+
+          if (
+            normalizedId.includes('/src/app/components/operator/') ||
+            normalizedId.includes('/src/app/ttsClient.ts')
+          ) {
+            return 'operator';
+          }
+        },
+      },
+    },
+  },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv', '**/*.glb'],

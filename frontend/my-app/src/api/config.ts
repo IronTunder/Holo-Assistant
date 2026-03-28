@@ -8,8 +8,22 @@
 const getApiBaseUrl = (): string => {
   // Development environment
   if (import.meta.env.DEV) {
-    // Use VITE_API_URL from .env.development, fallback to localhost:8000
-    return import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const configuredUrl = import.meta.env.VITE_API_URL;
+
+    if (!configuredUrl) {
+      return `${window.location.protocol}//${window.location.hostname}:8000`;
+    }
+
+    try {
+      const parsedUrl = new URL(configuredUrl);
+
+      // In dev we keep the backend port/path from env, but align the hostname
+      // with the current page so auth cookies stay on the same host during reloads.
+      parsedUrl.hostname = window.location.hostname;
+      return parsedUrl.toString().replace(/\/$/, '');
+    } catch {
+      return configuredUrl;
+    }
   }
 
   // Production environment

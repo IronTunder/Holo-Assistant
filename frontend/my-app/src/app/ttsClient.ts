@@ -1,9 +1,44 @@
 import API_ENDPOINTS from '../api/config';
 
+type TtsSynthesisApiResponse = {
+  audio_base64: string;
+  mime_type: string;
+  duration_ms: number;
+  words: string[];
+  wtimes: number[];
+  wdurations: number[];
+  visemes?: string[];
+  vtimes?: number[];
+  vdurations?: number[];
+};
+
+export type TtsSpeechPayload = {
+  audio: ArrayBuffer;
+  mimeType: string;
+  durationMs: number;
+  words: string[];
+  wtimes: number[];
+  wdurations: number[];
+  visemes?: string[];
+  vtimes?: number[];
+  vdurations?: number[];
+};
+
 export type TtsPlayback = {
   durationMs: number;
   finished: Promise<void>;
 };
+
+function base64ToArrayBuffer(base64: string) {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes.buffer;
+}
 
 function waitForAudioMetadata(audio: HTMLAudioElement): Promise<void> {
   if (Number.isFinite(audio.duration) && audio.duration > 0) {
@@ -38,7 +73,7 @@ function waitForAudioMetadata(audio: HTMLAudioElement): Promise<void> {
   });
 }
 
-export async function playTts(text: string, token?: string): Promise<TtsPlayback> {
+export async function synthesizeTts(text: string, token?: string): Promise<TtsSpeechPayload> {
   const headers: Record<string, string> = {};
   const browserLanguage = navigator.language || 'it-IT';
 
@@ -61,7 +96,23 @@ export async function playTts(text: string, token?: string): Promise<TtsPlayback
     throw new Error(errorText || 'Errore durante la sintesi vocale');
   }
 
-  const audioBlob = await response.blob();
+  const payload = (await response.json()) as TtsSynthesisApiResponse;
+
+  return {
+    audio: base64ToArrayBuffer(payload.audio_base64),
+    mimeType: payload.mime_type,
+    durationMs: payload.duration_ms,
+    words: payload.words,
+    wtimes: payload.wtimes,
+    wdurations: payload.wdurations,
+    visemes: payload.visemes,
+    vtimes: payload.vtimes,
+    vdurations: payload.vdurations,
+  };
+}
+
+export async function playTtsAudio(payload: TtsSpeechPayload): Promise<TtsPlayback> {
+  const audioBlob = new Blob([payload.audio], { type: payload.mimeType });
   const audioUrl = URL.createObjectURL(audioBlob);
 
   try {
@@ -88,11 +139,13 @@ export async function playTts(text: string, token?: string): Promise<TtsPlayback
 
     await waitForAudioMetadata(audio);
     await audio.play();
-    const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
-      ? audio.duration * 1000
-      : 0;
 
-    return { durationMs, finished };
+    return {
+      durationMs:
+        payload.durationMs ||
+        (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration * 1000 : 0),
+      finished,
+    };
   } finally {
     window.setTimeout(() => URL.revokeObjectURL(audioUrl), 1000);
   }

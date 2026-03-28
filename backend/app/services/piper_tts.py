@@ -9,6 +9,9 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from piper import PiperVoice
 
+from app.services.tts_lipsync import build_lipsync_result
+from app.services.tts_models import TtsSynthesisResult
+
 
 @dataclass(frozen=True)
 class VoiceModel:
@@ -77,6 +80,40 @@ class PiperTTSService:
             voice.synthesize_wav(clean_text, wav_file)
 
         return wav_buffer.getvalue()
+
+    def synthesize_with_lipsync(
+        self, text: str, language: Optional[str] = None
+    ) -> TtsSynthesisResult:
+        clean_text = text.strip()
+        if not clean_text:
+            raise ValueError("Il testo TTS non puo essere vuoto")
+
+        voice_model = self.resolve_voice_model(language)
+        voice = self._get_voice(voice_model)
+        wav_buffer = io.BytesIO()
+
+        with wave.open(wav_buffer, "wb") as wav_file:
+            alignments = voice.synthesize_wav(
+                clean_text,
+                wav_file,
+                include_alignments=True,
+            ) or []
+
+        audio_bytes = wav_buffer.getvalue()
+        duration_ms = self._get_wav_duration_ms(audio_bytes)
+        lipsync = build_lipsync_result(clean_text, duration_ms, voice, alignments)
+
+        return TtsSynthesisResult(
+            audio_bytes=audio_bytes,
+            mime_type="audio/wav",
+            duration_ms=duration_ms,
+            words=lipsync.words,
+            wtimes=lipsync.wtimes,
+            wdurations=lipsync.wdurations,
+            visemes=lipsync.visemes,
+            vtimes=lipsync.vtimes,
+            vdurations=lipsync.vdurations,
+        )
 
     def resolve_voice_model(self, language: Optional[str] = None) -> VoiceModel:
         if not self.enabled:
@@ -275,6 +312,16 @@ class PiperTTSService:
     def _parse_quality_order(self, raw_value: str) -> List[str]:
         qualities = [value.strip() for value in raw_value.split(",") if value.strip()]
         return qualities or ["medium", "low", "x_low", "high"]
+
+    def _get_wav_duration_ms(self, audio_bytes: bytes) -> int:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+            frame_rate = wav_file.getframerate()
+            frame_count = wav_file.getnframes()
+
+        if frame_rate <= 0:
+            return 0
+
+        return int(round((frame_count / frame_rate) * 1000))
 
 
 tts_service = PiperTTSService()

@@ -1,6 +1,6 @@
 # backend/app/api/auth/auth.py
 
-from fastapi import APIRouter, HTTPException, Request, status, Depends, Header
+from fastapi import APIRouter, HTTPException, Request, Response, status, Depends, Header, Cookie
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
@@ -39,6 +39,9 @@ ADMIN_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", "120"))
 OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES", "480"))
 ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES", "120"))
 SSE_TOKEN_EXPIRE_MINUTES = int(os.getenv("SSE_TOKEN_EXPIRE_MINUTES", "5"))
+REFRESH_TOKEN_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "ditto_refresh_token")
+REFRESH_TOKEN_COOKIE_SECURE = os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false").lower() == "true"
+REFRESH_TOKEN_COOKIE_SAMESITE = os.getenv("REFRESH_TOKEN_COOKIE_SAMESITE", "lax")
 
 class BadgeLoginRequest(BaseModel):
     badge_id: str
@@ -54,11 +57,11 @@ class AdminLoginRequest(BaseModel):
     password: str
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 class RefreshTokenStatusRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 class SSETokenRequest(BaseModel):
     machine_id: int
@@ -70,7 +73,7 @@ class LogoutRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str
     expires_in: int  # secondi fino a scadenza access token
     user: UserResponse
@@ -79,7 +82,7 @@ class LoginResponse(BaseModel):
 
 class AdminLoginResponse(BaseModel):
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str
     expires_in: int  # secondi fino a scadenza access token
     user: UserResponse
@@ -187,6 +190,43 @@ def create_sse_token(user_id: int, machine_id: int) -> str:
         "exp": expire,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def set_refresh_token_cookie(response: Response, refresh_token: str, expires_delta: timedelta) -> None:
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=refresh_token,
+        max_age=int(expires_delta.total_seconds()),
+        httponly=True,
+        secure=REFRESH_TOKEN_COOKIE_SECURE,
+        samesite=REFRESH_TOKEN_COOKIE_SAMESITE,
+        path="/",
+    )
+
+
+def clear_refresh_token_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=REFRESH_TOKEN_COOKIE_SECURE,
+        samesite=REFRESH_TOKEN_COOKIE_SAMESITE,
+    )
+
+
+def resolve_refresh_token(
+    cookie_refresh_token: Optional[str],
+    request_refresh_token: Optional[str] = None,
+) -> str:
+    resolved_refresh_token = cookie_refresh_token or request_refresh_token
+
+    if not resolved_refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token non fornito"
+        )
+
+    return resolved_refresh_token
 
 def create_refresh_token(
     user_id: int,
@@ -449,13 +489,18 @@ async def get_current_session_user(
 
 @router.post("/refresh-token-status", response_model=RefreshTokenStatusResponse)
 async def refresh_token_status(
-    request: RefreshTokenStatusRequest,
+    request: Optional[RefreshTokenStatusRequest] = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    refresh_token_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE_NAME),
 ):
-    cleanup_refresh_tokens(db, user_id=current_user.id, preserve_token=request.refresh_token)
+    refresh_token_value = resolve_refresh_token(
+        refresh_token_cookie,
+        request.refresh_token if request else None,
+    )
+    cleanup_refresh_tokens(db, user_id=current_user.id, preserve_token=refresh_token_value)
     refresh_token_db = db.query(RefreshToken).filter(
-        RefreshToken.token == request.refresh_token
+        RefreshToken.token == refresh_token_value
     ).first()
 
     if not refresh_token_db:
@@ -559,6 +604,7 @@ async def session_events(
 @router.post("/badge-login", response_model=LoginResponse)
 async def badge_login(
     request: BadgeLoginRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     # Verifica macchinario
@@ -605,12 +651,14 @@ async def badge_login(
         data={"sub": str(user.id), "username": user.nome}
     )
     cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
+    refresh_token_expires_delta = get_refresh_token_expires_delta(user)
     refresh_token = create_refresh_token(
         user.id,
         db,
-        expires_delta=get_refresh_token_expires_delta(user),
+        expires_delta=refresh_token_expires_delta,
         machine_id=machine.id,
     )
+    set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
     
     machine_response = MachineResponse(
         id=machine.id,
@@ -623,7 +671,6 @@ async def badge_login(
     
     return LoginResponse(
         access_token=access_token,
-        refresh_token=refresh_token,
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # secondi
         user=user_response,
@@ -634,6 +681,7 @@ async def badge_login(
 @router.post("/credentials-login", response_model=LoginResponse)
 async def credentials_login(
     request: CredentialsLoginRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     # Verifica macchinario
@@ -693,12 +741,14 @@ async def credentials_login(
         data={"sub": str(user.id), "username": user.nome}
     )
     cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
+    refresh_token_expires_delta = get_refresh_token_expires_delta(user)
     refresh_token = create_refresh_token(
         user.id,
         db,
-        expires_delta=get_refresh_token_expires_delta(user),
+        expires_delta=refresh_token_expires_delta,
         machine_id=machine.id,
     )
+    set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
     
     machine_response = MachineResponse(
         id=machine.id,
@@ -711,7 +761,6 @@ async def credentials_login(
     
     return LoginResponse(
         access_token=access_token,
-        refresh_token=refresh_token,
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # secondi
         user=user_response,
@@ -721,15 +770,20 @@ async def credentials_login(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    request: RefreshTokenRequest,
-    db: Session = Depends(get_db)
+    request: Optional[RefreshTokenRequest] = None,
+    db: Session = Depends(get_db),
+    refresh_token_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE_NAME),
 ):
     """Endpoint per rinnovare l'access token usando un refresh token."""
-    cleanup_refresh_tokens(db, preserve_token=request.refresh_token)
+    refresh_token_value = resolve_refresh_token(
+        refresh_token_cookie,
+        request.refresh_token if request else None,
+    )
+    cleanup_refresh_tokens(db, preserve_token=refresh_token_value)
     
     # Cerca il refresh token nel database
     refresh_token_db = db.query(RefreshToken).filter(
-        RefreshToken.token == request.refresh_token
+        RefreshToken.token == refresh_token_value
     ).first()
     
     if not refresh_token_db:
@@ -778,7 +832,9 @@ async def refresh_token(
 @router.post("/logout")
 async def logout(
     request: LogoutRequest,
-    db: Session = Depends(get_db)
+    response: Response,
+    db: Session = Depends(get_db),
+    refresh_token_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE_NAME),
 ):
     """Endpoint per fare logout - libera la macchina e revoca il refresh token."""
     
@@ -794,19 +850,24 @@ async def logout(
         await publish_machine_session_event(machine, request.user_id, db=db)
     
     # Revoca il refresh token se fornito
-    cleanup_refresh_tokens(db, user_id=request.user_id)
-    if request.refresh_token:
+    if request.user_id is not None:
+        cleanup_refresh_tokens(db, user_id=request.user_id)
+
+    refresh_token_value = refresh_token_cookie or request.refresh_token
+    if refresh_token_value:
         refresh_token_db = db.query(RefreshToken).filter(
-            RefreshToken.token == request.refresh_token
+            RefreshToken.token == refresh_token_value
         ).first()
         if refresh_token_db:
             delete_refresh_token(db, refresh_token_db)
-    
+
+    clear_refresh_token_cookie(response)
     return {"message": "Logout effettuato con successo"}
 
 @router.post("/admin-login", response_model=AdminLoginResponse)
 async def admin_login(
     request: AdminLoginRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """Endpoint per il login degli amministratori."""
@@ -855,16 +916,17 @@ async def admin_login(
     )
     
     cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
+    refresh_token_expires_delta = get_refresh_token_expires_delta(user)
     refresh_token = create_refresh_token(
         user.id,
         db,
-        expires_delta=get_refresh_token_expires_delta(user),
+        expires_delta=refresh_token_expires_delta,
         machine_id=None,
     )
+    set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
     
     return AdminLoginResponse(
         access_token=access_token,
-        refresh_token=refresh_token,
         token_type="bearer",
         expires_in=admin_access_token_expiry * 60,  # secondi
         user=user_response,

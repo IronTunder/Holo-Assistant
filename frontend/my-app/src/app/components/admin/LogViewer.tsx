@@ -1,11 +1,11 @@
 // frontend/my-app/src/app/components/admin/LogViewer.tsx
 
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../AuthContext';
 import { Card } from '../../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { toast } from 'sonner';
 import API_ENDPOINTS from '../../../api/config';
+import { useApiClient } from '../../apiClient';
 
 interface Log {
   id: number;
@@ -17,18 +17,14 @@ interface Log {
 }
 
 export const LogViewer = () => {
-  const { accessToken } = useAuth();
+  const { apiCall } = useApiClient();
   const [logs, setLogs] = useState<Log[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchLogs = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_ENDPOINTS.LIST_LOGS}?page=1&size=50`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
+      const response = await apiCall(`${API_ENDPOINTS.LIST_LOGS}?page=1&size=50`);
 
       if (!response.ok) throw new Error('Errore');
       const data = await response.json();
@@ -42,8 +38,8 @@ export const LogViewer = () => {
   };
 
   useEffect(() => {
-    fetchLogs();
-  }, [accessToken]);
+    void fetchLogs();
+  }, [apiCall]);
 
   return (
     <Card className="overflow-hidden">

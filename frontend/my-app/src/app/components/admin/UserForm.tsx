@@ -1,13 +1,13 @@
 // frontend/my-app/src/app/components/admin/UserForm.tsx
 
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../AuthContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
 import API_ENDPOINTS from '../../../api/config';
+import { useApiClient } from '../../apiClient';
 
 interface User {
   id: number;
@@ -28,7 +28,7 @@ interface UserFormProps {
 }
 
 export const UserForm = ({ isOpen, onClose, user, onSuccess }: UserFormProps) => {
-  const { accessToken } = useAuth();
+  const { apiCall } = useApiClient();
   const [nome, setNome] = useState('');
   const [badge_id, setBadge_id] = useState('');
   const [password, setPassword] = useState('');
@@ -81,10 +81,9 @@ export const UserForm = ({ isOpen, onClose, user, onSuccess }: UserFormProps) =>
         if (password) {
           data.password = password;
         }
-        const response = await fetch(API_ENDPOINTS.UPDATE_USER(user.id), {
+        const response = await apiCall(API_ENDPOINTS.UPDATE_USER(user.id), {
           method: 'PUT',
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(data),
@@ -101,10 +100,9 @@ export const UserForm = ({ isOpen, onClose, user, onSuccess }: UserFormProps) =>
         }
         data.password = password;
 
-        const response = await fetch(API_ENDPOINTS.CREATE_USER, {
+        const response = await apiCall(API_ENDPOINTS.CREATE_USER, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(data),
