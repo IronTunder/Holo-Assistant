@@ -3,6 +3,7 @@ import { UserCircle, ChevronDown, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import badgeIcon from '@/app/components/images/icon.png';
 import { CredentialsLogin } from './CredentialsLogin';
+import { ScrollArea } from '@/shared/ui/scroll-area';
 
 interface Machine {
   id: number;
@@ -26,7 +27,6 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Carica la lista dei macchinari disponibili
   useEffect(() => {
     fetchMachines();
   }, []);
@@ -55,7 +55,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
       setError('Seleziona un macchinario prima di procedere');
       return;
     }
-    
+
     setScanning(true);
     setTimeout(() => {
       const badgeId = `NFT-00${Math.floor(Math.random() * 4) + 1}`;
@@ -75,141 +75,162 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
 
   return (
     <>
-      <div className="relative z-10 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 120px)' }}>
-        <div className="text-center">
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5 }}
-          >
-            {/* Badge reader icon */}
-            <div className="relative inline-block mb-8">
-              <div className={`w-48 h-48 rounded-3xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border-4 border-white/20 backdrop-blur-sm flex items-center justify-center ${scanning ? 'animate-pulse' : ''}`}>
-                <img 
-                  src={badgeIcon} 
-                  alt="Badge Reader" 
-                  className="w-40 h-40 object-contain" 
-                />
+      <div className="h-full min-h-0">
+        <motion.div
+          initial={{ scale: 0.97, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.35 }}
+          className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(320px,0.9fr)_minmax(380px,1.1fr)]"
+        >
+          <section className="flex min-h-0 flex-col justify-center rounded-[28px] border border-white/10 bg-slate-950/20 p-5 text-center backdrop-blur-sm sm:p-6">
+            <div className="flex flex-1 flex-col items-center justify-center">
+              <div className="relative inline-block">
+                <div className={`flex h-36 w-36 items-center justify-center rounded-[32px] border-4 border-white/20 bg-gradient-to-br from-blue-500/20 to-cyan-500/10 backdrop-blur-sm sm:h-44 sm:w-44 ${scanning ? 'animate-pulse' : ''}`}>
+                  <img
+                    src={badgeIcon}
+                    alt="Badge Reader"
+                    className="h-24 w-24 object-contain sm:h-32 sm:w-32"
+                  />
+                </div>
+
+                {scanning && (
+                  <motion.div
+                    className="absolute inset-0 rounded-[32px] border-4 border-blue-400"
+                    animate={{
+                      scale: [1, 1.06, 1],
+                      opacity: [1, 0, 1],
+                    }}
+                    transition={{
+                      duration: 1.5,
+                      repeat: Infinity,
+                    }}
+                  />
+                )}
               </div>
-              
-              {scanning && (
-                <motion.div
-                  className="absolute inset-0 rounded-3xl border-4 border-blue-400"
-                  animate={{
-                    scale: [1, 1.1, 1],
-                    opacity: [1, 0, 1],
-                  }}
-                  transition={{
-                    duration: 1.5,
-                    repeat: Infinity,
-                  }}
-                />
-              )}
+
+              <h2 className="mt-5 text-2xl font-semibold text-white sm:text-3xl">Benvenuto in DITTO</h2>
+              <p className="mt-3 max-w-md text-sm leading-6 text-slate-300 sm:text-base">
+                {scanning
+                  ? 'Lettura badge in corso...'
+                  : 'Seleziona la postazione e accedi senza far scorrere la schermata.'}
+              </p>
+
+              <div className="mt-4 w-full max-w-md rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Postazione selezionata</p>
+                <p className="mt-2 text-lg font-semibold text-white">{selectedMachine?.nome || 'Nessuna postazione selezionata'}</p>
+                <p className="mt-1 text-sm text-slate-400">
+                  {selectedMachine ? `${selectedMachine.reparto} - ${selectedMachine.id_postazione}` : 'Scegli una macchina dal pannello laterale.'}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+            <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Accesso operatore</p>
+              <h3 className="mt-1 text-lg font-semibold text-white">Seleziona il macchinario e il metodo di accesso</h3>
             </div>
 
-            <h2 className="text-3xl mb-4">Benvenuto in DITTO</h2>
-            <p className="text-gray-400 mb-6 max-w-md mx-auto">
-              {scanning 
-                ? 'Lettura badge in corso...' 
-                : 'Seleziona il macchinario e avvicina il tuo badge RFID/NFC'
-              }
-            </p>
-
-            {/* Machine Selector */}
-            <div className="mb-8 max-w-md mx-auto">
-              {loading ? (
-                <div className="flex items-center justify-center gap-2 text-gray-400">
-                  <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                  <span>Caricamento macchinari...</span>
-                </div>
-              ) : error ? (
-                <div className="text-red-400 text-sm">{error}</div>
-              ) : machines.length === 0 ? (
-                <div className="text-yellow-400 text-sm">
-                  ⚠️ Nessun macchinario disponibile al momento
-                </div>
-              ) : (
-                <div className="relative">
-                  <button
-                    onClick={() => setShowMachineSelector(!showMachineSelector)}
-                    className="w-full px-6 py-4 bg-white/10 border border-white/20 rounded-xl flex items-center justify-between hover:bg-white/15 transition-colors"
-                  >
-                    <div className="text-left">
-                      <div className="text-xs text-gray-400">Macchinario selezionato</div>
-                      <div className="text-lg font-semibold">{selectedMachine?.nome || 'Seleziona...'}</div>
-                      <div className="text-xs text-gray-400">{selectedMachine?.reparto} - {selectedMachine?.id_postazione}</div>
-                    </div>
-                    <ChevronDown className={`w-5 h-5 transition-transform ${showMachineSelector ? 'rotate-180' : ''}`} />
-                  </button>
-                  
-                  {showMachineSelector && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="absolute top-full left-0 right-0 mt-2 bg-slate-800 border border-white/20 rounded-xl overflow-hidden z-20"
+            <ScrollArea className="min-h-0 flex-1 px-4 py-4 sm:px-5">
+              <div className="space-y-4">
+                {loading ? (
+                  <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-slate-300">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"></div>
+                    <span>Caricamento macchinari...</span>
+                  </div>
+                ) : error ? (
+                  <div className="rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-4 text-sm text-red-200">
+                    {error}
+                  </div>
+                ) : machines.length === 0 ? (
+                  <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-4 text-sm text-amber-100">
+                    Nessun macchinario disponibile al momento.
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowMachineSelector(!showMachineSelector)}
+                      className="flex w-full items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-left transition-colors hover:bg-white/15"
                     >
-                      {machines.map((machine) => (
-                        <button
-                          key={machine.id}
-                          onClick={() => {
-                            setSelectedMachine(machine);
-                            setShowMachineSelector(false);
-                          }}
-                          className={`w-full px-6 py-3 text-left hover:bg-white/10 transition-colors ${
-                            selectedMachine?.id === machine.id ? 'bg-blue-500/20' : ''
-                          }`}
-                        >
-                          <div className="font-semibold">{machine.nome}</div>
-                          <div className="text-xs text-gray-400">{machine.reparto} - {machine.id_postazione}</div>
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
+                      <div className="min-w-0">
+                        <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Macchinario selezionato</div>
+                        <div className="truncate text-lg font-semibold text-white">{selectedMachine?.nome || 'Seleziona...'}</div>
+                        <div className="truncate text-xs text-slate-400">{selectedMachine?.reparto} - {selectedMachine?.id_postazione}</div>
+                      </div>
+                      <ChevronDown className={`h-5 w-5 shrink-0 transition-transform ${showMachineSelector ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {showMachineSelector && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-white/20 bg-slate-900/95 shadow-2xl"
+                      >
+                        <ScrollArea className="max-h-64">
+                          <div className="p-2">
+                            {machines.map((machine) => (
+                              <button
+                                key={machine.id}
+                                onClick={() => {
+                                  setSelectedMachine(machine);
+                                  setShowMachineSelector(false);
+                                }}
+                                className={`w-full rounded-xl px-4 py-3 text-left transition-colors hover:bg-white/10 ${
+                                  selectedMachine?.id === machine.id ? 'bg-blue-500/20' : ''
+                                }`}
+                              >
+                                <div className="font-semibold text-white">{machine.nome}</div>
+                                <div className="text-xs text-slate-400">{machine.reparto} - {machine.id_postazione}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </motion.div>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    onClick={simulateBadgeScan}
+                    disabled={scanning || !selectedMachine || machines.length === 0}
+                    className="flex items-center justify-center gap-3 rounded-2xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+                  >
+                    <UserCircle className="h-5 w-5" />
+                    {scanning ? 'Scansione in corso...' : 'Simula scansione badge'}
+                  </button>
+
+                  <button
+                    onClick={() => setShowCredentialsLogin(true)}
+                    disabled={!selectedMachine || machines.length === 0}
+                    className="flex items-center justify-center gap-3 rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+                  >
+                    <Key className="h-5 w-5" />
+                    Accedi con credenziali
+                  </button>
                 </div>
-              )}
-            </div>
 
-            {/* Login Options */}
-            <div className="flex gap-4 justify-center mb-8">
-              <button
-                onClick={simulateBadgeScan}
-                disabled={scanning || !selectedMachine || machines.length === 0}
-                className="px-8 py-4 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center gap-3"
-              >
-                <UserCircle className="h-6 w-6" />
-                {scanning ? 'Scansione in corso...' : 'Simula Scansione Badge'}
-              </button>
-              
-              <button
-                onClick={() => setShowCredentialsLogin(true)}
-                disabled={!selectedMachine || machines.length === 0}
-                className="px-8 py-4 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center gap-3"
-              >
-                <Key className="h-6 w-6" />
-                Accedi con Credenziali
-              </button>
-            </div>
-
-            {/* Info cards */}
-            <div className="grid grid-cols-3 gap-4 max-w-2xl mx-auto">
-              <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
-                <div className="text-2xl mb-2">🔒</div>
-                <p className="text-sm text-gray-400">Sicurezza</p>
-                <p className="text-xs text-gray-500 mt-1">Accesso protetto</p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sicurezza</p>
+                    <p className="mt-2 text-sm font-semibold text-white">Accesso protetto</p>
+                    <p className="mt-1 text-xs text-slate-400">Ogni accesso e associato a operatore e macchina.</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Tracciabilita</p>
+                    <p className="mt-2 text-sm font-semibold text-white">Sessione registrata</p>
+                    <p className="mt-1 text-xs text-slate-400">Il supporto segue sempre la postazione selezionata.</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Supporto</p>
+                    <p className="mt-2 text-sm font-semibold text-white">Risposte mirate</p>
+                    <p className="mt-1 text-xs text-slate-400">La conoscenza e filtrata sul contesto macchina corrente.</p>
+                  </div>
+                </div>
               </div>
-              <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
-                <div className="text-2xl mb-2">📊</div>
-                <p className="text-sm text-gray-400">Tracciabilità</p>
-                <p className="text-xs text-gray-500 mt-1">Ogni azione registrata</p>
-              </div>
-              <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
-                <div className="text-2xl mb-2">🎯</div>
-                <p className="text-sm text-gray-400">Personalizzato</p>
-                <p className="text-xs text-gray-500 mt-1">Risposte su misura</p>
-              </div>
-            </div>
-          </motion.div>
-        </div>
+            </ScrollArea>
+          </section>
+        </motion.div>
       </div>
 
       <AnimatePresence>

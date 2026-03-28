@@ -5,6 +5,7 @@ import { BadgeReader } from './BadgeReader';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
 import { API_BASE_URL, API_ENDPOINTS } from '@/shared/api/config';
+import { ScrollArea } from '@/shared/ui/scroll-area';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
 type SessionStatusReason = 'ok' | 'machine_released' | 'machine_reassigned' | 'machine_not_found';
@@ -36,6 +37,12 @@ type AskQuestionApiResponse = {
   knowledge_item_title?: string | null;
 };
 
+const quickActions = [
+  { title: 'Emergenza', subtitle: 'Alert rapido' },
+  { title: 'Manutenzione', subtitle: 'Chiama tecnico' },
+  { title: 'Supporto', subtitle: 'Apri aiuto' },
+];
+
 export function OperatorInterface() {
   const { 
     isLoggedIn, 
@@ -49,9 +56,9 @@ export function OperatorInterface() {
   } = useAuth();
   
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
-  const [transcript, setTranscript] = useState('');
+  const [, setTranscript] = useState('');
   const [wakeWordActive, setWakeWordActive] = useState(true);
-  const [showSubtitles, setShowSubtitles] = useState(false);
+  const [, setShowSubtitles] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
   const [logoutMessageKey, setLogoutMessageKey] = useState(0);
@@ -143,9 +150,9 @@ export function OperatorInterface() {
         case 'machine_reassigned':
           return 'Macchina assegnata a un altro operatore';
         case 'machine_not_found':
-          return 'Macchinario non più disponibile';
+          return 'Macchinario non piu disponibile';
         default:
-          return 'Sessione non più valida';
+          return 'Sessione non piu valida';
       }
     };
 
@@ -602,34 +609,8 @@ export function OperatorInterface() {
     });
   };
 
-  /*
-  const simulateWakeWord = () => {
-    if (avatarState === 'idle' && isLoggedIn) {
-      setAvatarState('listening');
-      setShowSubtitles(true);
-      setTranscript('In ascolto...');
-      
-      setTimeout(() => {
-        setTranscript('Come cambio l\'olio?');
-        setAvatarState('thinking');
-        
-        setTimeout(() => {
-          const response = 'Per cambiare l\'olio della Pressa A7: \n1. Spegnere la macchina. \n2. Attendere il raffreddamento. \n3. Posizionare un contenitore sotto lo scarico';
-          setTranscript('');
-          setAvatarState('speaking');
-          
-          // Start typing effect during speaking state
-          startTypingEffect(response);
-          
-          // After typing is complete, return to idle and show follow-up
-          // The follow-up will be shown by startTypingEffect when typing completes
-        }, 2000);
-      }, 3000);
-    }
-  };
-  */
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white relative overflow-hidden">
+    <div className="relative h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       {/* Logout notification */}
       {logoutMessage && (
         <div
@@ -657,216 +638,249 @@ export function OperatorInterface() {
         }}></div>
       </div>
 
-      {/* Header with machine info */}
-      <div className="relative z-10 p-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <span className="text-blue-400">DITTO</span> Assistente
-          </h1>
-          {machine && (
-            <p className="text-sm text-gray-400 mt-1">
-              Postazione: {machine.nome} - {machine.id_postazione}
-            </p>
-          )}
-        </div>
-        
-        <div className="flex items-center gap-4">
-          {isLoggedIn && user && (
-            <div className="flex items-center gap-3">
-              <div className="text-right">
-                <p className="text-sm text-gray-400">Operatore</p>
-                <p className="font-semibold">{user.nome}</p>
-                <p className="text-xs text-gray-500">{user.livello_esperienza} - {user.turno}</p>
-              </div>
-              <button
-                onClick={handleLogout}
-                disabled={isTyping || avatarState === 'speaking'}
-                className={`px-4 py-2 rounded-lg transition-colors border border-red-500/50 ${isTyping || avatarState === 'speaking' ? 'bg-red-500/10 text-red-300 cursor-not-allowed' : 'bg-red-500/20 hover:bg-red-500/30 text-white'}`}
-              >
-                Logout
-              </button>
+      <div className="relative z-10 flex h-full min-h-0 flex-col">
+        <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="min-w-0">
+              <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">
+                <span className="text-blue-400">DITTO</span> Assistente
+              </h1>
+              {machine ? (
+                <p className="mt-1 truncate text-sm text-slate-300">
+                  Postazione: {machine.nome} - {machine.id_postazione}
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-slate-400">
+                  Seleziona una postazione per iniziare la sessione operatore.
+                </p>
+              )}
             </div>
-          )}
-          
-          <div className="flex items-center gap-2">
-            <Radio className={`h-5 w-5 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-gray-500'}`} />
-            <span className="text-sm text-gray-400">
-              {wakeWordActive ? 'Wake word attivo' : 'Disattivato'}
-            </span>
-          </div>
-        </div>
-      </div>
 
-      {/* Main content */}
-      {!isLoggedIn ? (
-        <BadgeReader 
-          onBadgeDetected={handleBadgeLogin}
-          onCredentialsLogin={handleCredentialsLogin}
-        />
-      ) : (
-        <div className="relative z-10 flex flex-col items-center justify-center" style={{ minHeight: 'calc(100vh - 120px)' }}>
-          {loading ? (
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-16 h-16 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-gray-400">Accesso in corso...</p>
+            <div className="flex flex-wrap items-center justify-start gap-3 xl:justify-end">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+                <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
+                <span>{wakeWordActive ? 'Wake word attivo' : 'Wake word disattivato'}</span>
+              </div>
+
+              {isLoggedIn && user && (
+                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Operatore</p>
+                    <p className="truncate font-semibold text-white">{user.nome}</p>
+                    <p className="truncate text-xs text-slate-400">{user.livello_esperienza} - {user.turno}</p>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    disabled={isTyping || avatarState === 'speaking'}
+                    className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${isTyping || avatarState === 'speaking' ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
+                  >
+                    Logout
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 min-h-0 px-4 py-4 sm:px-6 sm:py-5">
+          {!isLoggedIn ? (
+            <BadgeReader
+              onBadgeDetected={handleBadgeLogin}
+              onCredentialsLogin={handleCredentialsLogin}
+            />
+          ) : loading ? (
+            <div className="flex h-full items-center justify-center rounded-[28px] border border-white/10 bg-slate-950/20 backdrop-blur-sm">
+              <div className="flex flex-col items-center gap-4">
+                <div className="h-16 w-16 animate-spin rounded-full border-4 border-blue-400 border-t-transparent"></div>
+                <p className="text-slate-300">Accesso in corso...</p>
+              </div>
             </div>
           ) : (
-            <>
-              {/* Avatar Display */}
-              <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
+            <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(320px,0.95fr)_minmax(380px,1.05fr)]">
+              <section className="flex min-h-0 flex-col rounded-[28px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:p-6">
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 text-center">
+                  <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
 
-              {/* Status indicator */}
-              <div className="mt-8 text-center">
-                <div className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 backdrop-blur-md rounded-full border border-white/20">
+                  <div className="space-y-3">
+                    <div className="inline-flex flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm text-slate-100">
                   {avatarState === 'idle' && (
                     <>
-                      <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                          <div className="h-3 w-3 rounded-full bg-green-400 animate-pulse"></div>
                       <span>In attesa - Di' "Ehi Ditto" per iniziare</span>
                     </>
                   )}
                   {avatarState === 'listening' && (
                     <>
-                      <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
+                          <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
                       <span>In ascolto...</span>
                     </>
                   )}
                   {avatarState === 'thinking' && (
                     <>
                       <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                            <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce"></div>
+                            <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                            <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.2s' }}></div>
                       </div>
                       <span>Elaborazione in corso...</span>
                     </>
                   )}
                   {avatarState === 'speaking' && (
                     <>
-                      <div className="w-3 h-3 bg-purple-400 rounded-full animate-pulse"></div>
+                          <div className="h-3 w-3 rounded-full bg-violet-400 animate-pulse"></div>
                       <span>Risposta in corso...</span>
                     </>
                   )}
-                </div>
-              </div>
-
-              {/* Text input for questions */}
-              <div className="mt-8 w-full max-w-md mx-auto px-6">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={questionInput}
-                    onChange={(e) => {
-                      setQuestionInput(e.target.value);
-                      // Reset transcription when user starts typing a new question
-                      if (currentTranscription && !isTyping) {
-                        setCurrentTranscription('');
-                        setShowFollowUp(false);
-                        setClarificationOptions([]);
-                        setPendingQuestion(null);
-                        setFallbackReasonCode(null);
-                      }
-                    }}
-                    placeholder="Scrivi la tua domanda..."
-                    disabled={isTyping}
-                    className="flex-1 px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                    onKeyPress={(e) => e.key === 'Enter' && !isTyping && handleQuestionSubmit()}
-                  />
-                  <button
-                    onClick={handleQuestionSubmit}
-                    disabled={isTyping || !questionInput.trim()}
-                    className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-500 disabled:cursor-not-allowed rounded-lg transition-colors"
-                  >
-                    Invia
-                  </button>
-                </div>
-              </div>
-
-              {/* Transcription display */}
-              {currentTranscription && (
-                <div className="mt-6 w-full max-w-2xl mx-auto px-6">
-                  <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-                    <h3 className="text-sm font-semibold text-gray-300 mb-2">Risposta Assistente</h3>
-                    <div className="text-sm text-gray-200 whitespace-pre-line">
-                      {currentTranscription}
-                      {isTyping && <span className="animate-pulse">|</span>}
                     </div>
-                    {!isTyping && fallbackReasonCode === 'out_of_scope' && (
-                      <p className="mt-3 text-xs text-amber-200">
-                        Questa richiesta sembra fuori ambito rispetto al supporto macchina.
-                      </p>
-                    )}
-                    {!isTyping && fallbackReasonCode === 'no_match' && (
-                      <p className="mt-3 text-xs text-gray-400">
-                        Non ho trovato una procedura tecnica affidabile per questa richiesta.
-                      </p>
-                    )}
+
+                    <p className="mx-auto max-w-md text-sm text-slate-300">
+                      Il tuo assistente digitale per il supporto tecnico. Fai domande, ricevi risposte e accedi a procedure guidate senza distogliere lo sguardo dal tuo lavoro.
+                    </p>
                   </div>
                 </div>
-              )}
+              </section>
 
-              {clarificationOptions.length > 0 && (
-                <div className="mt-6 w-full max-w-2xl mx-auto px-6">
-                  <div className="bg-amber-500/10 border border-amber-400/30 rounded-lg p-4">
-                    <h3 className="text-sm font-semibold text-amber-200 mb-3">Aiutami a capire meglio</h3>
-                    <div className="grid gap-3">
-                      {clarificationOptions.map((option) => (
+              <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+                <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
+                  <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
+                  <h2 className="mt-1 text-lg font-semibold text-white">Domande, risposte e azioni rapide</h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                      Fai domande tecniche o seleziona azioni rapide. Le risposte appariranno qui senza far scorrere la pagina, così puoi mantenere il focus sul tuo lavoro.
+                  </p>
+                </div>
+
+                <div className="min-h-0 flex-1 px-4 py-4 sm:px-5">
+                  <ScrollArea className="h-full pr-3">
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="text-sm font-semibold text-slate-200">Risposta assistente</h3>
+                          {isTyping && (
+                            <span className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
+                              In scrittura
+                            </span>
+                          )}
+                        </div>
+
+                        {currentTranscription ? (
+                          <>
+                            <div className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-100">
+                              {currentTranscription}
+                              {isTyping && <span className="animate-pulse">|</span>}
+                            </div>
+                            {!isTyping && fallbackReasonCode === 'out_of_scope' && (
+                              <p className="mt-3 text-xs text-amber-200">
+                                Questa richiesta sembra fuori ambito rispetto al supporto macchina.
+                              </p>
+                            )}
+                            {!isTyping && fallbackReasonCode === 'no_match' && (
+                              <p className="mt-3 text-xs text-slate-400">
+                                Non ho trovato una procedura tecnica affidabile per questa richiesta.
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="mt-3 text-sm leading-6 text-slate-400">
+                            Scrivi o pronuncia una domanda tecnica. La risposta apparira qui senza far scorrere la pagina.
+                          </p>
+                        )}
+                      </div>
+
+                      {clarificationOptions.length > 0 && (
+                        <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
+                          <h3 className="text-sm font-semibold text-amber-200">Aiutami a capire meglio</h3>
+                          <div className="mt-3 grid gap-3">
+                            {clarificationOptions.map((option) => (
+                              <button
+                                key={option.knowledge_item_id}
+                                type="button"
+                                onClick={() => handleClarificationSelection(option.knowledge_item_id)}
+                                disabled={isTyping}
+                                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-slate-100 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {showFollowUp && (
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
+                          <p className="text-lg font-semibold text-white">Hai risolto il problema?</p>
+                          <div className="mt-4 flex flex-wrap justify-center gap-3">
+                            <button
+                              onClick={() => handleFollowUpResponse(true)}
+                              className="rounded-xl bg-green-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600"
+                            >
+                              Si
+                            </button>
+                            <button
+                              onClick={() => handleFollowUpResponse(false)}
+                              className="rounded-xl bg-red-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+                            >
+                              No
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </div>
+
+                <div className="shrink-0 border-t border-white/10 px-4 py-4 sm:px-5">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        type="text"
+                        value={questionInput}
+                        onChange={(e) => {
+                          setQuestionInput(e.target.value);
+                          if (currentTranscription && !isTyping) {
+                            setCurrentTranscription('');
+                            setShowFollowUp(false);
+                            setClarificationOptions([]);
+                            setPendingQuestion(null);
+                            setFallbackReasonCode(null);
+                          }
+                        }}
+                        placeholder="Scrivi la tua domanda..."
+                        disabled={isTyping}
+                        className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !isTyping) {
+                            void handleQuestionSubmit();
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={handleQuestionSubmit}
+                        disabled={isTyping || !questionInput.trim()}
+                        className="rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+                      >
+                        Invia
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      {quickActions.map((action) => (
                         <button
-                          key={option.knowledge_item_id}
+                          key={action.title}
                           type="button"
-                          onClick={() => handleClarificationSelection(option.knowledge_item_id)}
-                          disabled={isTyping}
-                          className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-gray-100 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition-colors hover:bg-white/10"
                         >
-                          {option.label}
+                          <span className="block text-xs uppercase tracking-[0.18em] text-slate-400">{action.title}</span>
+                          <span className="mt-1 block text-sm font-semibold text-white">{action.subtitle}</span>
                         </button>
                       ))}
                     </div>
                   </div>
                 </div>
-              )}
-
-              {/* Follow-up question */}
-              {showFollowUp && (
-                <div className="mt-6 w-full max-w-md mx-auto px-6">
-                  <div className="bg-white/10 border border-white/20 rounded-lg p-4 text-center">
-                    <p className="text-lg font-semibold mb-4">Hai risolto il problema?</p>
-                    <div className="flex gap-4 justify-center">
-                      <button
-                        onClick={() => handleFollowUpResponse(true)}
-                        className="px-6 py-2 bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
-                      >
-                        Sì
-                      </button>
-                      <button
-                        onClick={() => handleFollowUpResponse(false)}
-                        className="px-6 py-2 bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
-                      >
-                        No
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Quick actions */}
-              <div className="mt-12 grid grid-cols-3 gap-4 max-w-2xl mx-auto px-6">
-                <button className="p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors">
-                  <span className="block text-sm text-gray-400 mb-1">Emergenza</span>
-                  <span className="block font-semibold">🚨 Alert</span>
-                </button>
-                <button className="p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors">
-                  <span className="block text-sm text-gray-400 mb-1">Manutenzione</span>
-                  <span className="block font-semibold">🔧 Chiama</span>
-                </button>
-                <button className="p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors">
-                  <span className="block text-sm text-gray-400 mb-1">Supporto</span>
-                  <span className="block font-semibold">❓ Aiuto</span>
-                </button>
-              </div>
-            </>
+              </section>
+            </div>
           )}
-        </div>
-      )}
+        </main>
+      </div>
     </div>
   );
 }
