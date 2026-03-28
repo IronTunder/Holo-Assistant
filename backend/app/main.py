@@ -11,7 +11,7 @@ from app.api.machines import router as machines_router
 from app.api.admin import router as admin_router
 from app.api.interactions import router as interactions_router
 from app.api.tts import router as tts_router
-from app.database import apply_compatible_migrations
+from app.core.database import apply_compatible_migrations
 
 # Setup logging
 logger = logging.getLogger(__name__)

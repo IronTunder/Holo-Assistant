@@ -35,7 +35,6 @@ services:
       - TZ=Europe/Rome
     volumes:
       - ollama_data:/root/.ollama
-      - ./ollama/models:/models
     networks:
       - ditto_network
 

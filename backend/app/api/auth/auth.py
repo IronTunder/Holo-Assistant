@@ -13,12 +13,12 @@ import os
 from dotenv import load_dotenv
 import secrets
 
-from app.database import get_db
+from app.core.database import get_db
 from app.models.user import User, RefreshToken, Ruolo
 from app.models.machine import Machine
 from app.schemas.user import UserResponse
 from app.schemas.machine import MachineResponse
-from app.presenters import serialize_machine, serialize_operator, serialize_user
+from app.api.presenters import serialize_machine, serialize_operator, serialize_user
 from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 load_dotenv()

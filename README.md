@@ -170,16 +170,25 @@ Il frontend usa solo `VITE_API_URL`.
 
 ## Struttura progetto
 
-```text
-Progetto-Ditto/
-├── backend/
-├── frontend/my-app/
-├── docker/
-├── setup.bat
-├── start.bat
-├── setup.sh
-└── start.sh
-```
+    Progetto-Ditto/
+    |- backend/
+    |- docs/
+    |- docker/
+    |- frontend/my-app/
+    |- scripts/
+    |  |- unix/
+    |  \- windows/
+    |- setup.bat      (wrapper)
+    |- setup.sh       (wrapper)
+    |- start.bat      (wrapper)
+    \- start.sh       (wrapper)
+
+Dettagli principali:
+- `backend/app/` contiene il runtime FastAPI.
+- `backend/scripts/` contiene script operativi e di bootstrap database.
+- `frontend/my-app/src/features/` contiene le feature `admin` e `operator`.
+- `frontend/my-app/src/shared/` contiene UI, auth e client condivisi.
+- I file `setup/start` in root restano disponibili ma delegano agli script reali dentro `scripts/`.
 
 ## Troubleshooting rapido
 
@@ -214,7 +223,7 @@ Verifica:
 
 ## Documentazione
 
-- Guida operativa: [STARTUP_GUIDE.md](./STARTUP_GUIDE.md)
+- Guida operativa: [docs/STARTUP_GUIDE.md](/e:/Scuola/Progetto-Ditto/docs/STARTUP_GUIDE.md)
 - Backend entrypoint: [backend/app/main.py](/e:/Scuola/Progetto-Ditto/backend/app/main.py)
 - Auth: [backend/app/api/auth/auth.py](/e:/Scuola/Progetto-Ditto/backend/app/api/auth/auth.py)
 - Interactions AI: [backend/app/api/interactions.py](/e:/Scuola/Progetto-Ditto/backend/app/api/interactions.py)

@@ -34,13 +34,13 @@ export default defineConfig({
             }
           }
 
-          if (normalizedId.includes('/src/app/components/admin/')) {
+          if (normalizedId.includes('/src/features/admin/')) {
             return 'admin';
           }
 
           if (
-            normalizedId.includes('/src/app/components/operator/') ||
-            normalizedId.includes('/src/app/ttsClient.ts')
+            normalizedId.includes('/src/features/operator/') ||
+            normalizedId.includes('/src/shared/api/ttsClient.ts')
           ) {
             return 'operator';
           }

@@ -5,13 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload
 
-from app.database import get_db
+from app.api.auth.auth import ADMIN_MACHINE_EVENTS_CHANNEL
+from app.core.database import get_db
 from app.models.category import Category
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.schemas.interaction import AskQuestionRequest, AskQuestionResponse
 from app.services.ollama_service import OllamaServiceError, classify_question, select_best_response
+from app.services.session_events import session_event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/interactions", tags=["interactions"])
@@ -169,6 +171,21 @@ async def ask_question(
         )
         db.add(interaction)
         db.commit()
+        await session_event_bus.publish(
+            ADMIN_MACHINE_EVENTS_CHANNEL,
+            "interaction_created",
+            {
+                "interaction_id": interaction.id,
+                "user_id": request.user_id,
+                "machine_id": request.machine_id,
+                "category_id": selected_response.get("category_id"),
+                "category_name": selected_response.get("category_name"),
+                "knowledge_item_id": selected_response.get("knowledge_item_id"),
+                "knowledge_item_title": selected_response.get("knowledge_item_title"),
+                "question": request.question,
+                "response": selected_response["text"],
+            },
+        )
 
         return AskQuestionResponse(
             response=selected_response["text"],

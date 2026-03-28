@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.auth.auth import publish_admin_machine_event, publish_machine_session_event, verify_admin
-from app.database import get_db
+from app.core.database import get_db
 from app.models.department import Department
 from app.models.machine import Machine
 from app.models.user import User

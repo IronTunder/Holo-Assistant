@@ -1,23 +1,23 @@
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
 import { createBrowserRouter } from "react-router";
-import { Root } from "./components/Root";
-import { NotFound } from "./components/NotFound";
-import { ProtectedRoute } from "./components/ProtectedRoute";
+import { Root } from "./Root";
+import { NotFound } from "./NotFound";
+import { ProtectedRoute } from "./ProtectedRoute";
 
 const OperatorInterface = lazy(() =>
-  import("./components/operator/OperatorInterface").then((module) => ({
+  import("@/features/operator/OperatorInterface").then((module) => ({
     default: module.OperatorInterface,
   }))
 );
 
 const AdminLogin = lazy(() =>
-  import("./components/admin/AdminLogin").then((module) => ({
+  import("@/features/admin/AdminLogin").then((module) => ({
     default: module.AdminLogin,
   }))
 );
 
 const AdminDashboard = lazy(() =>
-  import("./components/admin/AdminDashboard").then((module) => ({
+  import("@/features/admin/AdminDashboard").then((module) => ({
     default: module.AdminDashboard,
   }))
 );

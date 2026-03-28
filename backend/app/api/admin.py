@@ -13,14 +13,14 @@ from app.api.auth.auth import (
     publish_machine_session_event,
     verify_admin,
 )
-from app.database import get_db
+from app.core.database import get_db
 from app.models.category import Category
 from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
-from app.presenters import (
+from app.api.presenters import (
     serialize_category,
     serialize_department,
     serialize_knowledge_item,
