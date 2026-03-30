@@ -271,10 +271,10 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Documentazione correlata
 
-- Guida operativa: [docs/STARTUP_GUIDE.md](/e:/Scuola/Progetto-Ditto/docs/STARTUP_GUIDE.md)
-- README frontend: [frontend/my-app/README.md](/e:/Scuola/Progetto-Ditto/frontend/my-app/README.md)
-- Backend entrypoint: [backend/app/main.py](/e:/Scuola/Progetto-Ditto/backend/app/main.py)
-- Config API frontend: [frontend/my-app/src/shared/api/config.ts](/e:/Scuola/Progetto-Ditto/frontend/my-app/src/shared/api/config.ts)
+- Guida operativa: [docs/STARTUP_GUIDE.md](docs/STARTUP_GUIDE.md)
+- README frontend: [frontend/my-app/README.md](frontend/my-app/README.md)
+- Backend entrypoint: [backend/app/main.py](backend/app/main.py)
+- Config API frontend: [frontend/my-app/src/shared/api/config.ts](frontend/my-app/src/shared/api/config.ts)
 
 ## Stato attuale
 
