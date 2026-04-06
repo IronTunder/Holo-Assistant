@@ -275,7 +275,7 @@ export const AdminDashboard = () => {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#eff6ff,_#f8fafc_55%)]">
       <div className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
@@ -286,12 +286,12 @@ export const AdminDashboard = () => {
               </Badge>
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Dashboard operativa</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">Dashboard operativa</h1>
               <p className="text-sm text-slate-500">{headerSubtitle}</p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
               Aggiornamento automatico attivo
             </Badge>
@@ -305,30 +305,30 @@ export const AdminDashboard = () => {
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 gap-2 rounded-2xl bg-white p-2 shadow-sm lg:grid-cols-6">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3 lg:grid-cols-6">
             <TabsTrigger value="overview" className="gap-2">
               <LayoutDashboard className="h-4 w-4" />
-              <span className="hidden sm:inline">Panoramica</span>
+              <span>Panoramica</span>
             </TabsTrigger>
             <TabsTrigger value="users" className="gap-2">
               <Users className="h-4 w-4" />
-              <span className="hidden sm:inline">Utenti</span>
+              <span>Utenti</span>
             </TabsTrigger>
             <TabsTrigger value="machines" className="gap-2">
               <Cpu className="h-4 w-4" />
-              <span className="hidden sm:inline">Macchinari</span>
+              <span>Macchinari</span>
             </TabsTrigger>
             <TabsTrigger value="knowledge" className="gap-2">
               <BookText className="h-4 w-4" />
-              <span className="hidden sm:inline">Knowledge</span>
+              <span>Knowledge</span>
             </TabsTrigger>
             <TabsTrigger value="logs" className="gap-2">
               <ScrollText className="h-4 w-4" />
-              <span className="hidden sm:inline">Log</span>
+              <span>Log</span>
             </TabsTrigger>
             <TabsTrigger value="settings" className="gap-2">
               <Settings className="h-4 w-4" />
-              <span className="hidden sm:inline">Impostazioni</span>
+              <span>Impostazioni</span>
             </TabsTrigger>
           </TabsList>
 

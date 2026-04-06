@@ -64,7 +64,7 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
   return (
     <div className="space-y-4">
       <Card className="border-slate-200 bg-white p-4">
-        <div className="grid gap-3 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Input
             placeholder="Cerca domanda, risposta o nome..."
             value={searchTerm}

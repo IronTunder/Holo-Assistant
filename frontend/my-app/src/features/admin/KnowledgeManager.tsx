@@ -180,9 +180,9 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
               Categorie globali condivise, con template assegnati ai macchinari.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Select value={selectedCategoryId} onValueChange={setSelectedCategoryId}>
-              <SelectTrigger className="w-[220px]">
+              <SelectTrigger className="w-full sm:w-[220px]">
                 <SelectValue placeholder="Tutte le categorie" />
               </SelectTrigger>
               <SelectContent>
@@ -207,7 +207,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
           <div className="border-b border-slate-200 px-4 py-3">
             <p className="text-sm font-semibold text-slate-900">Categorie</p>
           </div>
-          <ScrollArea className="h-[520px]">
+          <ScrollArea className="h-[280px] xl:h-[520px]">
             <div className="space-y-1 p-2">
               {categories.map((category) => {
                 const isSelected = selectedCategoryId === String(category.id);
@@ -237,7 +237,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
               <p className="text-xs text-slate-500">{visibleItems.length} risultati</p>
             </div>
           </div>
-          <ScrollArea className="h-[520px]">
+          <ScrollArea className="h-[320px] xl:h-[520px]">
             <div className="space-y-2 p-3">
               {isLoading ? (
                 <p className="text-sm text-slate-500">Caricamento template...</p>
@@ -255,7 +255,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
                         : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <p className="font-medium text-slate-900">{item.question_title}</p>
                         <p className="mt-1 line-clamp-2 text-sm text-slate-500">{item.answer_text}</p>
@@ -400,7 +400,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
             </div>
 
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm font-medium text-slate-900">Assegna ai macchinari</p>
                 <Button
                   type="button"
@@ -431,7 +431,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
               </div>
             </div>
 
-            <DialogFooter>
+            <DialogFooter className="flex-col gap-2 sm:flex-row">
               <Button type="button" variant="outline" onClick={() => setIsFormOpen(false)}>
                 Annulla
               </Button>

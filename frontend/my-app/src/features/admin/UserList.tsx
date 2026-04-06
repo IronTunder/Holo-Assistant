@@ -111,7 +111,7 @@ export const UserList = ({ departments, onMetadataRefresh }: UserListProps) => {
             </Button>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Input
               placeholder="Cerca per nome o badge..."
               value={searchTerm}

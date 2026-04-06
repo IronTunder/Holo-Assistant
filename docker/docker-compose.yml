@@ -31,7 +31,6 @@ services:
       - "11434:11434"
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_NUM_GPU=1
       - TZ=Europe/Rome
     volumes:
       - ollama_data:/root/.ollama

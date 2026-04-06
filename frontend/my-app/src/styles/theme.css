@@ -126,6 +126,9 @@
 
   body {
     @apply bg-background text-foreground;
+    min-width: 320px;
+    overflow-x: hidden;
+    text-rendering: optimizeLegibility;
   }
 
   /**
@@ -135,6 +138,29 @@
 
   html {
     font-size: var(--font-size);
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  #root {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  img,
+  svg,
+  video,
+  canvas {
+    max-width: 100%;
+    height: auto;
+  }
+
+  button,
+  [role='button'],
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
   }
 
   h1 {

@@ -75,14 +75,14 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
 
   return (
     <>
-      <div className="h-full min-h-0">
+      <div className="min-h-0">
         <motion.div
           initial={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.35 }}
-          className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(320px,0.9fr)_minmax(380px,1.1fr)]"
+          className="grid gap-4 xl:min-h-0 xl:grid-cols-[minmax(320px,0.9fr)_minmax(380px,1.1fr)]"
         >
-          <section className="flex min-h-0 flex-col justify-center rounded-[28px] border border-white/10 bg-slate-950/20 p-5 text-center backdrop-blur-sm sm:p-6">
+          <section className="flex min-h-[280px] flex-col justify-center rounded-[24px] border border-white/10 bg-slate-950/20 p-4 text-center backdrop-blur-sm sm:min-h-[340px] sm:p-6 xl:min-h-0">
             <div className="flex flex-1 flex-col items-center justify-center">
               <div className="relative inline-block">
                 <div className={`flex h-36 w-36 items-center justify-center rounded-[32px] border-4 border-white/20 bg-gradient-to-br from-blue-500/20 to-cyan-500/10 backdrop-blur-sm sm:h-44 sm:w-44 ${scanning ? 'animate-pulse' : ''}`}>
@@ -125,13 +125,13 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+          <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm xl:min-h-0">
             <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
               <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Accesso operatore</p>
               <h3 className="mt-1 text-lg font-semibold text-white">Seleziona il macchinario e il metodo di accesso</h3>
             </div>
 
-            <ScrollArea className="min-h-0 flex-1 px-4 py-4 sm:px-5">
+            <ScrollArea className="flex-1 px-4 py-4 sm:px-5 xl:min-h-0">
               <div className="space-y-4">
                 {loading ? (
                   <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-slate-300">
@@ -150,7 +150,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   <div className="relative">
                     <button
                       onClick={() => setShowMachineSelector(!showMachineSelector)}
-                      className="flex w-full items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-left transition-colors hover:bg-white/15"
+                      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-left transition-colors hover:bg-white/15"
                     >
                       <div className="min-w-0">
                         <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Macchinario selezionato</div>
@@ -194,7 +194,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   <button
                     onClick={simulateBadgeScan}
                     disabled={scanning || !selectedMachine || machines.length === 0}
-                    className="flex items-center justify-center gap-3 rounded-2xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+                    className="flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
                   >
                     <UserCircle className="h-5 w-5" />
                     {scanning ? 'Scansione in corso...' : 'Simula scansione badge'}
@@ -203,7 +203,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   <button
                     onClick={() => setShowCredentialsLogin(true)}
                     disabled={!selectedMachine || machines.length === 0}
-                    className="flex items-center justify-center gap-3 rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+                    className="flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
                   >
                     <Key className="h-5 w-5" />
                     Accedi con credenziali

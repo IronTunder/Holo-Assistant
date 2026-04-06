@@ -610,7 +610,7 @@ export function OperatorInterface() {
   };
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <div className="relative min-h-[100dvh] overflow-x-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       {/* Logout notification */}
       {logoutMessage && (
         <div
@@ -638,7 +638,7 @@ export function OperatorInterface() {
         }}></div>
       </div>
 
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
+      <div className="relative z-10 flex min-h-[100dvh] flex-col">
         <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
@@ -682,7 +682,7 @@ export function OperatorInterface() {
           </div>
         </header>
 
-        <main className="flex-1 min-h-0 px-4 py-4 sm:px-6 sm:py-5">
+        <main className="flex-1 px-3 py-3 sm:px-6 sm:py-5">
           {!isLoggedIn ? (
             <BadgeReader
               onBadgeDetected={handleBadgeLogin}
@@ -696,8 +696,8 @@ export function OperatorInterface() {
               </div>
             </div>
           ) : (
-            <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(320px,0.95fr)_minmax(380px,1.05fr)]">
-              <section className="flex min-h-0 flex-col rounded-[28px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:p-6">
+            <div className="grid gap-4 xl:min-h-0 xl:grid-cols-[minmax(320px,0.95fr)_minmax(380px,1.05fr)]">
+              <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:min-h-[340px] sm:p-6 xl:min-h-0">
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 text-center">
                   <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
 
@@ -740,20 +740,20 @@ export function OperatorInterface() {
                 </div>
               </section>
 
-              <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+              <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm xl:min-h-0">
                 <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
                   <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
                   <h2 className="mt-1 text-lg font-semibold text-white">Domande, risposte e azioni rapide</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                      Fai domande tecniche o seleziona azioni rapide. Le risposte appariranno qui senza far scorrere la pagina, così puoi mantenere il focus sul tuo lavoro.
+                      Scrivi o pronuncia le tue domande tecniche. L'assistente fornirà risposte dettagliate, suggerimenti e procedure guidate per aiutarti a risolvere i problemi senza dover consultare manuali o cercare online.
                   </p>
                 </div>
 
-                <div className="min-h-0 flex-1 px-4 py-4 sm:px-5">
-                  <ScrollArea className="h-full pr-3">
+                <div className="flex-1 px-4 py-4 sm:px-5 xl:min-h-0">
+                  <ScrollArea className="h-full xl:pr-3">
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                           <h3 className="text-sm font-semibold text-slate-200">Risposta assistente</h3>
                           {isTyping && (
                             <span className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
@@ -764,13 +764,13 @@ export function OperatorInterface() {
 
                         {currentTranscription ? (
                           <>
-                            <div className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-100">
+                          <div className="mt-3 break-words whitespace-pre-line text-sm leading-6 text-slate-100">
                               {currentTranscription}
                               {isTyping && <span className="animate-pulse">|</span>}
                             </div>
                             {!isTyping && fallbackReasonCode === 'out_of_scope' && (
                               <p className="mt-3 text-xs text-amber-200">
-                                Questa richiesta sembra fuori ambito rispetto al supporto macchina.
+                                Richiesta fuori ambito: posso aiutarti solo con macchine, sicurezza e procedure di reparto.
                               </p>
                             )}
                             {!isTyping && fallbackReasonCode === 'no_match' && (
@@ -781,7 +781,7 @@ export function OperatorInterface() {
                           </>
                         ) : (
                           <p className="mt-3 text-sm leading-6 text-slate-400">
-                            Scrivi o pronuncia una domanda tecnica. La risposta apparira qui senza far scorrere la pagina.
+                            Scrivi una domanda tecnica per iniziare.
                           </p>
                         )}
                       </div>
@@ -856,7 +856,7 @@ export function OperatorInterface() {
                       <button
                         onClick={handleQuestionSubmit}
                         disabled={isTyping || !questionInput.trim()}
-                        className="rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+                        className="w-full rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto"
                       >
                         Invia
                       </button>

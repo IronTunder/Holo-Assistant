@@ -10,7 +10,12 @@ from typing import Iterable, Sequence
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
-from app.services.ollama_service import OllamaServiceError, rerank_knowledge_candidates
+from app.services.ollama_service import (
+    OllamaServiceError,
+    generate_out_of_scope_response,
+    rerank_knowledge_candidates,
+    verify_knowledge_match,
+)
 
 try:
     from rapidfuzz import fuzz
@@ -230,8 +235,7 @@ FALLBACK_MESSAGE = (
     "Ti consiglio di contattare direttamente l'assistenza per ricevere aiuto."
 )
 OUT_OF_SCOPE_MESSAGE = (
-    "Posso aiutarti solo con domande operative sulle macchine e sulle procedure di reparto. "
-    "Riformula la richiesta in modo tecnico oppure contatta un supervisore."
+    "Non posso aiutarti su questa richiesta. Posso invece supportarti con domande tecniche su macchine, sicurezza e procedure di reparto."
 )
 CLARIFICATION_MESSAGE = "Ho trovato due procedure simili. Quale descrive meglio il problema?"
 MIN_DIRECT_SCORE = 7.5
@@ -242,6 +246,38 @@ TOKEN_SIMILARITY_MULTI = 0.9
 TOKEN_SIMILARITY_SINGLE = 0.94
 GLOBAL_DOMAIN_SIMILARITY = 0.9
 MIN_FUZZY_PHRASE_CHARS = 5
+EXPLICIT_OUT_OF_SCOPE_KEYWORDS = {
+    "reich",
+    "nazismo",
+    "nazista",
+    "hitler",
+    "fascismo",
+    "fascista",
+    "terrorismo",
+    "terrorista",
+    "bomba",
+    "ordigno",
+    "omicidio",
+    "uccidere",
+    "ammazzare",
+    "droga",
+    "stupefacenti",
+    "porno",
+    "poesia",
+    "meteo",
+    "weather",
+    "elezioni",
+    "politica",
+    "partito",
+}
+EXPLICIT_OUT_OF_SCOPE_PATTERNS = (
+    "4 reich",
+    "quarto reich",
+    "fondare il reich",
+    "come posso fondare",
+    "scrivimi una poesia",
+    "che tempo fa",
+)
 
 
 def _normalize_text(text: str) -> str:
@@ -347,6 +383,12 @@ def _count_phrase_matches(question_normalized: str, phrases: Iterable[str]) -> i
         if re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", question_normalized):
             matches += 1
     return matches
+
+
+def _contains_explicit_out_of_scope_content(question_normalized: str, question_tokens: set[str]) -> bool:
+    if any(pattern in question_normalized for pattern in EXPLICIT_OUT_OF_SCOPE_PATTERNS):
+        return True
+    return any(token in EXPLICIT_OUT_OF_SCOPE_KEYWORDS for token in question_tokens)
 
 
 @dataclass(frozen=True)
@@ -546,6 +588,8 @@ class KnowledgeRetrievalService:
         all_words: Sequence[str],
         machine_vocabulary: frozenset[str],
     ) -> tuple[bool, dict]:
+        question_normalized = _normalize_text(question)
+        explicit_out_of_scope = _contains_explicit_out_of_scope_content(question_normalized, question_tokens)
         raw_word_count = max(len(all_words), 1)
         stopword_count = sum(1 for token in all_words if token in STOPWORDS)
         stopword_ratio = stopword_count / raw_word_count
@@ -556,7 +600,9 @@ class KnowledgeRetrievalService:
         hint_overlap = specific_question_tokens & TECHNICAL_HINT_WORDS
         is_generic_query = not specific_question_tokens and bool(generic_question_tokens)
         is_out_of_scope = False
-        if not is_generic_query:
+        if explicit_out_of_scope:
+            is_out_of_scope = True
+        elif not is_generic_query:
             is_out_of_scope = (
                 not domain_overlap
                 and not hint_overlap
@@ -571,6 +617,7 @@ class KnowledgeRetrievalService:
                 )
             )
         return is_out_of_scope, {
+            "explicit_out_of_scope": explicit_out_of_scope,
             "stopword_ratio": round(stopword_ratio, 3),
             "domain_overlap_count": len(domain_overlap),
             "strong_domain_matches": strong_domain_matches,
@@ -733,6 +780,25 @@ class KnowledgeRetrievalService:
             and second_candidate.score >= MIN_DIRECT_SCORE
         )
 
+    def _requires_llm_verification(
+        self,
+        top_candidate: ScoredKnowledgeCandidate,
+        confidence: float,
+    ) -> bool:
+        anchored_overlap = (
+            top_candidate.keyword_overlap
+            + top_candidate.title_overlap
+            + top_candidate.example_overlap
+            + top_candidate.root_overlap
+        )
+        if top_candidate.exact_keyword_matches > 0:
+            return False
+        if anchored_overlap >= 2:
+            return False
+        if top_candidate.strong_technical_matches >= 2:
+            return False
+        return confidence < 0.9
+
     def _build_rerank_pool(self, scored_candidates: Sequence[ScoredKnowledgeCandidate]) -> list[ScoredKnowledgeCandidate]:
         if not scored_candidates:
             return []
@@ -810,6 +876,20 @@ class KnowledgeRetrievalService:
             machine_vocabulary,
         )
         if is_out_of_scope:
+            out_of_scope_response = OUT_OF_SCOPE_MESSAGE
+            ollama_latency_ms = None
+            out_of_scope_start = perf_counter()
+            try:
+                out_of_scope_response = await generate_out_of_scope_response(question)
+                ollama_latency_ms = round((perf_counter() - out_of_scope_start) * 1000, 2)
+            except OllamaServiceError as exc:
+                ollama_latency_ms = round((perf_counter() - out_of_scope_start) * 1000, 2)
+                logger.warning(
+                    "Ollama out-of-scope response unavailable for machine_id=%s question=%r: %s",
+                    machine_id,
+                    question,
+                    exc,
+                )
             logger.info(
                 "interaction classified as out_of_scope machine_id=%s question=%r scope_details=%s",
                 machine_id,
@@ -818,13 +898,14 @@ class KnowledgeRetrievalService:
             )
             return RetrievalResult(
                 mode="fallback",
-                response=OUT_OF_SCOPE_MESSAGE,
+                response=out_of_scope_response,
                 confidence=0.0,
                 response_payload=None,
                 clarification_options=[],
                 route="fallback_out_of_scope",
                 reason_code="out_of_scope",
                 top_candidates=[],
+                ollama_latency_ms=ollama_latency_ms,
             )
 
         scored_candidates = self.score_candidates(question, indexed_candidates)
@@ -870,6 +951,51 @@ class KnowledgeRetrievalService:
             )
 
         if not self._should_request_clarification(top_candidate, second_candidate, confidence):
+            if self._requires_llm_verification(top_candidate, confidence):
+                verification_start = perf_counter()
+                try:
+                    is_relevant = await verify_knowledge_match(
+                        question,
+                        top_candidate.item.to_rerank_prompt_candidate(),
+                    )
+                    verification_latency_ms = round((perf_counter() - verification_start) * 1000, 2)
+                    if not is_relevant:
+                        logger.info(
+                            "retrieval rejected by ollama verification machine_id=%s question=%r knowledge_item_id=%s",
+                            machine_id,
+                            question,
+                            top_candidate.item.knowledge_item_id,
+                        )
+                        return RetrievalResult(
+                            mode="fallback",
+                            response=FALLBACK_MESSAGE,
+                            confidence=0.0,
+                            response_payload=None,
+                            clarification_options=[],
+                            route="fallback_llm_rejected",
+                            reason_code="no_match",
+                            top_candidates=scored_candidates[:3],
+                            ollama_latency_ms=verification_latency_ms,
+                        )
+                except OllamaServiceError as exc:
+                    verification_latency_ms = round((perf_counter() - verification_start) * 1000, 2)
+                    logger.warning(
+                        "Ollama verification unavailable for machine_id=%s question=%r: %s",
+                        machine_id,
+                        question,
+                        exc,
+                    )
+                    return RetrievalResult(
+                        mode="fallback",
+                        response=FALLBACK_MESSAGE,
+                        confidence=0.0,
+                        response_payload=None,
+                        clarification_options=[],
+                        route="fallback_llm_unavailable",
+                        reason_code="no_match",
+                        top_candidates=scored_candidates[:3],
+                        ollama_latency_ms=verification_latency_ms,
+                    )
             return RetrievalResult(
                 mode="answer",
                 response=top_candidate.item.answer_text,

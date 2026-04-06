@@ -18,6 +18,15 @@ Ditto e un sistema di supporto per postazioni e macchinari industriali composto 
 - `docker` contiene i servizi locali PostgreSQL, Adminer e Ollama.
 - `scripts/windows` e `scripts/unix` contengono gli script reali di setup e avvio; i file in root sono wrapper.
 
+## Runtime Ollama e GPU
+
+- Su Windows, gli script preferiscono automaticamente `Ollama` nativo se presente nel `PATH`.
+- Questa scelta e voluta: su Windows e il percorso piu affidabile per usare la GPU sia con NVIDIA sia con AMD.
+- In modalita Docker, il progetto mantiene PostgreSQL/Adminer e puo usare override Compose dedicati per accelerazione GPU.
+- `docker/docker-compose.nvidia.yml` abilita la riserva GPU NVIDIA nel container Ollama.
+- `docker/docker-compose.amd.yml` prepara il container `ollama/ollama:rocm` per host Linux/WSL con device ROCm (`/dev/kfd`, `/dev/dri`).
+- Su Windows con GPU AMD, Docker Desktop non offre un percorso ROCm trasparente come su Linux; per questo e consigliato il runtime nativo.
+
 ## Quick Start
 
 ### Primo setup
@@ -130,6 +139,8 @@ Configurazione attuale:
 ```ini
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+OLLAMA_RUNTIME=auto
+OLLAMA_ACCELERATOR=auto
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
@@ -239,6 +250,7 @@ Verifica che:
 - `OLLAMA_MODEL` in `backend/.env` esista davvero nel container;
 - non ci sia mismatch tra nome configurato e modello scaricato;
 - il cold start non stia superando il timeout.
+- se sei su Windows con GPU AMD, verifica di stare usando Ollama nativo e non il container CPU-only.
 
 Download manuale:
 ```bash

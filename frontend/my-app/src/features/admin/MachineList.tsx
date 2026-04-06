@@ -350,7 +350,7 @@ export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps
             </Button>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <Input
               placeholder="Cerca per nome o postazione..."
               value={searchTerm}

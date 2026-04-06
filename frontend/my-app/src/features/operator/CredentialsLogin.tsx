@@ -25,14 +25,14 @@ export function CredentialsLogin({ onLogin, onCancel }: CredentialsLoginProps) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 backdrop-blur-sm sm:items-center sm:p-4"
       onClick={onCancel}
     >
       <div
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-white/20 bg-slate-800/95 shadow-2xl backdrop-blur-md"
+        className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-md flex-col overflow-hidden rounded-[28px] border border-white/20 bg-slate-800/95 shadow-2xl backdrop-blur-md sm:max-h-[calc(100dvh-2rem)] sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="shrink-0 px-6 pt-6 text-center">
+        <div className="shrink-0 px-5 pt-5 text-center sm:px-6 sm:pt-6">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/20">
             <Shield className="h-8 w-8 text-blue-400" />
           </div>
@@ -41,7 +41,7 @@ export function CredentialsLogin({ onLogin, onCancel }: CredentialsLoginProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="min-h-0 flex-1 px-6 py-6">
+          <ScrollArea className="min-h-0 flex-1 px-5 py-5 sm:px-6 sm:py-6">
             <div className="space-y-4">
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">
@@ -91,8 +91,8 @@ export function CredentialsLogin({ onLogin, onCancel }: CredentialsLoginProps) {
             </div>
           </ScrollArea>
 
-          <div className="shrink-0 border-t border-white/10 px-6 py-4">
-            <div className="flex gap-3">
+          <div className="shrink-0 border-t border-white/10 px-5 py-4 sm:px-6">
+            <div className="flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
                 onClick={onCancel}
