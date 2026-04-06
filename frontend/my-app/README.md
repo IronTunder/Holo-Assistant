@@ -1,6 +1,6 @@
 # Frontend Ditto
 
-Ultimo aggiornamento: 6 aprile 2026
+Ultimo aggiornamento: 7 aprile 2026
 
 Frontend React/Vite del progetto Ditto. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
@@ -15,6 +15,7 @@ Frontend React/Vite del progetto Ditto. L'applicazione espone due macro-aree:
 - Radix UI
 - Motion
 - TalkingHead per avatar 3D
+- vosk-browser per wake-word e STT locale nel browser
 
 ## Comandi
 
@@ -39,6 +40,7 @@ Il frontend legge:
 
 ```ini
 VITE_API_URL=http://{server-ip}:8000
+VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
 Comportamento attuale di `src/shared/api/config.ts`:
@@ -46,6 +48,8 @@ Comportamento attuale di `src/shared/api/config.ts`:
 - mantiene porta e path configurati;
 - riallinea l'hostname a `window.location.hostname` per mantenere coerenti host e cookie auth quando il frontend viene aperto da altri dispositivi o dopo i reload;
 - in produzione usa `VITE_API_URL` oppure fallback relativo a `${window.location.origin}/api`.
+
+`VITE_VOSK_MODEL_URL` configura il modello Vosk per la wake-word. Se la variabile manca, `OperatorInterface.tsx` usa il fallback `/models/vosk-model-small-it-0.22.tar.gz`.
 
 ## Struttura principale
 
@@ -68,6 +72,7 @@ Passi principali:
 - selezione della macchina dal pannello di accesso;
 - login via `POST /auth/badge-login` oppure `POST /auth/credentials-login`;
 - apertura della console operatore con avatar, stato sessione e box domanda;
+- ascolto wake-word locale nel browser con frase `Ehi Ditto`;
 - invio domande a `POST /api/interactions/ask`;
 - eventuale riproduzione TTS tramite `POST /tts/synthesize`.
 
@@ -119,14 +124,16 @@ Per la voce:
 
 - `src/shared/api/config.ts` centralizza endpoint e base URL.
 - `src/features/operator/OperatorInterface.tsx` contiene il flusso principale operatore.
+- `src/features/operator/voice/useVoskWakeWord.ts` gestisce wake-word e trascrizione locale.
 - `src/features/operator/BadgeReader.tsx` gestisce selezione macchina e accesso.
 - `src/features/operator/CredentialsLogin.tsx` gestisce il modal di login credenziali.
 
 ## Note operative
 
 - Il frontend assume che backend e auth siano raggiungibili all'host risolto da `VITE_API_URL`.
-- In ambiente locale gli script di root e `scripts/windows/start.bat` aggiornano automaticamente `.env`.
+- In ambiente locale gli script di root e `scripts/windows/start.bat` aggiornano automaticamente `.env`; lo `start` puo lasciare solo `VITE_API_URL`, perche il modello Vosk ha un fallback applicativo.
 - Se il backend cambia host o porta, verifica prima `frontend/my-app/.env` e poi `src/shared/api/config.ts`.
+- Il modello Vosk locale si prepara con `scripts/windows/prepare_vosk_model.ps1` oppure `bash scripts/unix/prepare_vosk_model.sh`.
 
 ## Nota hosting
 

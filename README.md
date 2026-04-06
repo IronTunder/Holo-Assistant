@@ -1,6 +1,6 @@
 # Progetto Ditto
 
-Ultimo aggiornamento documentazione: 6 aprile 2026
+Ultimo aggiornamento documentazione: 7 aprile 2026
 
 Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
@@ -31,6 +31,10 @@ Ditto e un sistema di supporto per postazioni e macchinari industriali composto 
 
 ## Quick Start
 
+Il percorso Windows e attualmente la source of truth operativa: i wrapper in root (`setup.bat` e `start.bat`) chiamano `scripts/windows/setup.bat` e `scripts/windows/start.bat`.
+
+I wrapper Unix (`setup.sh` e `start.sh`) sono disponibili, ma il loro flusso non e ancora perfettamente allineato a quello Windows: usano Ollama in Docker come percorso principale, hanno default legacy per il modello AI se `backend/.env` non e presente e non preparano automaticamente il modello Vosk nel normale `start`.
+
 ### Primo setup
 
 Windows:
@@ -43,13 +47,14 @@ Linux:
 ./setup.sh
 ```
 
-Lo script di setup:
+Nel flusso Windows documentato come source of truth, lo script di setup:
 - esegue `docker compose down` e poi `docker compose up -d`;
 - aspetta PostgreSQL;
 - prepara il modello `qwen3.5:9b` in Ollama;
 - crea `backend/.env` e `frontend/my-app/.env`;
 - installa dipendenze backend e frontend;
 - esegue `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py`;
+- su Windows prepara anche il modello wake-word Vosk se manca;
 - avvia backend e frontend.
 
 ### Avvio successivo
@@ -64,13 +69,14 @@ Linux:
 ./start.sh
 ```
 
-Lo script di start:
+Nel flusso Windows documentato come source of truth, lo script di start:
 - riallinea Docker con `docker compose up -d` senza forzare il reset dei container;
 - aspetta PostgreSQL;
 - legge `OLLAMA_MODEL` e i parametri principali da `backend/.env`;
 - controlla la presenza del modello con `ollama list`;
 - prova il warmup del modello via `POST /api/generate`;
 - aggiorna `frontend/my-app/.env` con `VITE_API_URL`;
+- su Windows riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py`;
 - avvia backend e frontend.
 
 ## Prerequisiti software
@@ -286,6 +292,8 @@ VITE_API_URL=http://{server-ip}:8000
 VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
+`VITE_VOSK_MODEL_URL` e opzionale: se manca, il frontend usa comunque il fallback `/models/vosk-model-small-it-0.22.tar.gz`.
+
 In sviluppo il frontend conserva porta e path di `VITE_API_URL`, ma riallinea l'hostname a quello della pagina corrente per mantenere coerenti host e cookie auth durante i reload.
 
 ## Sessioni e token
@@ -314,7 +322,7 @@ docker compose logs -f ollama
 ```
 
 Verifica che:
-- `OLLAMA_MODEL` in `backend/.env` esista davvero nel container;
+- `OLLAMA_MODEL` in `backend/.env` esista davvero nel runtime Ollama usato, nativo o container;
 - non ci sia mismatch tra nome configurato e modello scaricato;
 - il cold start non stia superando il timeout.
 - se sei su Windows con GPU AMD, verifica di stare usando Ollama nativo e non il container CPU-only.
@@ -322,6 +330,12 @@ Verifica che:
 Download manuale:
 ```bash
 docker exec ditto_ollama ollama pull qwen3.5:9b
+```
+
+Se stai usando Ollama nativo:
+```bash
+ollama pull qwen3.5:9b
+ollama list
 ```
 
 ### Prima richiesta AI lenta
@@ -357,5 +371,5 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 6 aprile 2026
+- ultimo aggiornamento documentazione: 7 aprile 2026
 - source of truth operativa: `scripts/windows/setup.bat` e `scripts/windows/start.bat`

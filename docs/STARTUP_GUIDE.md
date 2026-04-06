@@ -2,7 +2,7 @@
 
 Guida pratica per avviare Ditto con il flusso attuale degli script.
 
-Ultimo aggiornamento: 6 aprile 2026
+Ultimo aggiornamento: 7 aprile 2026
 
 ## Script supportati
 
@@ -16,7 +16,7 @@ Ultimo aggiornamento: 6 aprile 2026
 - setup iniziale: `./setup.sh`
 - avvio successivo: `./start.sh`
 
-Gli script Windows restano la source of truth operativa; quelli Unix seguono lo stesso flusso.
+Gli script Windows restano la source of truth operativa. Quelli Unix sono disponibili, ma non sono ancora identici: usano Ollama in Docker come percorso principale, hanno un default legacy del modello AI se `backend/.env` manca e non preparano automaticamente il modello Vosk durante il normale `start`.
 
 ## Prerequisiti
 
@@ -31,7 +31,7 @@ Servizi Docker previsti da `docker/docker-compose.yml`:
 
 ## Cosa fa `setup`
 
-`setup.bat` e `setup.sh` eseguono il bootstrap completo dell'ambiente.
+`setup.bat` esegue il bootstrap completo dell'ambiente secondo il flusso Windows documentato come source of truth. `setup.sh` resta disponibile, ma va considerato separatamente per le differenze indicate sopra.
 
 Passi principali:
 - eseguono `docker compose down`;
@@ -40,6 +40,7 @@ Passi principali:
 - preparano il modello `qwen3.5:9b` in Ollama;
 - generano `backend/.env`;
 - generano `frontend/my-app/.env`;
+- su Windows preparano `frontend/my-app/public/models/vosk-model-small-it-0.22.tar.gz` se manca;
 - creano il virtual environment backend se manca;
 - installano le dipendenze Python da `backend/requirements.txt`;
 - eseguono `backend/scripts/init_db.py`;
@@ -50,15 +51,16 @@ Passi principali:
 
 ## Cosa fa `start`
 
-`start.bat` e `start.sh` servono per l'avvio quotidiano senza reinstallare tutto.
+`start.bat` serve per l'avvio quotidiano senza reinstallare tutto secondo il flusso Windows documentato come source of truth. `start.sh` resta disponibile, ma va considerato separatamente per le differenze indicate sopra.
 
 Passi principali:
 - eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto;
 - leggono `OLLAMA_MODEL`, `OLLAMA_BASE_URL` e gli altri parametri AI da `backend/.env` se presente;
-- verificano la presenza del modello con `docker exec ditto_ollama ollama list`;
+- verificano la presenza del modello con il runtime Ollama configurato;
 - provano il warmup del modello via `POST /api/generate` dopo il check su `GET /api/tags`;
 - aggiornano `frontend/my-app/.env` con `VITE_API_URL=http://{server-ip}:8000`;
+- su Windows riallineano la knowledge base tecnica con `backend/scripts/seed_categories.py`;
 - avviano backend FastAPI in una finestra dedicata;
 - avviano frontend Vite in una finestra dedicata.
 
@@ -111,9 +113,10 @@ TTS_ENABLED=true
 
 ```ini
 VITE_API_URL=http://{server-ip}:8000
+VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
-Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quello della pagina corrente.
+Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quello della pagina corrente. `VITE_VOSK_MODEL_URL` e opzionale: se manca, viene usato il fallback `/models/vosk-model-small-it-0.22.tar.gz`.
 
 ## URL utili
 
@@ -201,6 +204,12 @@ Download manuale:
 docker exec ditto_ollama ollama pull qwen3.5:9b
 ```
 
+Se stai usando Ollama nativo:
+```bash
+ollama pull qwen3.5:9b
+ollama list
+```
+
 ### Prima richiesta AI molto lenta
 
 Sintomo normale al primo caricamento del modello. La configurazione attuale usa gia:
@@ -267,6 +276,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 Dopo `setup` o `start` controlla:
 - `backend/.env` creato correttamente;
 - `frontend/my-app/.env` aggiornato con `VITE_API_URL`;
+- modello wake-word presente in `frontend/my-app/public/models` oppure URL alternativo configurato con `VITE_VOSK_MODEL_URL`;
 - `docker compose ps` con `ditto_postgres`, `ditto_ollama`, `ditto_adminer`;
 - backend raggiungibile su `8000`;
 - frontend raggiungibile su `5173`;
