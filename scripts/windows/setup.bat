@@ -16,6 +16,8 @@ set OLLAMA_ACCELERATOR=auto
 set OLLAMA_COMPOSE_ARGS=-f docker-compose.yml
 set OLLAMA_USE_NATIVE=false
 set OLLAMA_NATIVE_VULKAN=1
+set VOSK_MODEL_PUBLIC_URL=/models/vosk-model-small-it-0.22.tar.gz
+set VOSK_MODEL_ARCHIVE=%ROOT_DIR%\frontend\my-app\public\models\vosk-model-small-it-0.22.tar.gz
 
 :: Ottieni l'IP locale
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4"') do (
@@ -220,9 +222,24 @@ cd %ROOT_DIR%\frontend\my-app
 :: Verifica che siamo nella directory giusta
 echo Directory corrente: %CD%
 
+:: Prepara il modello Vosk per la wake-word locale
+if not exist "%VOSK_MODEL_ARCHIVE%" (
+    echo Preparazione modello wake-word Vosk...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\scripts\windows\prepare_vosk_model.ps1"
+    if errorlevel 1 (
+        echo [AVVISO] Impossibile preparare il modello Vosk automaticamente.
+        echo [AVVISO] Puoi riprovare manualmente con: scripts\windows\prepare_vosk_model.ps1
+    ) else (
+        echo [OK] Modello Vosk pronto
+    )
+) else (
+    echo Modello Vosk gia' presente
+)
+
 :: Crea .env per frontend
 (
 echo VITE_API_URL=http://%IP%:8000
+echo VITE_VOSK_MODEL_URL=%VOSK_MODEL_PUBLIC_URL%
 ) > .env
 
 :: Installa dipendenze se necessario

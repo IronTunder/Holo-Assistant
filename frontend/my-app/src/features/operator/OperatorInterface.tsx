@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, Radio, X } from 'lucide-react';
+import { Mic, MicOff, Radio, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { useAuth } from '@/shared/auth/AuthContext';
@@ -107,6 +107,7 @@ export function OperatorInterface() {
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
   const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [wakeWordMuted, setWakeWordMuted] = useState(false);
   const activeInteractionIdRef = useRef<number | null>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
   const pollingInFlightRef = useRef(false);
@@ -537,6 +538,7 @@ export function OperatorInterface() {
     setFallbackReasonCode(null);
     setTrackedActiveInteractionId(null);
     setIsSubmittingFeedback(false);
+    setWakeWordMuted(false);
     setIsTyping(false);
     setShowSubtitles(false);
     await logout();
@@ -779,7 +781,8 @@ export function OperatorInterface() {
     });
   };
 
-  const wakeWordPaused = loading || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+  const wakeWordAutomaticallyPaused = loading || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+  const wakeWordPaused = wakeWordMuted || wakeWordAutomaticallyPaused;
   const {
     status: wakeWordStatus,
     partialTranscript: voicePartialTranscript,
@@ -812,6 +815,7 @@ export function OperatorInterface() {
   });
   const wakeWordActive = isWakeWordActive(wakeWordStatus);
   const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
+  const canToggleWakeWord = isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine);
   const voiceDebugTranscript = voicePartialTranscript || voiceLastTranscript;
 
   return (
@@ -866,13 +870,32 @@ export function OperatorInterface() {
                 className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${
                   wakeWordStatus === 'error'
                     ? 'border-red-400/30 bg-red-500/10 text-red-100'
+                    : wakeWordMuted
+                      ? 'border-slate-400/20 bg-slate-500/10 text-slate-200'
                     : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
                 }`}
                 title={wakeWordError || 'Il browser chiedera il permesso microfono al primo avvio.'}
               >
                 <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
-                <span>{wakeWordLabel}</span>
+                <span>{wakeWordMuted ? 'Wake word mutato' : wakeWordLabel}</span>
               </div>
+
+              {canToggleWakeWord && (
+                <button
+                  type="button"
+                  onClick={() => setWakeWordMuted((current) => !current)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${
+                    wakeWordMuted
+                      ? 'border-blue-400/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20'
+                      : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'
+                  }`}
+                  aria-pressed={wakeWordMuted}
+                  title={wakeWordMuted ? 'Riattiva ascolto wake word' : 'Metti in pausa la wake word'}
+                >
+                  {wakeWordMuted ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                  <span>{wakeWordMuted ? 'Riattiva wake word' : 'Muta wake word'}</span>
+                </button>
+              )}
 
               {isLoggedIn && user && (
                 <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
