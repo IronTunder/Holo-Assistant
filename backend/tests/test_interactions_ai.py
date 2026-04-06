@@ -1,19 +1,21 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401
-from app.api.interactions import ask_question
+from app.api.interactions import ask_question, submit_quick_action
 from app.database import Base
 from app.models.category import Category
 from app.models.department import Department
+from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
-from app.schemas.interaction import AskQuestionRequest
+from app.schemas.interaction import AskQuestionRequest, QuickActionRequest
 from app.services.knowledge_retrieval import (
     IndexedKnowledgeItem,
     RetrievalResult,
@@ -205,6 +207,66 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.reason_code, "matched")
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
         self.assertGreater(response.confidence, 0.7)
+
+    async def test_quick_action_creates_maintenance_signal(self) -> None:
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="maintenance",
+        )
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await submit_quick_action(request, current_user=current_user, db=self.db)
+
+        interaction = self.db.query(InteractionLog).filter(InteractionLog.id == response.interaction_id).first()
+        self.assertEqual(response.feedback_status, "unresolved")
+        self.assertEqual(response.priority, "normal")
+        self.assertEqual(interaction.action_type, "maintenance")
+        self.assertEqual(interaction.priority, "normal")
+        self.assertEqual(interaction.feedback_status, "unresolved")
+
+    async def test_quick_action_creates_critical_emergency_signal(self) -> None:
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="emergency",
+        )
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await submit_quick_action(request, current_user=current_user, db=self.db)
+
+        interaction = self.db.query(InteractionLog).filter(InteractionLog.id == response.interaction_id).first()
+        self.assertEqual(response.feedback_status, "unresolved")
+        self.assertEqual(response.priority, "critical")
+        self.assertEqual(interaction.action_type, "emergency")
+        self.assertEqual(interaction.priority, "critical")
+        self.assertEqual(interaction.feedback_status, "unresolved")
+
+    async def test_quick_action_rejects_other_operator(self) -> None:
+        other_user = User(
+            nome="Luigi Bianchi",
+            badge_id="67890",
+            password_hash="hash",
+            ruolo=Ruolo.OPERAIO,
+            livello_esperienza=LivelloEsperienza.OPERAIO,
+            reparto_legacy="Assemblaggio",
+            turno=Turno.MATTINA,
+        )
+        self.db.add(other_user)
+        self.db.commit()
+        self.db.refresh(other_user)
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="maintenance",
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            await submit_quick_action(request, current_user=other_user, db=self.db)
+
+        self.assertEqual(context.exception.status_code, 403)
 
     async def test_ask_question_returns_clarification_mode(self) -> None:
         request = AskQuestionRequest(

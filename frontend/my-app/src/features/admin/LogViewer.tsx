@@ -14,8 +14,10 @@ import type {
   AdminMachine,
   AdminUser,
   DepartmentOption,
+  InteractionActionType,
   InteractionFeedbackStatus,
   InteractionLogEntry,
+  InteractionPriority,
 } from './adminTypes';
 
 interface LogViewerProps {
@@ -47,6 +49,23 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
     resolved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     unresolved: 'border-red-200 bg-red-50 text-red-700',
     not_applicable: 'border-slate-200 bg-slate-100 text-slate-700',
+  };
+
+  const actionLabels: Record<InteractionActionType, string> = {
+    question: 'Domanda',
+    maintenance: 'Manutenzione',
+    emergency: 'Emergenza',
+  };
+
+  const actionBadgeClassNames: Record<InteractionActionType, string> = {
+    question: 'border-slate-200 bg-slate-50 text-slate-700',
+    maintenance: 'border-amber-200 bg-amber-50 text-amber-700',
+    emergency: 'border-red-200 bg-red-50 text-red-700',
+  };
+
+  const priorityLabels: Record<InteractionPriority, string> = {
+    normal: 'Priorita normale',
+    critical: 'Priorita critica',
   };
 
   const fetchLogs = async () => {
@@ -235,7 +254,20 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                     </TableCell>
                     <TableCell>
                       <div className="space-y-2">
-                        <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge
+                            variant="outline"
+                            className={actionBadgeClassNames[log.action_type]}
+                          >
+                            {actionLabels[log.action_type]}
+                          </Badge>
+                          {log.priority === 'critical' ? (
+                            <Badge variant="outline" className="border-red-300 bg-red-600 text-white">
+                              {priorityLabels[log.priority]}
+                            </Badge>
+                          ) : null}
+                          <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                        </div>
                         {log.knowledge_item_title ? (
                           <p className="max-w-xs text-xs text-slate-500">{log.knowledge_item_title}</p>
                         ) : null}

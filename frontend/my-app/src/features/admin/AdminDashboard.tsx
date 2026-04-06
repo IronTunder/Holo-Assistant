@@ -32,6 +32,12 @@ const feedbackLabels = {
   not_applicable: 'Non rilevante',
 } as const;
 
+const actionLabels = {
+  question: 'Domanda',
+  maintenance: 'Manutenzione',
+  emergency: 'Emergenza',
+} as const;
+
 export const AdminDashboard = () => {
   const { accessToken, isAdmin, logout, refreshAccessToken, user } = useAuth();
   const { apiCall } = useApiClient();
@@ -126,6 +132,16 @@ export const AdminDashboard = () => {
     }
     return `${summary.total_users} utenti, ${summary.total_machines} macchinari, ${summary.knowledge_items} template knowledge.`;
   }, [summary]);
+
+  const recentCriticalEmergencyLogs = useMemo(
+    () => recentUnresolvedLogs.filter((log) => log.action_type === 'emergency' && log.priority === 'critical'),
+    [recentUnresolvedLogs]
+  );
+
+  const recentStandardUnresolvedLogs = useMemo(
+    () => recentUnresolvedLogs.filter((log) => !(log.action_type === 'emergency' && log.priority === 'critical')),
+    [recentUnresolvedLogs]
+  );
 
   const handleLogout = async () => {
     await logout();
@@ -425,16 +441,54 @@ export const AdminDashboard = () => {
                 </div>
 
                 <div className="mt-4 space-y-3">
+                  {recentCriticalEmergencyLogs.length > 0 ? (
+                    <div className="rounded-xl border border-red-300 bg-red-600 p-4 text-white shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-white/40 bg-white text-red-700">
+                          Emergenza critica
+                        </Badge>
+                        <span className="text-xs text-red-100">{recentCriticalEmergencyLogs.length} attive</span>
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {recentCriticalEmergencyLogs.map((log) => (
+                          <div key={log.id} className="rounded-xl border border-white/20 bg-white/10 p-3">
+                            <p className="text-sm font-semibold">
+                              {log.machine_name} - {log.user_name}
+                            </p>
+                            <p className="mt-1 text-sm text-red-50">{log.domanda}</p>
+                            <p className="mt-1 text-xs text-red-100">
+                              {new Date(log.timestamp).toLocaleString('it-IT')}
+                            </p>
+                            <div className="mt-3">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                disabled={updatingInteractionId === log.id}
+                                onClick={() => void markInteractionAsResolved(log.id)}
+                              >
+                                Conferma risoluzione
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   {recentUnresolvedLogs.length === 0 ? (
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
                       Nessun problema non risolto nelle interazioni piu recenti.
                     </div>
                   ) : (
-                    recentUnresolvedLogs.map((log) => (
+                    recentStandardUnresolvedLogs.map((log) => (
                       <div key={log.id} className="rounded-xl border border-red-100 bg-red-50/60 p-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline" className="border-red-200 bg-white text-red-700">
                             {feedbackLabels.unresolved}
+                          </Badge>
+                          <Badge variant="outline" className={log.action_type === 'maintenance' ? 'border-amber-200 bg-amber-50 text-amber-700' : ''}>
+                            {actionLabels[log.action_type]}
                           </Badge>
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
                           <span className="text-xs text-slate-500">
@@ -442,7 +496,7 @@ export const AdminDashboard = () => {
                           </span>
                         </div>
                         <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {log.machine_name} · {log.user_name}
+                          {log.machine_name} - {log.user_name}
                         </p>
                         <p className="mt-1 line-clamp-2 text-sm text-slate-700">{log.domanda}</p>
                         {log.risposta ? (

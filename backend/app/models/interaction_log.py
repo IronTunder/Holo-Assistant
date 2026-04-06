@@ -17,6 +17,8 @@ class InteractionLog(Base):
     risposta = Column(Text, nullable=True)
     feedback_status = Column(String(32), nullable=True, index=True)
     feedback_timestamp = Column(DateTime(timezone=True), nullable=True)
+    action_type = Column(String(32), nullable=False, default="question", index=True)
+    priority = Column(String(32), nullable=False, default="normal", index=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User")

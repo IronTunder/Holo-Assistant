@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, Radio, X } from 'lucide-react';
+import { AlertTriangle, Mic, MicOff, Radio, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { useAuth } from '@/shared/auth/AuthContext';
@@ -40,6 +40,16 @@ type AskQuestionApiResponse = {
 };
 
 type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
+type QuickActionType = 'maintenance' | 'emergency';
+
+type QuickActionApiResponse = {
+  interaction_id: number;
+  action_type: QuickActionType;
+  priority: 'normal' | 'critical';
+  feedback_status: InteractionFeedbackStatus;
+  message: string;
+  timestamp: string;
+};
 
 const UNRESOLVED_CONFIRMATION_MESSAGE =
   "L'assistenza è stata informata del tuo problema e inviera al piu presto un tecnico. Quando il tecnico avra risolto il problema, l'intervento potra essere confermato nel sistema.";
@@ -47,9 +57,33 @@ const UNRESOLVED_CONFIRMATION_MESSAGE =
 const VOSK_MODEL_URL = import.meta.env.VITE_VOSK_MODEL_URL || '/models/vosk-model-small-it-0.22.tar.gz';
 
 const quickActions = [
-  { title: 'Emergenza', subtitle: 'Alert rapido' },
-  { title: 'Manutenzione', subtitle: 'Chiama tecnico' },
-];
+  { actionType: 'emergency', title: 'Emergenza', subtitle: 'Alert rapido' },
+  { actionType: 'maintenance', title: 'Manutenzione', subtitle: 'Chiama tecnico' },
+] as const satisfies readonly {
+  actionType: QuickActionType;
+  title: string;
+  subtitle: string;
+}[];
+
+const quickActionFallbackMessages: Record<QuickActionType, string> = {
+  maintenance: 'La richiesta di manutenzione e stata inviata.',
+  emergency: 'Emergenza inviata. Allontanati dalla macchina e segui le procedure di sicurezza del reparto.',
+};
+
+const quickActionButtonStyles: Record<QuickActionType, string> = {
+  emergency: 'border-red-400/40 bg-red-500/15 text-red-50 hover:bg-red-500/25 disabled:border-red-500/20 disabled:bg-red-500/10 disabled:text-red-200',
+  maintenance: 'border-amber-400/30 bg-amber-500/10 text-amber-50 hover:bg-amber-500/20 disabled:border-amber-500/20 disabled:bg-amber-500/10 disabled:text-amber-200',
+};
+
+const quickActionTitleStyles: Record<QuickActionType, string> = {
+  emergency: 'text-red-200',
+  maintenance: 'text-amber-200',
+};
+
+const quickActionSubtitleStyles: Record<QuickActionType, string> = {
+  emergency: 'text-white',
+  maintenance: 'text-white',
+};
 
 function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
   switch (status) {
@@ -106,6 +140,8 @@ export function OperatorInterface() {
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
   const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [quickActionInFlight, setQuickActionInFlight] = useState<QuickActionType | null>(null);
+  const [showEmergencyConfirmation, setShowEmergencyConfirmation] = useState(false);
   const [wakeWordMuted, setWakeWordMuted] = useState(false);
   const activeInteractionIdRef = useRef<number | null>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
@@ -343,6 +379,11 @@ export function OperatorInterface() {
           return;
         }
 
+        if (tokenResponse.status === 409) {
+          await stopAndLogout('Sessione non piu valida');
+          return;
+        }
+
         if (!tokenResponse.ok) {
           console.error(`SSE token creation failed with status: ${tokenResponse.status}`);
           startPollingFallback();
@@ -537,6 +578,8 @@ export function OperatorInterface() {
     setFallbackReasonCode(null);
     setTrackedActiveInteractionId(null);
     setIsSubmittingFeedback(false);
+    setQuickActionInFlight(null);
+    setShowEmergencyConfirmation(false);
     setWakeWordMuted(false);
     setIsTyping(false);
     setShowSubtitles(false);
@@ -697,6 +740,80 @@ export function OperatorInterface() {
     return playTtsAudio(payload);
   };
 
+  const playAssistantMessage = async (message: string) => {
+    const speechPayload = await handleTTS(message);
+    let playback: TtsPlayback | null = null;
+
+    if (speechPayload) {
+      setAvatarState('speaking');
+      playback = await startSpeechPlayback(speechPayload);
+    }
+
+    await startTypingEffect(message, speechPayload?.durationMs);
+
+    if (playback) {
+      try {
+        await playback.finished;
+      } catch (playbackError) {
+        console.error('Audio playback error:', playbackError);
+      }
+    }
+
+    setIsTyping(false);
+    setAvatarState('idle');
+    setShowSubtitles(false);
+  };
+
+  const resetInteractionStateForQuickAction = () => {
+    setQuestionInput('');
+    setShowFollowUp(false);
+    setClarificationOptions([]);
+    setPendingQuestion(null);
+    setFallbackReasonCode(null);
+    setTrackedActiveInteractionId(null);
+  };
+
+  const submitQuickAction = async (actionType: QuickActionType) => {
+    if (!user || !machine || !accessToken || quickActionInFlight || isTyping || avatarState === 'speaking' || avatarState === 'thinking') {
+      return;
+    }
+
+    setQuickActionInFlight(actionType);
+    setShowEmergencyConfirmation(false);
+    resetInteractionStateForQuickAction();
+
+    try {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_QUICK_ACTION, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          machine_id: machine.id,
+          user_id: user.id,
+          action_type: actionType,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Errore durante l invio della segnalazione');
+      }
+
+      const data = (await response.json()) as QuickActionApiResponse;
+      await playAssistantMessage(data.message || quickActionFallbackMessages[actionType]);
+    } catch (error) {
+      console.error('Errore invio segnalazione rapida:', error);
+      setAvatarState('idle');
+      setIsTyping(false);
+      setShowSubtitles(false);
+      alert(error instanceof Error ? error.message : 'Errore durante l invio della segnalazione');
+    } finally {
+      setQuickActionInFlight(null);
+    }
+  };
+
   const handleFollowUpResponse = async (feedbackStatus: InteractionFeedbackStatus) => {
     if (!activeInteractionId || !accessToken || isSubmittingFeedback) {
       return;
@@ -816,6 +933,7 @@ export function OperatorInterface() {
   const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
   const canToggleWakeWord = isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine);
   const voiceDebugTranscript = voicePartialTranscript || voiceLastTranscript;
+  const quickActionsDisabled = Boolean(quickActionInFlight) || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
 
   return (
     <div className="relative min-h-[100dvh] overflow-x-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
@@ -1068,6 +1186,38 @@ export function OperatorInterface() {
                           </div>
                         </div>
                       )}
+
+                      {showEmergencyConfirmation && (
+                        <div className="rounded-2xl border border-red-400/50 bg-red-500/15 p-4">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-red-200" />
+                            <div className="min-w-0 flex-1">
+                              <h3 className="text-base font-semibold text-red-50">Conferma emergenza</h3>
+                              <p className="mt-1 text-sm leading-6 text-red-100">
+                                Invia un segnale critico all'area admin per questa macchina. Non arresta fisicamente la macchina.
+                              </p>
+                              <div className="mt-4 flex flex-wrap gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => void submitQuickAction('emergency')}
+                                  disabled={quickActionsDisabled}
+                                  className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {quickActionInFlight === 'emergency' ? 'Invio emergenza...' : 'Conferma emergenza'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEmergencyConfirmation(false)}
+                                  disabled={Boolean(quickActionInFlight)}
+                                  className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Annulla
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </ScrollArea>
                 </div>
@@ -1112,10 +1262,20 @@ export function OperatorInterface() {
                         <button
                           key={action.title}
                           type="button"
-                          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition-colors hover:bg-white/10"
+                          onClick={() => {
+                            if (action.actionType === 'emergency') {
+                              setShowEmergencyConfirmation(true);
+                              return;
+                            }
+                            void submitQuickAction(action.actionType);
+                          }}
+                          disabled={quickActionsDisabled}
+                          className={`rounded-2xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${quickActionButtonStyles[action.actionType]}`}
                         >
-                          <span className="block text-xs uppercase tracking-[0.18em] text-slate-400">{action.title}</span>
-                          <span className="mt-1 block text-sm font-semibold text-white">{action.subtitle}</span>
+                          <span className={`block text-xs uppercase tracking-[0.18em] ${quickActionTitleStyles[action.actionType]}`}>{action.title}</span>
+                          <span className={`mt-1 block text-sm font-semibold ${quickActionSubtitleStyles[action.actionType]}`}>
+                            {quickActionInFlight === action.actionType ? 'Invio in corso...' : action.subtitle}
+                          </span>
                         </button>
                       ))}
                     </div>

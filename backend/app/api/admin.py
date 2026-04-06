@@ -20,7 +20,7 @@ from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
-from app.schemas.interaction import FeedbackStatus
+from app.schemas.interaction import FeedbackStatus, InteractionActionType, InteractionPriority
 from app.api.presenters import (
     serialize_category,
     serialize_department,
@@ -112,6 +112,8 @@ class InteractionLogResponse(BaseModel):
     risposta: Optional[str] = None
     feedback_status: Optional[FeedbackStatus] = None
     feedback_timestamp: Optional[datetime] = None
+    action_type: InteractionActionType = "question"
+    priority: InteractionPriority = "normal"
     timestamp: datetime
 
 
@@ -900,6 +902,8 @@ async def list_logs(
                 risposta=log.risposta,
                 feedback_status=log.feedback_status,
                 feedback_timestamp=log.feedback_timestamp,
+                action_type=log.action_type or "question",
+                priority=log.priority or "normal",
                 timestamp=log.timestamp,
             )
         )
