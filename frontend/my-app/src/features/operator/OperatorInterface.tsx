@@ -6,6 +6,7 @@ import { useAuth } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
 import { API_ENDPOINTS } from '@/shared/api/config';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { useVoskWakeWord, type VoskWakeWordStatus } from './voice/useVoskWakeWord';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
 type SessionStatusReason = 'ok' | 'machine_released' | 'machine_reassigned' | 'machine_not_found';
@@ -43,11 +44,41 @@ type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
 const UNRESOLVED_CONFIRMATION_MESSAGE =
   "L'assistenza è stata informata del tuo problema e inviera al piu presto un tecnico. Quando il tecnico avra risolto il problema, l'intervento potra essere confermato nel sistema.";
 
+const VOSK_MODEL_URL = import.meta.env.VITE_VOSK_MODEL_URL || '/models/vosk-model-small-it-0.22.tar.gz';
+
 const quickActions = [
   { title: 'Emergenza', subtitle: 'Alert rapido' },
   { title: 'Manutenzione', subtitle: 'Chiama tecnico' },
   { title: 'Supporto', subtitle: 'Apri aiuto' },
 ];
+
+function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
+  switch (status) {
+    case 'loading-model':
+      return 'Caricamento wake word';
+    case 'requesting-microphone':
+      return 'Permesso microfono';
+    case 'wake-listening':
+      return 'Wake word attivo';
+    case 'command-listening':
+      return 'In ascolto domanda';
+    case 'error':
+      return error ? 'Wake word non disponibile' : 'Errore wake word';
+    case 'ready':
+      return 'Wake word in pausa';
+    case 'disabled':
+    default:
+      return 'Wake word disattivato';
+  }
+}
+
+function isWakeWordActive(status: VoskWakeWordStatus): boolean {
+  return status === 'wake-listening' || status === 'command-listening';
+}
+
+function shouldAutoMarkAsNotApplicable(response: AskQuestionApiResponse): boolean {
+  return response.mode === 'fallback' || response.reason_code === 'out_of_scope' || response.reason_code === 'no_match';
+}
 
 export function OperatorInterface() {
   const { 
@@ -63,7 +94,6 @@ export function OperatorInterface() {
   
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
   const [, setTranscript] = useState('');
-  const [wakeWordActive, setWakeWordActive] = useState(true);
   const [, setShowSubtitles] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
@@ -77,6 +107,7 @@ export function OperatorInterface() {
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
   const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const activeInteractionIdRef = useRef<number | null>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
   const pollingInFlightRef = useRef(false);
   const mountedAtRef = useRef<number>(Date.now());
@@ -99,6 +130,11 @@ export function OperatorInterface() {
   const showTimedLogoutMessage = (message: string) => {
     setLogoutMessage(message);
     setLogoutMessageKey(Date.now());
+  };
+
+  const setTrackedActiveInteractionId = (interactionId: number | null) => {
+    activeInteractionIdRef.current = interactionId;
+    setActiveInteractionId(interactionId);
   };
 
   useEffect(() => {
@@ -448,9 +484,48 @@ export function OperatorInterface() {
     }
   };
 
+  const submitInteractionFeedback = async (
+    interactionId: number,
+    feedbackStatus: InteractionFeedbackStatus,
+    token: string
+  ) => {
+    const response = await fetch(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        feedback_status: feedbackStatus,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Errore nel salvataggio del feedback');
+    }
+  };
+
+  const markActiveInteractionAsNotApplicable = async () => {
+    const interactionId = activeInteractionIdRef.current;
+
+    if (!interactionId || !accessToken || isSubmittingFeedback) {
+      return;
+    }
+
+    try {
+      await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
+      setShowFollowUp(false);
+      setTrackedActiveInteractionId(null);
+    } catch (error) {
+      console.error('Errore salvataggio feedback non rilevante durante logout:', error);
+    }
+  };
+
   const handleLogout = async () => {
     manualLogoutInProgressRef.current = true;
     dismissLogoutMessage();
+    await markActiveInteractionAsNotApplicable();
     avatarDisplayRef.current?.stopSpeech();
     setAvatarState('idle');
     setTranscript('');
@@ -460,11 +535,10 @@ export function OperatorInterface() {
     setClarificationOptions([]);
     setPendingQuestion(null);
     setFallbackReasonCode(null);
-    setActiveInteractionId(null);
+    setTrackedActiveInteractionId(null);
     setIsSubmittingFeedback(false);
     setIsTyping(false);
     setShowSubtitles(false);
-    setWakeWordActive(true);
     await logout();
   };
 
@@ -477,7 +551,7 @@ export function OperatorInterface() {
     setShowFollowUp(false);
     setClarificationOptions([]);
     setFallbackReasonCode(null);
-    setActiveInteractionId(null);
+    setTrackedActiveInteractionId(null);
 
     try {
       const response = await fetch(API_ENDPOINTS.INTERACTION_ASK, {
@@ -500,12 +574,32 @@ export function OperatorInterface() {
       }
 
       const data = (await response.json()) as AskQuestionApiResponse;
+      const interactionId = data.interaction_id ?? null;
+
+      if (interactionId) {
+        setTrackedActiveInteractionId(interactionId);
+      }
+
+      if (interactionId && manualLogoutInProgressRef.current) {
+        await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
+        setTrackedActiveInteractionId(null);
+        return;
+      }
+
       const speechPayload = await handleTTS(data.response);
       let playback: TtsPlayback | null = null;
+
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
 
       if (speechPayload) {
         setAvatarState('speaking');
         playback = await startSpeechPlayback(speechPayload);
+      }
+
+      if (manualLogoutInProgressRef.current) {
+        return;
       }
 
       await startTypingEffect(data.response, speechPayload?.durationMs);
@@ -522,6 +616,28 @@ export function OperatorInterface() {
       setAvatarState('idle');
       setShowSubtitles(false);
 
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
+
+      if (shouldAutoMarkAsNotApplicable(data)) {
+        setPendingQuestion(null);
+        setClarificationOptions([]);
+        setFallbackReasonCode(data.reason_code);
+        setShowFollowUp(false);
+
+        if (interactionId) {
+          try {
+            await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
+            setTrackedActiveInteractionId(null);
+          } catch (feedbackError) {
+            console.error('Errore salvataggio feedback non rilevante per risposta fallback:', feedbackError);
+          }
+        }
+
+        return;
+      }
+
       if (data.mode === 'clarification') {
         setPendingQuestion(userQuestion);
         setClarificationOptions(data.clarification_options);
@@ -531,9 +647,13 @@ export function OperatorInterface() {
       setPendingQuestion(null);
       setClarificationOptions([]);
       setFallbackReasonCode(data.mode === 'fallback' ? data.reason_code : null);
-      setActiveInteractionId(data.interaction_id ?? null);
+      setTrackedActiveInteractionId(interactionId);
       setShowFollowUp(Boolean(data.interaction_id));
     } catch (error) {
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
+
       console.error('Error asking question:', error);
       setAvatarState('idle');
       const errorMsg = error instanceof Error ? error.message : 'Errore sconosciuto';
@@ -583,24 +703,10 @@ export function OperatorInterface() {
 
     setIsSubmittingFeedback(true);
     try {
-      const response = await fetch(API_ENDPOINTS.INTERACTION_FEEDBACK(activeInteractionId), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          feedback_status: feedbackStatus,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Errore nel salvataggio del feedback');
-      }
+      await submitInteractionFeedback(activeInteractionId, feedbackStatus, accessToken);
 
       setShowFollowUp(false);
-      setActiveInteractionId(null);
+      setTrackedActiveInteractionId(null);
       if (feedbackStatus === 'unresolved') {
         const speechPayload = await handleTTS(UNRESOLVED_CONFIRMATION_MESSAGE);
         let playback: TtsPlayback | null = null;
@@ -673,6 +779,41 @@ export function OperatorInterface() {
     });
   };
 
+  const wakeWordPaused = loading || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+  const {
+    status: wakeWordStatus,
+    partialTranscript: voicePartialTranscript,
+    lastTranscript: voiceLastTranscript,
+    error: wakeWordError,
+  } = useVoskWakeWord({
+    enabled: isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine),
+    paused: wakeWordPaused,
+    wakePhrase: 'Ehi Ditto',
+    modelUrl: VOSK_MODEL_URL,
+    onWake: () => {
+      setAvatarState('listening');
+      setQuestionInput('');
+      setCurrentTranscription('');
+      setShowFollowUp(false);
+      setClarificationOptions([]);
+      setPendingQuestion(null);
+      setFallbackReasonCode(null);
+      setTrackedActiveInteractionId(null);
+    },
+    onTranscriptFinal: (transcript) => {
+      setQuestionInput(transcript);
+      setAvatarState('idle');
+      void submitQuestion(transcript);
+    },
+    onError: (voiceError) => {
+      console.error('Wake word Vosk error:', voiceError);
+      setAvatarState('idle');
+    },
+  });
+  const wakeWordActive = isWakeWordActive(wakeWordStatus);
+  const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
+  const voiceDebugTranscript = voicePartialTranscript || voiceLastTranscript;
+
   return (
     <div className="relative min-h-[100dvh] overflow-x-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       {/* Logout notification */}
@@ -721,9 +862,16 @@ export function OperatorInterface() {
             </div>
 
             <div className="flex flex-wrap items-center justify-start gap-3 xl:justify-end">
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+              <div
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${
+                  wakeWordStatus === 'error'
+                    ? 'border-red-400/30 bg-red-500/10 text-red-100'
+                    : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
+                }`}
+                title={wakeWordError || 'Il browser chiedera il permesso microfono al primo avvio.'}
+              >
                 <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
-                <span>{wakeWordActive ? 'Wake word attivo' : 'Wake word disattivato'}</span>
+                <span>{wakeWordLabel}</span>
               </div>
 
               {isLoggedIn && user && (
@@ -776,7 +924,7 @@ export function OperatorInterface() {
                   {avatarState === 'listening' && (
                     <>
                           <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
-                      <span>In ascolto...</span>
+                      <span>{voicePartialTranscript || 'In ascolto...'}</span>
                     </>
                   )}
                   {avatarState === 'thinking' && (
@@ -798,8 +946,13 @@ export function OperatorInterface() {
                     </div>
 
                     <p className="mx-auto max-w-md text-sm text-slate-300">
-                      Il tuo assistente digitale per il supporto tecnico. Fai domande, ricevi risposte e accedi a procedure guidate senza distogliere lo sguardo dal tuo lavoro.
+                      Il tuo assistente digitale per il supporto tecnico. Di' "Ehi Ditto" e poi la domanda; al primo uso il browser chiedera il permesso microfono.
                     </p>
+                    {wakeWordActive && voiceDebugTranscript && (
+                      <p className="mx-auto max-w-md break-words text-xs text-slate-400">
+                        Riconosciuto: {voiceDebugTranscript}
+                      </p>
+                    )}
                   </div>
                 </div>
               </section>
@@ -915,7 +1068,7 @@ export function OperatorInterface() {
                             setClarificationOptions([]);
                             setPendingQuestion(null);
                             setFallbackReasonCode(null);
-                            setActiveInteractionId(null);
+                            setTrackedActiveInteractionId(null);
                           }
                         }}
                         placeholder="Scrivi la tua domanda..."

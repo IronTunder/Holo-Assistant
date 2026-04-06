@@ -144,6 +144,7 @@ Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
 - selezione macchina tra quelle disponibili;
 - login con badge o credenziali;
 - area avatar con stati `idle`, `listening`, `thinking`, `speaking`;
+- wake-word locale con Vosk in browser: di' `Ehi Ditto`, poi pronuncia la domanda tecnica;
 - console laterale per domanda, risposta, chiarimenti e follow-up;
 - azioni rapide visibili senza scroll dell'intera pagina.
 
@@ -212,6 +213,27 @@ TTS_ENABLED=true
 
 Il frontend chiama `POST /tts/synthesize` e prova a far parlare l'avatar; se la riproduzione avatar non e disponibile, usa playback audio diretto.
 
+### STT e wake-word Vosk
+
+Il riconoscimento vocale operatore usa `vosk-browser` nel frontend: l'audio resta nel browser e non viene inviato al backend. Il browser chiedera il permesso microfono al primo avvio della sessione operatore.
+
+Modello predefinito:
+```ini
+VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
+```
+
+Il modello non e versionato nel repository. Preparalo localmente con:
+```powershell
+scripts\windows\prepare_vosk_model.ps1
+```
+
+oppure su Linux/macOS:
+```bash
+bash scripts/unix/prepare_vosk_model.sh
+```
+
+Gli script scaricano `vosk-model-small-it-0.22` dal catalogo Vosk ufficiale e creano l'archivio `frontend/my-app/public/models/vosk-model-small-it-0.22.tar.gz` con root `model/`, formato richiesto da `vosk-browser`.
+
 ## Variabili ambiente
 
 ### `backend/.env`
@@ -261,6 +283,7 @@ TTS_ENABLED=true
 
 ```ini
 VITE_API_URL=http://{server-ip}:8000
+VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
 In sviluppo il frontend conserva porta e path di `VITE_API_URL`, ma riallinea l'hostname a quello della pagina corrente per mantenere coerenti host e cookie auth durante i reload.
