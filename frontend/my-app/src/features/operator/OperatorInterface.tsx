@@ -49,7 +49,6 @@ const VOSK_MODEL_URL = import.meta.env.VITE_VOSK_MODEL_URL || '/models/vosk-mode
 const quickActions = [
   { title: 'Emergenza', subtitle: 'Alert rapido' },
   { title: 'Manutenzione', subtitle: 'Chiama tecnico' },
-  { title: 'Supporto', subtitle: 'Apri aiuto' },
 ];
 
 function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
@@ -849,8 +848,8 @@ export function OperatorInterface() {
 
       <div className="relative z-10 flex min-h-[100dvh] flex-col">
         <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">
                 <span className="text-blue-400">DITTO</span> Assistente
               </h1>
@@ -865,7 +864,7 @@ export function OperatorInterface() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-start gap-3 xl:justify-end">
+            <div className="flex flex-wrap items-center justify-end gap-3">
               <div
                 className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${
                   wakeWordStatus === 'error'
@@ -931,8 +930,8 @@ export function OperatorInterface() {
               </div>
             </div>
           ) : (
-            <div className="grid gap-4 xl:min-h-0 xl:grid-cols-[minmax(320px,0.95fr)_minmax(380px,1.05fr)]">
-              <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:min-h-[340px] sm:p-6 xl:min-h-0">
+            <div className="grid gap-4 md:min-h-0 md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)]">
+              <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:min-h-[340px] sm:p-6 md:min-h-0">
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 text-center">
                   <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
 
@@ -967,10 +966,6 @@ export function OperatorInterface() {
                     </>
                   )}
                     </div>
-
-                    <p className="mx-auto max-w-md text-sm text-slate-300">
-                      Il tuo assistente digitale per il supporto tecnico. Di' "Ehi Ditto" e poi la domanda; al primo uso il browser chiedera il permesso microfono.
-                    </p>
                     {wakeWordActive && voiceDebugTranscript && (
                       <p className="mx-auto max-w-md break-words text-xs text-slate-400">
                         Riconosciuto: {voiceDebugTranscript}
@@ -980,7 +975,7 @@ export function OperatorInterface() {
                 </div>
               </section>
 
-              <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm xl:min-h-0">
+              <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm md:min-h-0">
                 <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
                   <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
                   <h2 className="mt-1 text-lg font-semibold text-white">Domande, risposte e azioni rapide</h2>
@@ -989,8 +984,8 @@ export function OperatorInterface() {
                   </p>
                 </div>
 
-                <div className="flex-1 px-4 py-4 sm:px-5 xl:min-h-0">
-                  <ScrollArea className="h-full xl:pr-3">
+                <div className="flex-1 px-4 py-4 sm:px-5 md:min-h-0">
+                  <ScrollArea className="h-full md:pr-3">
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1112,7 +1107,7 @@ export function OperatorInterface() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {quickActions.map((action) => (
                         <button
                           key={action.title}
