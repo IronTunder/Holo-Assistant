@@ -1,5 +1,7 @@
 # Progetto Ditto
 
+Ultimo aggiornamento documentazione: 6 aprile 2026
+
 Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
 - backend FastAPI;
@@ -42,9 +44,9 @@ Linux:
 ```
 
 Lo script di setup:
-- esegue `docker-compose down` e poi `docker-compose up -d`;
+- esegue `docker compose down` e poi `docker compose up -d`;
 - aspetta PostgreSQL;
-- prepara il modello `mistral:7b-instruct-v0.3-q4_K_M` in Ollama;
+- prepara il modello `qwen3.5:9b` in Ollama;
 - crea `backend/.env` e `frontend/my-app/.env`;
 - installa dipendenze backend e frontend;
 - esegue `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py`;
@@ -63,7 +65,7 @@ Linux:
 ```
 
 Lo script di start:
-- riallinea Docker con `docker-compose up -d` senza forzare il reset dei container;
+- riallinea Docker con `docker compose up -d` senza forzare il reset dei container;
 - aspetta PostgreSQL;
 - legge `OLLAMA_MODEL` e i parametri principali da `backend/.env`;
 - controlla la presenza del modello con `ollama list`;
@@ -71,11 +73,16 @@ Lo script di start:
 - aggiorna `frontend/my-app/.env` con `VITE_API_URL`;
 - avvia backend e frontend.
 
-## Prerequisiti
+## Prerequisiti software
 
 - Docker Desktop o Docker Engine con Compose
 - Python 3 con `venv`
 - Node.js e `npm`
+
+Versioni consigliate per evitare incompatibilita:
+- Python 3.10 o superiore
+- Node.js 20 LTS o superiore
+- Docker Compose v2
 
 Dipendenze backend notevoli presenti in `backend/requirements.txt`:
 - `fastapi`
@@ -85,6 +92,39 @@ Dipendenze backend notevoli presenti in `backend/requirements.txt`:
 - `python-jose[cryptography]`
 - `piper-tts`
 - `rapidfuzz`
+
+## Requisiti di sistema per hostare Ditto
+
+I numeri sotto sono un dimensionamento operativo consigliato per ospitare l'intero stack locale: frontend, backend FastAPI, PostgreSQL, Adminer e Ollama.
+
+### Host minimo per demo interna o test funzionale
+
+- OS: Windows 10/11, oppure Linux x86_64 recente
+- CPU: 4 core
+- GPU: Consigliata per tempi di risposta migliori
+- RAM: 16 GB
+- Storage libero: 30 GB SSD
+- Rete: LAN stabile con porte `5173`, `8000`, `8080`, `5432`, `11434` raggiungibili dove serve
+
+Questa configurazione e adatta soprattutto a test, sviluppo o piccole demo. Con il modello di default il tempo di risposta AI puo aumentare sensibilmente se si usa solo CPU.
+
+### Host consigliato per utilizzo interno stabile
+
+- CPU: 8 core moderni
+- RAM: 32 GB
+- Storage libero: 60-80 GB SSD
+
+Configurazioni GPU consigliate:
+- NVIDIA con almeno 8 GB di VRAM se si vuole usare Ollama in Docker con override NVIDIA
+- AMD con almeno 8 GB di VRAM su Windows: meglio Ollama nativo
+- AMD con almeno 8 GB di VRAM su Linux/WSL: possibile usare l'override ROCm dedicato
+
+### Note pratiche di hosting
+
+- Il flusso attuale del repository e ottimizzato per self-hosting in rete locale, non per deployment cloud completamente automatizzato.
+- Gli script di root avviano backend e frontend in modalita sviluppo (`uvicorn --reload` e `vite dev`).
+- Per un host sempre acceso conviene sostituire il frontend Vite dev server con una build statica servita da web server e il backend con un process manager o servizio dedicato.
+- PostgreSQL e Ollama restano gia pronti per un uso self-hosted tramite Docker Compose.
 
 ## URL utili
 
@@ -138,9 +178,10 @@ L'area admin gestisce autenticazione dedicata, macchine, utenti, metadati e know
 Configurazione attuale:
 ```ini
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+OLLAMA_MODEL=qwen3.5:9b
 OLLAMA_RUNTIME=auto
 OLLAMA_ACCELERATOR=auto
+OLLAMA_NATIVE_VULKAN=1
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
@@ -196,7 +237,10 @@ ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_RUNTIME=auto
+OLLAMA_ACCELERATOR=auto
+OLLAMA_NATIVE_VULKAN=1
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
@@ -254,7 +298,7 @@ Verifica che:
 
 Download manuale:
 ```bash
-docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
+docker exec ditto_ollama ollama pull qwen3.5:9b
 ```
 
 ### Prima richiesta AI lenta
@@ -290,5 +334,5 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 28 marzo 2026
+- ultimo aggiornamento documentazione: 6 aprile 2026
 - source of truth operativa: `scripts/windows/setup.bat` e `scripts/windows/start.bat`

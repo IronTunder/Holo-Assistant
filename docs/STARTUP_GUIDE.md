@@ -2,6 +2,8 @@
 
 Guida pratica per avviare Ditto con il flusso attuale degli script.
 
+Ultimo aggiornamento: 6 aprile 2026
+
 ## Script supportati
 
 ### Windows
@@ -32,10 +34,10 @@ Servizi Docker previsti da `docker/docker-compose.yml`:
 `setup.bat` e `setup.sh` eseguono il bootstrap completo dell'ambiente.
 
 Passi principali:
-- eseguono `docker-compose down`;
-- eseguono `docker-compose up -d`;
+- eseguono `docker compose down`;
+- eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto con `pg_isready`;
-- preparano il modello `mistral:7b-instruct-v0.3-q4_K_M` in Ollama;
+- preparano il modello `qwen3.5:9b` in Ollama;
 - generano `backend/.env`;
 - generano `frontend/my-app/.env`;
 - creano il virtual environment backend se manca;
@@ -51,7 +53,7 @@ Passi principali:
 `start.bat` e `start.sh` servono per l'avvio quotidiano senza reinstallare tutto.
 
 Passi principali:
-- eseguono `docker-compose up -d`;
+- eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto;
 - leggono `OLLAMA_MODEL`, `OLLAMA_BASE_URL` e gli altri parametri AI da `backend/.env` se presente;
 - verificano la presenza del modello con `docker exec ditto_ollama ollama list`;
@@ -85,7 +87,10 @@ ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+OLLAMA_MODEL=qwen3.5:9b
+OLLAMA_RUNTIME=auto
+OLLAMA_ACCELERATOR=auto
+OLLAMA_NATIVE_VULKAN=1
 OLLAMA_TIMEOUT_SECONDS=120
 OLLAMA_HEALTH_TIMEOUT_SECONDS=5
 OLLAMA_KEEP_ALIVE=30m
@@ -119,6 +124,21 @@ Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quell
 - Admin login: `http://localhost:5173/admin-login`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
+
+## Requisiti host consigliati
+
+Per ospitare l'intero stack sulla stessa macchina:
+
+- minimo per test o demo interna: 4 core CPU, 16 GB RAM, 30 GB SSD liberi
+- consigliato per uso interno stabile: 8 core CPU, 32 GB RAM, 60-80 GB SSD liberi
+- GPU opzionale ma utile per ridurre la latenza del modello `qwen3.5:9b`
+- porte da considerare: `5173`, `8000`, `8080`, `5432`, `11434`
+
+Note operative:
+- su Windows, se e disponibile `ollama` nel `PATH`, gli script preferiscono il runtime nativo
+- per GPU NVIDIA in Docker usa `docker/docker-compose.nvidia.yml`
+- per GPU AMD in Docker il percorso piu realistico resta Linux/WSL con ROCm; su Windows e consigliato Ollama nativo
+- gli script attuali avviano frontend e backend in modalita sviluppo, quindi per un host permanente conviene prevedere un servizio dedicato per FastAPI e una build statica del frontend
 
 ## Flusso consigliato
 
@@ -178,7 +198,7 @@ docker compose logs -f ollama
 
 Download manuale:
 ```bash
-docker exec ditto_ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
+docker exec ditto_ollama ollama pull qwen3.5:9b
 ```
 
 ### Prima richiesta AI molto lenta

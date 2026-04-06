@@ -1,5 +1,7 @@
 # Frontend Ditto
 
+Ultimo aggiornamento: 6 aprile 2026
+
 Frontend React/Vite del progetto Ditto. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
 - area amministrativa su `/admin-login` e `/admin`.
@@ -125,3 +127,11 @@ Per la voce:
 - Il frontend assume che backend e auth siano raggiungibili all'host risolto da `VITE_API_URL`.
 - In ambiente locale gli script di root e `scripts/windows/start.bat` aggiornano automaticamente `.env`.
 - Se il backend cambia host o porta, verifica prima `frontend/my-app/.env` e poi `src/shared/api/config.ts`.
+
+## Nota hosting
+
+Il frontend viene avviato dagli script correnti tramite `vite dev`. Per un host sempre acceso o condiviso in produzione interna, la strada consigliata e:
+
+- generare una build con `npm run build`
+- servire gli asset statici da un web server o reverse proxy
+- lasciare `VITE_API_URL` puntare al backend pubblicato sulla rete interna
