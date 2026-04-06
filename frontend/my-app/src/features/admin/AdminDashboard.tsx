@@ -26,6 +26,12 @@ const statCards = [
   { key: 'knowledge_items', label: 'Template knowledge', icon: BookText, accent: 'bg-rose-50 text-rose-700' },
 ] as const;
 
+const feedbackLabels = {
+  resolved: 'Risolto',
+  unresolved: 'Non risolto',
+  not_applicable: 'Non rilevante',
+} as const;
+
 export const AdminDashboard = () => {
   const { accessToken, isAdmin, logout, refreshAccessToken, user } = useAuth();
   const { apiCall } = useApiClient();
@@ -34,7 +40,9 @@ export const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [recentLogs, setRecentLogs] = useState<InteractionLogEntry[]>([]);
+  const [recentUnresolvedLogs, setRecentUnresolvedLogs] = useState<InteractionLogEntry[]>([]);
   const [isLoadingOverview, setIsLoadingOverview] = useState(true);
+  const [updatingInteractionId, setUpdatingInteractionId] = useState<number | null>(null);
 
   const authorizedFetch = useCallback(
     async (
@@ -75,9 +83,10 @@ export const AdminDashboard = () => {
     }
 
     try {
-      const [summaryResponse, logsResponse] = await Promise.all([
+      const [summaryResponse, logsResponse, unresolvedLogsResponse] = await Promise.all([
         apiCall(API_ENDPOINTS.ADMIN_DASHBOARD_SUMMARY),
         apiCall(`${API_ENDPOINTS.LIST_LOGS}?page=1&size=5`),
+        apiCall(`${API_ENDPOINTS.LIST_LOGS}?page=1&size=5&feedback_status=unresolved`),
       ]);
 
       if (summaryResponse.ok) {
@@ -85,6 +94,9 @@ export const AdminDashboard = () => {
       }
       if (logsResponse.ok) {
         setRecentLogs((await logsResponse.json()) as InteractionLogEntry[]);
+      }
+      if (unresolvedLogsResponse.ok) {
+        setRecentUnresolvedLogs((await unresolvedLogsResponse.json()) as InteractionLogEntry[]);
       }
     } catch (error) {
       console.error(error);
@@ -125,6 +137,45 @@ export const AdminDashboard = () => {
     await Promise.all([refresh(), loadOverview()]);
   }, [loadOverview, refresh]);
 
+  const markInteractionAsResolved = useCallback(
+    async (interactionId: number) => {
+      setUpdatingInteractionId(interactionId);
+      try {
+        const response = await apiCall(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+          method: 'POST',
+          body: JSON.stringify({
+            feedback_status: 'resolved',
+          }),
+        });
+        if (!response.ok) {
+          throw new Error('Errore nell\'aggiornamento del problema');
+        }
+
+        setRecentUnresolvedLogs((currentLogs) =>
+          currentLogs.filter((log) => log.id !== interactionId)
+        );
+        setRecentLogs((currentLogs) =>
+          currentLogs.map((log) =>
+            log.id === interactionId
+              ? {
+                  ...log,
+                  feedback_status: 'resolved',
+                  feedback_timestamp: new Date().toISOString(),
+                }
+              : log
+          )
+        );
+        toast.success('Problema segnato come risolto');
+      } catch (error) {
+        console.error(error);
+        toast.error('Impossibile aggiornare il problema');
+      } finally {
+        setUpdatingInteractionId(null);
+      }
+    },
+    [apiCall]
+  );
+
   useEffect(() => {
     if (!accessToken || !isAdmin) {
       return;
@@ -152,7 +203,11 @@ export const AdminDashboard = () => {
         await refresh();
       }
 
-      if (eventName === 'machine_status' || eventName === 'interaction_created') {
+      if (
+        eventName === 'machine_status' ||
+        eventName === 'interaction_created' ||
+        eventName === 'interaction_feedback_updated'
+      ) {
         await loadOverview({ silent: true });
       }
     };
@@ -355,6 +410,62 @@ export const AdminDashboard = () => {
               })}
             </section>
 
+            <section>
+              <Card className="border-red-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">Problemi non risolti recenti</h2>
+                    <p className="text-sm text-slate-500">
+                      Segnalazioni arrivate dagli operatori quando la risposta non e bastata.
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+                    {recentUnresolvedLogs.length} aperti
+                  </Badge>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {recentUnresolvedLogs.length === 0 ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                      Nessun problema non risolto nelle interazioni piu recenti.
+                    </div>
+                  ) : (
+                    recentUnresolvedLogs.map((log) => (
+                      <div key={log.id} className="rounded-xl border border-red-100 bg-red-50/60 p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="border-red-200 bg-white text-red-700">
+                            {feedbackLabels.unresolved}
+                          </Badge>
+                          <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          <span className="text-xs text-slate-500">
+                            {new Date(log.timestamp).toLocaleString('it-IT')}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">
+                          {log.machine_name} · {log.user_name}
+                        </p>
+                        <p className="mt-1 line-clamp-2 text-sm text-slate-700">{log.domanda}</p>
+                        {log.risposta ? (
+                          <p className="mt-2 line-clamp-2 text-xs text-slate-500">{log.risposta}</p>
+                        ) : null}
+                        <div className="mt-3">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={updatingInteractionId === log.id}
+                            onClick={() => void markInteractionAsResolved(log.id)}
+                          >
+                            Conferma risoluzione
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Card>
+            </section>
+
             <section className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
               <Card className="border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
@@ -377,6 +488,11 @@ export const AdminDashboard = () => {
                       <div key={log.id} className="rounded-xl border border-slate-200 p-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          {log.feedback_status ? (
+                            <Badge variant="outline">
+                              {feedbackLabels[log.feedback_status]}
+                            </Badge>
+                          ) : null}
                           <span className="text-xs text-slate-400">
                             {new Date(log.timestamp).toLocaleString('it-IT')}
                           </span>

@@ -4,7 +4,7 @@ import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
-import { API_BASE_URL, API_ENDPOINTS } from '@/shared/api/config';
+import { API_ENDPOINTS } from '@/shared/api/config';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
@@ -26,6 +26,7 @@ type ClarificationOption = {
 };
 
 type AskQuestionApiResponse = {
+  interaction_id?: number | null;
   response: string;
   mode: 'answer' | 'clarification' | 'fallback';
   reason_code: 'matched' | 'clarification' | 'no_match' | 'out_of_scope';
@@ -36,6 +37,11 @@ type AskQuestionApiResponse = {
   knowledge_item_id?: number | null;
   knowledge_item_title?: string | null;
 };
+
+type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
+
+const UNRESOLVED_CONFIRMATION_MESSAGE =
+  "L'assistenza è stata informata del tuo problema e inviera al piu presto un tecnico. Quando il tecnico avra risolto il problema, l'intervento potra essere confermato nel sistema.";
 
 const quickActions = [
   { title: 'Emergenza', subtitle: 'Alert rapido' },
@@ -69,6 +75,8 @@ export function OperatorInterface() {
   const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
+  const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const pollingTimeoutRef = useRef<number | null>(null);
   const pollingInFlightRef = useRef(false);
   const mountedAtRef = useRef<number>(Date.now());
@@ -452,6 +460,8 @@ export function OperatorInterface() {
     setClarificationOptions([]);
     setPendingQuestion(null);
     setFallbackReasonCode(null);
+    setActiveInteractionId(null);
+    setIsSubmittingFeedback(false);
     setIsTyping(false);
     setShowSubtitles(false);
     setWakeWordActive(true);
@@ -467,9 +477,10 @@ export function OperatorInterface() {
     setShowFollowUp(false);
     setClarificationOptions([]);
     setFallbackReasonCode(null);
+    setActiveInteractionId(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/interactions/ask`, {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_ASK, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -520,7 +531,8 @@ export function OperatorInterface() {
       setPendingQuestion(null);
       setClarificationOptions([]);
       setFallbackReasonCode(data.mode === 'fallback' ? data.reason_code : null);
-      setShowFollowUp(data.mode === 'answer');
+      setActiveInteractionId(data.interaction_id ?? null);
+      setShowFollowUp(Boolean(data.interaction_id));
     } catch (error) {
       console.error('Error asking question:', error);
       setAvatarState('idle');
@@ -564,10 +576,62 @@ export function OperatorInterface() {
     return playTtsAudio(payload);
   };
 
-  const handleFollowUpResponse = (resolved: boolean) => {
-    console.log(`Problema risolto: ${resolved}`);
-    setShowFollowUp(false);
-    setCurrentTranscription('');
+  const handleFollowUpResponse = async (feedbackStatus: InteractionFeedbackStatus) => {
+    if (!activeInteractionId || !accessToken || isSubmittingFeedback) {
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_FEEDBACK(activeInteractionId), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          feedback_status: feedbackStatus,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Errore nel salvataggio del feedback');
+      }
+
+      setShowFollowUp(false);
+      setActiveInteractionId(null);
+      if (feedbackStatus === 'unresolved') {
+        const speechPayload = await handleTTS(UNRESOLVED_CONFIRMATION_MESSAGE);
+        let playback: TtsPlayback | null = null;
+
+        if (speechPayload) {
+          setAvatarState('speaking');
+          playback = await startSpeechPlayback(speechPayload);
+        }
+
+        await startTypingEffect(UNRESOLVED_CONFIRMATION_MESSAGE, speechPayload?.durationMs);
+
+        if (playback) {
+          try {
+            await playback.finished;
+          } catch (playbackError) {
+            console.error('Audio playback error:', playbackError);
+          }
+        }
+
+        setIsTyping(false);
+        setAvatarState('idle');
+        setShowSubtitles(false);
+      } else {
+        setCurrentTranscription('');
+      }
+    } catch (error) {
+      console.error('Errore invio feedback interazione:', error);
+      alert(error instanceof Error ? error.message : 'Errore nel salvataggio del feedback');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
   };
 
   const handleClarificationSelection = async (knowledgeItemId: number) => {
@@ -810,16 +874,25 @@ export function OperatorInterface() {
                           <p className="text-lg font-semibold text-white">Hai risolto il problema?</p>
                           <div className="mt-4 flex flex-wrap justify-center gap-3">
                             <button
-                              onClick={() => handleFollowUpResponse(true)}
-                              className="rounded-xl bg-green-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600"
+                              onClick={() => void handleFollowUpResponse('resolved')}
+                              disabled={isSubmittingFeedback}
+                              className="rounded-xl bg-green-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               Si
                             </button>
                             <button
-                              onClick={() => handleFollowUpResponse(false)}
-                              className="rounded-xl bg-red-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+                              onClick={() => void handleFollowUpResponse('unresolved')}
+                              disabled={isSubmittingFeedback}
+                              className="rounded-xl bg-red-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               No
+                            </button>
+                            <button
+                              onClick={() => void handleFollowUpResponse('not_applicable')}
+                              disabled={isSubmittingFeedback}
+                              className="rounded-xl bg-slate-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Non rilevante
                             </button>
                           </div>
                         </div>
@@ -842,6 +915,7 @@ export function OperatorInterface() {
                             setClarificationOptions([]);
                             setPendingQuestion(null);
                             setFallbackReasonCode(null);
+                            setActiveInteractionId(null);
                           }
                         }}
                         placeholder="Scrivi la tua domanda..."

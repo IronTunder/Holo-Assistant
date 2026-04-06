@@ -74,6 +74,8 @@ export interface DashboardSummary {
   recent_interactions: number;
 }
 
+export type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
+
 export interface InteractionLogEntry {
   id: number;
   user_id: number;
@@ -87,5 +89,7 @@ export interface InteractionLogEntry {
   knowledge_item_title?: string | null;
   domanda: string;
   risposta?: string | null;
+  feedback_status?: InteractionFeedbackStatus | null;
+  feedback_timestamp?: string | null;
   timestamp: string;
 }

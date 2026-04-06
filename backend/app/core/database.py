@@ -205,12 +205,21 @@ def apply_compatible_migrations():
 
         if "interaction_logs" in inspector.get_table_names():
             _ensure_column(connection, inspector, "interaction_logs", "knowledge_item_id", "knowledge_item_id INTEGER")
+            _ensure_column(connection, inspector, "interaction_logs", "feedback_status", "feedback_status VARCHAR(32)")
+            _ensure_column(connection, inspector, "interaction_logs", "feedback_timestamp", "feedback_timestamp TIMESTAMP")
             _ensure_index(
                 connection,
                 inspector,
                 "interaction_logs",
                 "ix_interaction_logs_knowledge_item_id",
                 "CREATE INDEX ix_interaction_logs_knowledge_item_id ON interaction_logs (knowledge_item_id)",
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "interaction_logs",
+                "ix_interaction_logs_feedback_status",
+                "CREATE INDEX ix_interaction_logs_feedback_status ON interaction_logs (feedback_status)",
             )
 
         if "knowledge_items" in inspector.get_table_names():

@@ -3,12 +3,20 @@ import { useEffect, useMemo, useState } from 'react';
 import API_ENDPOINTS from '@/shared/api/config';
 import { useApiClient } from '@/shared/api/apiClient';
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { Card } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { toast } from 'sonner';
-import type { AdminCategory, AdminMachine, AdminUser, DepartmentOption, InteractionLogEntry } from './adminTypes';
+import type {
+  AdminCategory,
+  AdminMachine,
+  AdminUser,
+  DepartmentOption,
+  InteractionFeedbackStatus,
+  InteractionLogEntry,
+} from './adminTypes';
 
 interface LogViewerProps {
   departments: DepartmentOption[];
@@ -26,6 +34,20 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [machineFilter, setMachineFilter] = useState('all');
   const [userFilter, setUserFilter] = useState('all');
+  const [feedbackFilter, setFeedbackFilter] = useState('all');
+  const [updatingInteractionId, setUpdatingInteractionId] = useState<number | null>(null);
+
+  const feedbackLabels: Record<InteractionFeedbackStatus, string> = {
+    resolved: 'Risolto',
+    unresolved: 'Non risolto',
+    not_applicable: 'Non rilevante',
+  };
+
+  const feedbackBadgeClassNames: Record<InteractionFeedbackStatus, string> = {
+    resolved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    unresolved: 'border-red-200 bg-red-50 text-red-700',
+    not_applicable: 'border-slate-200 bg-slate-100 text-slate-700',
+  };
 
   const fetchLogs = async () => {
     setIsLoading(true);
@@ -44,6 +66,39 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
     }
   };
 
+  const markInteractionAsResolved = async (interactionId: number) => {
+    setUpdatingInteractionId(interactionId);
+    try {
+      const response = await apiCall(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+        method: 'POST',
+        body: JSON.stringify({
+          feedback_status: 'resolved',
+        }),
+      });
+      if (!response.ok) {
+        throw new Error('Errore nell\'aggiornamento dello stato');
+      }
+
+      setLogs((currentLogs) =>
+        currentLogs.map((log) =>
+          log.id === interactionId
+            ? {
+                ...log,
+                feedback_status: 'resolved',
+                feedback_timestamp: new Date().toISOString(),
+              }
+            : log
+        )
+      );
+      toast.success('Problema segnato come risolto');
+    } catch (error) {
+      console.error(error);
+      toast.error('Impossibile aggiornare il problema');
+    } finally {
+      setUpdatingInteractionId(null);
+    }
+  };
+
   useEffect(() => {
     void fetchLogs();
   }, [apiCall]);
@@ -57,14 +112,15 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
       const matchesCategory = categoryFilter === 'all' || String(log.category_id ?? '') === categoryFilter;
       const matchesMachine = machineFilter === 'all' || String(log.machine_id) === machineFilter;
       const matchesUser = userFilter === 'all' || String(log.user_id) === userFilter;
-      return matchesSearch && matchesDepartment && matchesCategory && matchesMachine && matchesUser;
+      const matchesFeedback = feedbackFilter === 'all' || (log.feedback_status ?? 'pending') === feedbackFilter;
+      return matchesSearch && matchesDepartment && matchesCategory && matchesMachine && matchesUser && matchesFeedback;
     });
-  }, [categoryFilter, departmentFilter, departments, logs, machineFilter, searchTerm, userFilter]);
+  }, [categoryFilter, departmentFilter, departments, feedbackFilter, logs, machineFilter, searchTerm, userFilter]);
 
   return (
     <div className="space-y-4">
       <Card className="border-slate-200 bg-white p-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <Input
             placeholder="Cerca domanda, risposta o nome..."
             value={searchTerm}
@@ -122,6 +178,18 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
               ))}
             </SelectContent>
           </Select>
+          <Select value={feedbackFilter} onValueChange={setFeedbackFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Tutti gli esiti" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tutti gli esiti</SelectItem>
+              <SelectItem value="pending">In attesa</SelectItem>
+              <SelectItem value="resolved">Risolto</SelectItem>
+              <SelectItem value="unresolved">Non risolto</SelectItem>
+              <SelectItem value="not_applicable">Non rilevante</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </Card>
 
@@ -135,18 +203,20 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                 <TableHead>Categoria</TableHead>
                 <TableHead>Domanda</TableHead>
                 <TableHead>Risposta</TableHead>
+                <TableHead>Esito</TableHead>
+                <TableHead>Azione</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={7} className="py-10 text-center text-slate-500">
                     Caricamento log...
                   </TableCell>
                 </TableRow>
               ) : filteredLogs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={7} className="py-10 text-center text-slate-500">
                     Nessun log trovato con i filtri correnti
                   </TableCell>
                 </TableRow>
@@ -176,6 +246,42 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                     </TableCell>
                     <TableCell className="max-w-md text-sm text-slate-700">
                       <p className="line-clamp-5 whitespace-pre-wrap">{log.risposta || '-'}</p>
+                    </TableCell>
+                    <TableCell>
+                      {log.feedback_status ? (
+                        <div className="space-y-2">
+                          <Badge
+                            variant="outline"
+                            className={feedbackBadgeClassNames[log.feedback_status]}
+                          >
+                            {feedbackLabels[log.feedback_status]}
+                          </Badge>
+                          <p className="text-xs text-slate-400">
+                            {log.feedback_timestamp
+                              ? new Date(log.feedback_timestamp).toLocaleString('it-IT')
+                              : 'Aggiornato'}
+                          </p>
+                        </div>
+                      ) : (
+                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                          In attesa
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {log.feedback_status === 'unresolved' ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={updatingInteractionId === log.id}
+                          onClick={() => void markInteractionAsResolved(log.id)}
+                        >
+                          Conferma risoluzione
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-slate-400">-</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

@@ -46,6 +46,8 @@ export const API_ENDPOINTS = {
   SESSION_EVENTS: (machineId: number, token: string) =>
     `${API_BASE_URL}/auth/session-events?machine_id=${machineId}&token=${encodeURIComponent(token)}`,
   SESSION_STATUS: (machineId: number) => `${API_BASE_URL}/auth/session-status?machine_id=${machineId}`,
+  INTERACTION_ASK: `${API_BASE_URL}/api/interactions/ask`,
+  INTERACTION_FEEDBACK: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/feedback`,
 
   // Machines endpoints
   GET_MACHINES: `${API_BASE_URL}/machines`,

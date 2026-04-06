@@ -1,6 +1,9 @@
+from datetime import datetime
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+
+FeedbackStatus = Literal["resolved", "unresolved", "not_applicable"]
 
 
 class CategoryBase(BaseModel):
@@ -46,6 +49,7 @@ class ClarificationOption(BaseModel):
 
 
 class AskQuestionResponse(BaseModel):
+    interaction_id: Optional[int] = None
     response: str
     mode: Literal["answer", "clarification", "fallback"] = "answer"
     reason_code: Literal["matched", "clarification", "no_match", "out_of_scope"] = "matched"
@@ -55,3 +59,13 @@ class AskQuestionResponse(BaseModel):
     category_name: Optional[str] = None
     knowledge_item_id: Optional[int] = None
     knowledge_item_title: Optional[str] = None
+
+
+class InteractionFeedbackRequest(BaseModel):
+    feedback_status: FeedbackStatus
+
+
+class InteractionFeedbackResponse(BaseModel):
+    interaction_id: int
+    feedback_status: FeedbackStatus
+    feedback_timestamp: datetime
