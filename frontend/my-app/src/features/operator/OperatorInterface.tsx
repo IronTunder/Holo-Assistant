@@ -2,12 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Mic, Radio, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
-<<<<<<< HEAD
 import { StartupChecklistDialog } from './StartupChecklistDialog';
 import { useAuth, type AuthMachine } from '@/shared/auth/AuthContext';
-=======
-import { useAuth } from '@/shared/auth/AuthContext';
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
 import { API_BASE_URL, API_ENDPOINTS } from '@/shared/api/config';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -74,7 +70,6 @@ export function OperatorInterface() {
   const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
-<<<<<<< HEAD
   const [showStartupChecklist, setShowStartupChecklist] = useState(false);
   const [startupChecklistCompleted, setStartupChecklistCompleted] = useState(false);
   const [pendingLoginData, setPendingLoginData] = useState<{
@@ -83,8 +78,6 @@ export function OperatorInterface() {
     machine: AuthMachine;
     expires_in: number;
   } | null>(null);
-=======
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
   const pollingTimeoutRef = useRef<number | null>(null);
   const pollingInFlightRef = useRef(false);
   const mountedAtRef = useRef<number>(Date.now());
@@ -95,7 +88,6 @@ export function OperatorInterface() {
   const manualLogoutInProgressRef = useRef(false);
   const avatarDisplayRef = useRef<AvatarDisplayHandle | null>(null);
 
-<<<<<<< HEAD
   // Effetto per mostrare la checklist di startup dopo il login
   useEffect(() => {
     if (isLoggedIn && !isAdmin && machine && !startupChecklistCompleted) {
@@ -103,8 +95,6 @@ export function OperatorInterface() {
     }
   }, [isLoggedIn, isAdmin, machine, startupChecklistCompleted]);
 
-=======
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
   const dismissLogoutMessage = () => {
     if (logoutMessageTimeoutRef.current !== null) {
       window.clearTimeout(logoutMessageTimeoutRef.current);
@@ -481,11 +471,8 @@ export function OperatorInterface() {
     setIsTyping(false);
     setShowSubtitles(false);
     setWakeWordActive(true);
-<<<<<<< HEAD
     setStartupChecklistCompleted(false);
     setShowStartupChecklist(false);
-=======
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
     await logout();
   };
 
@@ -568,11 +555,7 @@ export function OperatorInterface() {
     }
   };
 
-<<<<<<< HEAD
   const handleTTS = async (text: string): Promise<TtsSpeechPayload | null> => {
-=======
-    const handleTTS = async (text: string): Promise<TtsSpeechPayload | null> => {
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
     if (!isLoggedIn) {
       return null;
     }
@@ -665,7 +648,6 @@ export function OperatorInterface() {
         </div>
       )}
 
-<<<<<<< HEAD
       {/* Startup Checklist Dialog - viene mostrato dopo il login */}
       {showStartupChecklist && machine && accessToken && (
         <StartupChecklistDialog
@@ -679,8 +661,6 @@ export function OperatorInterface() {
         />
       )}
 
-=======
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
       {/* Background pattern */}
       <div className="absolute inset-0 opacity-10">
         <div className="absolute inset-0" style={{
@@ -934,8 +914,4 @@ export function OperatorInterface() {
       </div>
     </div>
   );
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 212bb8fd867c0af96fedbca894d096d3cf352a10
