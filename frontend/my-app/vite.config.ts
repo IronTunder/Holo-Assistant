@@ -1,7 +1,38 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
+import { readFileSync } from 'node:fs'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+
+const VOSK_BROWSER_VENDOR_PATH = '/vendor/vosk-browser.js'
+const VOSK_BROWSER_SOURCE_PATH = path.resolve(__dirname, 'node_modules/vosk-browser/dist/vosk.js')
+
+function voskBrowserVendorPlugin(): Plugin {
+  return {
+    name: 'ditto-vosk-browser-vendor',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(VOSK_BROWSER_VENDOR_PATH, (_request, response) => {
+        response.setHeader('Content-Type', 'application/javascript')
+        response.end(readFileSync(VOSK_BROWSER_SOURCE_PATH))
+      })
+    },
+  }
+}
+
+function voskBrowserBuildAssetPlugin(): Plugin {
+  return {
+    name: 'ditto-vosk-browser-build-asset',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: VOSK_BROWSER_VENDOR_PATH.replace(/^\//, ''),
+        source: readFileSync(VOSK_BROWSER_SOURCE_PATH),
+      })
+    },
+  }
+}
 
 export default defineConfig({
   plugins: [
@@ -9,6 +40,8 @@ export default defineConfig({
     // Tailwind is not being actively used – do not remove them
     react(),
     tailwindcss(),
+    voskBrowserVendorPlugin(),
+    voskBrowserBuildAssetPlugin(),
   ],
   resolve: {
     alias: {
@@ -20,6 +53,7 @@ export default defineConfig({
     exclude: ['@met4citizen/talkinghead'],
   },
   build: {
+    chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -30,7 +64,7 @@ export default defineConfig({
               normalizedId.includes('@met4citizen/talkinghead') ||
               normalizedId.includes('/three/')
             ) {
-              return 'operator-3d';
+              return 'avatar-3d';
             }
           }
 

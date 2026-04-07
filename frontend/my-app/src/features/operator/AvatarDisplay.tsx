@@ -6,7 +6,7 @@ import {
   useState,
 } from 'react';
 import { motion } from 'motion/react';
-import { TalkingHead } from '@met4citizen/talkinghead';
+import type { TalkingHead } from '@met4citizen/talkinghead';
 
 import type { TtsPlayback, TtsSpeechPayload } from '@/shared/api/ttsClient';
 import {
@@ -137,6 +137,11 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
         setLoadProgress(0);
 
         try {
+          const { TalkingHead } = await import('@met4citizen/talkinghead');
+          if (cancelled || !containerRef.current) {
+            return;
+          }
+
           const head = new TalkingHead(containerRef.current, avatarOptions);
           headRef.current = head;
 

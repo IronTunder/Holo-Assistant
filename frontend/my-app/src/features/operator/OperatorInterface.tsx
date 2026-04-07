@@ -1085,7 +1085,7 @@ export function OperatorInterface() {
       setTrackedActiveInteractionId(null);
     },
     onTranscriptFinal: (transcript) => {
-      setQuestionInput(transcript);
+      setQuestionInput('');
       setAvatarState('idle');
       void submitQuestion(transcript);
     },
@@ -1262,11 +1262,6 @@ export function OperatorInterface() {
                     </>
                   )}
                     </div>
-                    {wakeWordActive && voiceDebugTranscript && (
-                      <p className="mx-auto max-w-md break-words text-xs text-slate-400">
-                        Riconosciuto: {voiceDebugTranscript}
-                      </p>
-                    )}
                   </div>
                 </div>
               </section>

@@ -34,7 +34,7 @@ const COMMAND_TIMEOUT_MS = 8000;
 const COMMAND_SILENCE_TIMEOUT_MS = 2200;
 const MIN_MODEL_BYTES = 10 * 1024 * 1024;
 const MODEL_LOAD_TIMEOUT_MS = 120_000;
-const VOSK_AUDIO_WORKLET_URL = '/assets/vosk-audio-processor.js';
+const VOSK_AUDIO_WORKLET_URL = '/assets/speech-audio-processor.js';
 const WAKE_VARIANTS = [
   'ehi ditto',
   'ehi dito',
@@ -59,6 +59,67 @@ const DEBUG_VOSK_WAKE_WORD =
   localStorage.getItem('ditto.debugVosk') === '1';
 
 type VoskAudioNode = AudioWorkletNode | ScriptProcessorNode;
+type VoskBrowserGlobal = {
+  Model: new (modelUrl: string, logLevel?: number) => Model;
+};
+
+const VOSK_BROWSER_SCRIPT_URL = `${import.meta.env.BASE_URL}vendor/vosk-browser.js`;
+const VOSK_BROWSER_SCRIPT_ID = 'ditto-vosk-browser-script';
+
+let voskBrowserLoadPromise: Promise<VoskBrowserGlobal> | null = null;
+
+function getVoskBrowserGlobal(): VoskBrowserGlobal | null {
+  const globalScope = globalThis as typeof globalThis & { Vosk?: VoskBrowserGlobal };
+  return globalScope.Vosk ?? null;
+}
+
+async function loadVoskBrowser(): Promise<VoskBrowserGlobal> {
+  const existingVosk = getVoskBrowserGlobal();
+  if (existingVosk) {
+    return existingVosk;
+  }
+
+  if (voskBrowserLoadPromise) {
+    return voskBrowserLoadPromise;
+  }
+
+  voskBrowserLoadPromise = new Promise<VoskBrowserGlobal>((resolve, reject) => {
+    const existingScript = document.getElementById(VOSK_BROWSER_SCRIPT_ID) as HTMLScriptElement | null;
+    const script = existingScript ?? document.createElement('script');
+
+    script.addEventListener(
+      'load',
+      () => {
+        const loadedVosk = getVoskBrowserGlobal();
+        if (loadedVosk) {
+          resolve(loadedVosk);
+          return;
+        }
+
+        voskBrowserLoadPromise = null;
+        reject(new Error('Libreria Vosk non disponibile dopo il caricamento'));
+      },
+      { once: true },
+    );
+    script.addEventListener(
+      'error',
+      () => {
+        voskBrowserLoadPromise = null;
+        reject(new Error('Impossibile caricare la libreria Vosk'));
+      },
+      { once: true },
+    );
+
+    if (!existingScript) {
+      script.id = VOSK_BROWSER_SCRIPT_ID;
+      script.src = VOSK_BROWSER_SCRIPT_URL;
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  });
+
+  return voskBrowserLoadPromise;
+}
 
 function normalizeSpeech(text: string): string {
   return text
@@ -137,7 +198,7 @@ async function assertModelAssetAvailable(modelUrl: string): Promise<void> {
 
 async function loadVoskModel(modelUrl: string): Promise<Model> {
   await assertModelAssetAvailable(modelUrl);
-  const { Model: VoskModel } = await import('vosk-browser');
+  const { Model: VoskModel } = await loadVoskBrowser();
   const model = new VoskModel(modelUrl, -1);
 
   return new Promise<Model>((resolve, reject) => {
