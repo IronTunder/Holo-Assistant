@@ -32,6 +32,34 @@ def get_or_create_department(name: str) -> Department:
     return department
 
 
+MACHINE_CHECKLISTS = {
+    "POST-001": [
+        "Verificare che le protezioni laterali siano chiuse e integre",
+        "Controllare il livello olio idraulico sul visore",
+        "Testare il pulsante di arresto emergenza a macchina ferma",
+        "Rimuovere utensili e materiali estranei dall area pressa",
+    ],
+    "POST-002": [
+        "Controllare il serraggio del pezzo nel mandrino",
+        "Verificare livello refrigerante e assenza di perdite",
+        "Confermare che il programma CNC caricato sia quello corretto",
+        "Chiudere le protezioni prima di avviare il ciclo",
+    ],
+    "POST-003": [
+        "Verificare il fissaggio del pezzo sul banco",
+        "Controllare integrita e serraggio dell utensile montato",
+        "Azzerare gli assi e confermare il riferimento pezzo",
+        "Liberare l area di lavoro da chiavi e trucioli accumulati",
+    ],
+    "POST-004": [
+        "Controllare che le barriere di sicurezza siano attive",
+        "Verificare presenza e corretto orientamento dei componenti in ingresso",
+        "Confermare che il pulsante di arresto linea sia accessibile",
+        "Rimuovere ostacoli dal percorso della linea automatizzata",
+    ],
+}
+
+
 machines = [
     Machine(
         nome="Pressa A7",
@@ -39,6 +67,7 @@ machines = [
         reparto_legacy="Stampaggio",
         descrizione="Pressa idraulica 200 ton",
         id_postazione="POST-001",
+        startup_checklist=MACHINE_CHECKLISTS["POST-001"],
         in_uso=False,
     ),
     Machine(
@@ -47,6 +76,7 @@ machines = [
         reparto_legacy="Lavorazioni",
         descrizione="Tornio a controllo numerico",
         id_postazione="POST-002",
+        startup_checklist=MACHINE_CHECKLISTS["POST-002"],
         in_uso=False,
     ),
     Machine(
@@ -55,6 +85,7 @@ machines = [
         reparto_legacy="Lavorazioni",
         descrizione="Fresatrice 5 assi",
         id_postazione="POST-003",
+        startup_checklist=MACHINE_CHECKLISTS["POST-003"],
         in_uso=False,
     ),
     Machine(
@@ -63,14 +94,19 @@ machines = [
         reparto_legacy="Assemblaggio",
         descrizione="Linea automatizzata assemblaggio",
         id_postazione="POST-004",
+        startup_checklist=MACHINE_CHECKLISTS["POST-004"],
         in_uso=False,
     ),
 ]
 
 for machine in machines:
-    if not db.query(Machine).filter(Machine.id_postazione == machine.id_postazione).first():
+    existing_machine = db.query(Machine).filter(Machine.id_postazione == machine.id_postazione).first()
+    if existing_machine is None:
         db.add(machine)
         print(f"Aggiunto: {machine.nome}")
+    elif not existing_machine.startup_checklist:
+        existing_machine.startup_checklist = MACHINE_CHECKLISTS[machine.id_postazione]
+        print(f"Checklist demo aggiornata: {existing_machine.nome}")
 
 db.commit()
 

@@ -38,6 +38,7 @@ export interface AdminMachine {
   reparto?: string | null;
   descrizione?: string | null;
   id_postazione?: string | null;
+  startup_checklist: string[];
   in_uso: boolean;
   operatore_attuale_id?: number | null;
   operator?: AdminMachineOperator | null;

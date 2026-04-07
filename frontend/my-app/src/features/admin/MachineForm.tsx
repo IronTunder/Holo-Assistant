@@ -6,6 +6,7 @@ import { Button } from '@/shared/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { AdminMachine, DepartmentOption } from './adminTypes';
 
@@ -23,6 +24,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
   const [departmentId, setDepartmentId] = useState('');
   const [descrizione, setDescrizione] = useState('');
   const [idPostazione, setIdPostazione] = useState('');
+  const [startupChecklist, setStartupChecklist] = useState<string[]>(['']);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -35,6 +37,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
       setDepartmentId(machine.department_id ? String(machine.department_id) : '');
       setDescrizione(machine.descrizione || '');
       setIdPostazione(machine.id_postazione || '');
+      setStartupChecklist(machine.startup_checklist?.length ? machine.startup_checklist : ['']);
       return;
     }
 
@@ -42,17 +45,39 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
     setDepartmentId(departments[0] ? String(departments[0].id) : '');
     setDescrizione('');
     setIdPostazione('');
+    setStartupChecklist(['']);
   }, [departments, isOpen, machine]);
 
   const inlineError = useMemo(() => {
+    const checklistItems = startupChecklist.map((item) => item.trim());
     if (!departmentId) {
       return 'Seleziona un reparto per il macchinario.';
     }
     if (!idPostazione.trim()) {
       return 'L ID postazione e obbligatorio.';
     }
+    if (!checklistItems.length || checklistItems.some((item) => !item)) {
+      return 'Aggiungi almeno un controllo checklist e compila tutte le voci.';
+    }
     return null;
-  }, [departmentId, idPostazione]);
+  }, [departmentId, idPostazione, startupChecklist]);
+
+  const updateChecklistItem = (index: number, value: string) => {
+    setStartupChecklist((currentItems) =>
+      currentItems.map((item, itemIndex) => (itemIndex === index ? value : item))
+    );
+  };
+
+  const addChecklistItem = () => {
+    setStartupChecklist((currentItems) => [...currentItems, '']);
+  };
+
+  const removeChecklistItem = (index: number) => {
+    setStartupChecklist((currentItems) => {
+      const nextItems = currentItems.filter((_, itemIndex) => itemIndex !== index);
+      return nextItems.length ? nextItems : [''];
+    });
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -68,6 +93,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
         department_id: Number(departmentId),
         descrizione: descrizione.trim() || null,
         id_postazione: idPostazione.trim(),
+        startup_checklist: startupChecklist.map((item) => item.trim()),
       };
 
       const response = await apiCall(
@@ -95,7 +121,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{machine ? 'Modifica macchinario' : 'Nuovo macchinario'}</DialogTitle>
           <DialogDescription>
@@ -134,6 +160,44 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium">Descrizione</label>
               <Input value={descrizione} onChange={(event) => setDescrizione(event.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Checklist pre-avvio</p>
+                <p className="text-xs text-slate-500">
+                  Controlli obbligatori da completare prima di usare il macchinario.
+                </p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addChecklistItem} className="gap-2">
+                <Plus className="h-4 w-4" />
+                Aggiungi controllo
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              {startupChecklist.map((item, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input
+                    value={item}
+                    onChange={(event) => updateChecklistItem(index, event.target.value)}
+                    placeholder={`Controllo ${index + 1}`}
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => removeChecklistItem(index)}
+                    className="shrink-0 text-red-600 hover:bg-red-50 hover:text-red-800"
+                    aria-label={`Rimuovi controllo ${index + 1}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
             </div>
           </div>
 

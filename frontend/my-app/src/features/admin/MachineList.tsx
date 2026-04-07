@@ -392,19 +392,20 @@ export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps
                 <TableHead>Reparto</TableHead>
                 <TableHead>Stato</TableHead>
                 <TableHead>Postazione</TableHead>
+                <TableHead>Checklist</TableHead>
                 <TableHead className="text-right">Azioni</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={6} className="py-10 text-center text-slate-500">
                     Caricamento macchinari...
                   </TableCell>
                 </TableRow>
               ) : filteredMachines.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={6} className="py-10 text-center text-slate-500">
                     Nessun macchinario trovato con i filtri correnti
                   </TableCell>
                 </TableRow>
@@ -427,6 +428,19 @@ export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps
                       </Badge>
                     </TableCell>
                     <TableCell>{machine.id_postazione || '-'}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={
+                          machine.startup_checklist?.length
+                            ? 'bg-sky-50 text-sky-800'
+                            : 'bg-red-50 text-red-800'
+                        }
+                      >
+                        {machine.startup_checklist?.length || 0}{' '}
+                        {(machine.startup_checklist?.length || 0) === 1 ? 'controllo' : 'controlli'}
+                      </Badge>
+                    </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
                         <Button
@@ -583,6 +597,28 @@ export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps
                   Nessun operatore associato al momento.
                 </div>
               )}
+
+              <div className="rounded-xl border border-slate-200 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-900">Checklist pre-avvio</p>
+                  <Badge variant="outline" className="bg-sky-50 text-sky-800">
+                    {detailsMachine.startup_checklist?.length || 0}{' '}
+                    {(detailsMachine.startup_checklist?.length || 0) === 1 ? 'controllo' : 'controlli'}
+                  </Badge>
+                </div>
+
+                {detailsMachine.startup_checklist?.length ? (
+                  <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-700">
+                    {detailsMachine.startup_checklist.map((item, index) => (
+                      <li key={`${index}-${item}`}>{item}</li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    Nessun controllo configurato.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>

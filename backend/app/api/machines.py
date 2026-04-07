@@ -90,6 +90,7 @@ async def create_machine(
         reparto_legacy=department.name,
         descrizione=machine.descrizione,
         id_postazione=machine.id_postazione,
+        startup_checklist=machine.startup_checklist,
     )
     db.add(db_machine)
     db.commit()
@@ -167,6 +168,7 @@ async def delete_machine(
         reparto_legacy=db_machine.reparto_legacy,
         descrizione=db_machine.descrizione,
         id_postazione=db_machine.id_postazione,
+        startup_checklist=db_machine.startup_checklist,
         in_uso=db_machine.in_uso,
         operatore_attuale_id=db_machine.operatore_attuale_id,
     )

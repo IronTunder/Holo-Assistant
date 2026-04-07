@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.auth.auth import (
@@ -57,11 +57,24 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+def _normalize_startup_checklist(items: List[str]) -> List[str]:
+    normalized_items = [item.strip() for item in items if isinstance(item, str)]
+    if len(normalized_items) != len(items) or not normalized_items or any(not item for item in normalized_items):
+        raise ValueError("La checklist deve contenere almeno un controllo non vuoto")
+    return normalized_items
+
+
 class MachineCreateRequest(BaseModel):
     nome: str
     department_id: int
     descrizione: Optional[str] = None
     id_postazione: str
+    startup_checklist: List[str]
+
+    @field_validator("startup_checklist")
+    @classmethod
+    def validate_startup_checklist(cls, items: List[str]) -> List[str]:
+        return _normalize_startup_checklist(items)
 
 
 class MachineUpdateRequest(BaseModel):
@@ -69,6 +82,14 @@ class MachineUpdateRequest(BaseModel):
     department_id: Optional[int] = None
     descrizione: Optional[str] = None
     id_postazione: Optional[str] = None
+    startup_checklist: Optional[List[str]] = None
+
+    @field_validator("startup_checklist")
+    @classmethod
+    def validate_startup_checklist(cls, items: Optional[List[str]]) -> Optional[List[str]]:
+        if items is None:
+            return None
+        return _normalize_startup_checklist(items)
 
 
 class CategoryRequest(BaseModel):
@@ -495,6 +516,7 @@ async def create_machine(
         reparto_legacy=department.name,
         descrizione=request.descrizione,
         id_postazione=request.id_postazione,
+        startup_checklist=request.startup_checklist,
         in_uso=False,
     )
     db.add(machine)
@@ -529,6 +551,8 @@ async def update_machine(
         if duplicate_station:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID postazione gia utilizzato")
         machine.id_postazione = request.id_postazione
+    if request.startup_checklist is not None:
+        machine.startup_checklist = request.startup_checklist
     if request.department_id is not None:
         department = _require_department(db, request.department_id)
         machine.department_id = department.id
@@ -559,6 +583,7 @@ async def delete_machine(
         reparto_legacy=machine.reparto_legacy,
         descrizione=machine.descrizione,
         id_postazione=machine.id_postazione,
+        startup_checklist=machine.startup_checklist,
         in_uso=machine.in_uso,
         operatore_attuale_id=machine.operatore_attuale_id,
     )
