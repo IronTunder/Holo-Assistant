@@ -1,6 +1,7 @@
 import asyncio
+import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -36,10 +37,12 @@ from app.api.presenters import (
     serialize_role,
     serialize_user,
 )
+from app.services.cache import admin_metadata_cache, cache_stats_payload
 from app.services.knowledge_retrieval import knowledge_retrieval_service
 from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 
 
 class UserCreateRequest(BaseModel):
@@ -343,8 +346,39 @@ def _apply_machine_assignments(
 def _invalidate_knowledge_cache(machine_ids: List[int] | None = None) -> None:
     if machine_ids is None:
         knowledge_retrieval_service.invalidate_all()
-        return
-    knowledge_retrieval_service.invalidate_machines(machine_ids)
+    else:
+        knowledge_retrieval_service.invalidate_machines(machine_ids)
+    _invalidate_admin_metadata_cache()
+
+
+def _get_admin_metadata_cache(key: tuple) -> Optional[Any]:
+    cached = admin_metadata_cache.get(key)
+    if cached is None:
+        return None
+    logger.debug("admin metadata cache hit key=%s", key)
+    return cached
+
+
+def _set_admin_metadata_cache(key: tuple, payload: Any) -> Any:
+    admin_metadata_cache.set(key, payload)
+    return payload
+
+
+def _invalidate_admin_metadata_cache() -> None:
+    deleted = admin_metadata_cache.clear()
+    if deleted:
+        logger.info("invalidated admin metadata cache entries=%s", deleted)
+
+
+@router.get("/cache-status")
+async def cache_status(
+    admin: User = Depends(verify_admin),
+):
+    del admin
+    return {
+        **cache_stats_payload(),
+        "knowledge": knowledge_retrieval_service.cache_stats(),
+    }
 
 
 @router.get("/dashboard-summary", response_model=DashboardSummaryResponse)
@@ -353,6 +387,11 @@ async def dashboard_summary(
     db: Session = Depends(get_db),
 ):
     del admin
+    cache_key = ("dashboard_summary",)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
     total_users = db.query(User).count()
     total_machines = db.query(Machine).count()
     machines_in_use = db.query(Machine).filter(Machine.in_uso.is_(True)).count()
@@ -364,7 +403,7 @@ async def dashboard_summary(
         .count()
     )
 
-    return DashboardSummaryResponse(
+    return _set_admin_metadata_cache(cache_key, DashboardSummaryResponse(
         total_users=total_users,
         total_machines=total_machines,
         machines_in_use=machines_in_use,
@@ -372,7 +411,7 @@ async def dashboard_summary(
         active_departments=active_departments,
         knowledge_items=knowledge_items,
         recent_interactions=recent_interactions,
-    )
+    ))
 
 
 @router.get("/metadata/departments")
@@ -382,10 +421,15 @@ async def list_departments_metadata(
     db: Session = Depends(get_db),
 ):
     del admin
+    cache_key = ("metadata_departments", include_inactive)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(Department).order_by(Department.name.asc())
     if not include_inactive:
         query = query.filter(Department.is_active.is_(True))
-    return [serialize_department(department) for department in query.all()]
+    return _set_admin_metadata_cache(cache_key, [serialize_department(department) for department in query.all()])
 
 
 @router.get("/metadata/categories")
@@ -394,8 +438,13 @@ async def list_categories_metadata(
     db: Session = Depends(get_db),
 ):
     del admin
+    cache_key = ("metadata_categories",)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
     categories = db.query(Category).order_by(Category.name.asc()).all()
-    return [serialize_category(category) for category in categories]
+    return _set_admin_metadata_cache(cache_key, [serialize_category(category) for category in categories])
 
 
 @router.get("/metadata/machines")
@@ -404,8 +453,13 @@ async def list_machine_metadata(
     db: Session = Depends(get_db),
 ):
     del admin
+    cache_key = ("metadata_machines",)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
     machines = db.query(Machine).options(joinedload(Machine.department)).order_by(Machine.nome.asc()).all()
-    return [serialize_machine(machine) for machine in machines]
+    return _set_admin_metadata_cache(cache_key, [serialize_machine(machine) for machine in machines])
 
 
 @router.get("/metadata/users")
@@ -414,8 +468,13 @@ async def list_user_metadata(
     db: Session = Depends(get_db),
 ):
     del admin
+    cache_key = ("metadata_users",)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
     users = db.query(User).options(joinedload(User.department), joinedload(User.role)).order_by(User.nome.asc()).all()
-    return [serialize_user(user) for user in users]
+    return _set_admin_metadata_cache(cache_key, [serialize_user(user) for user in users])
 
 
 @router.get("/metadata/roles")
@@ -425,10 +484,15 @@ async def list_roles_metadata(
     db: Session = Depends(get_db),
 ):
     del admin
+    cache_key = ("metadata_roles", include_inactive)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(Role).order_by(Role.name.asc())
     if not include_inactive:
         query = query.filter(Role.is_active.is_(True))
-    return [serialize_role(role) for role in query.all()]
+    return _set_admin_metadata_cache(cache_key, [serialize_role(role) for role in query.all()])
 
 
 @router.get("/roles")
@@ -476,6 +540,7 @@ async def create_role(
     db.add(role)
     db.commit()
     db.refresh(role)
+    _invalidate_admin_metadata_cache()
     return serialize_role(role)
 
 
@@ -507,6 +572,7 @@ async def update_role(
         role.is_active = True
     db.commit()
     db.refresh(role)
+    _invalidate_admin_metadata_cache()
     return serialize_role(role)
 
 
@@ -526,6 +592,7 @@ async def delete_role(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ruolo assegnato ad almeno un utente")
     db.delete(role)
     db.commit()
+    _invalidate_admin_metadata_cache()
     return None
 
 
@@ -564,6 +631,7 @@ async def create_department(
     db.add(department)
     db.commit()
     db.refresh(department)
+    _invalidate_admin_metadata_cache()
     return serialize_department(department)
 
 
@@ -592,6 +660,7 @@ async def update_department(
     department.is_active = request.is_active
     db.commit()
     db.refresh(department)
+    _invalidate_admin_metadata_cache()
     return serialize_department(department)
 
 
@@ -610,9 +679,11 @@ async def delete_department(
     if has_users or has_machines:
         department.is_active = False
         db.commit()
+        _invalidate_admin_metadata_cache()
         return None
     db.delete(department)
     db.commit()
+    _invalidate_admin_metadata_cache()
     return None
 
 
@@ -687,6 +758,7 @@ async def create_user(
     db.refresh(user)
     db.refresh(department)
     db.refresh(role)
+    _invalidate_admin_metadata_cache()
     return serialize_user(user)
 
 
@@ -733,6 +805,7 @@ async def update_user(
 
     db.commit()
     db.refresh(user)
+    _invalidate_admin_metadata_cache()
     return serialize_user(user)
 
 
@@ -749,6 +822,7 @@ async def delete_user(
     _ensure_last_admin_access_is_preserved(db, user=user, next_role=None)
     db.delete(user)
     db.commit()
+    _invalidate_admin_metadata_cache()
     return None
 
 
@@ -765,6 +839,7 @@ async def reset_user_password(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utente non trovato")
     user.password_hash = get_password_hash(request.new_password)
     db.commit()
+    _invalidate_admin_metadata_cache()
     return {"message": "Password resettata con successo"}
 
 
@@ -838,6 +913,7 @@ async def create_machine(
     db.add(machine)
     db.commit()
     db.refresh(machine)
+    _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, machine)
     return _build_machine_response(machine)
 
@@ -876,6 +952,7 @@ async def update_machine(
 
     db.commit()
     db.refresh(machine)
+    _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, machine)
     return _build_machine_response(machine)
 
@@ -907,6 +984,7 @@ async def delete_machine(
     db.delete(machine)
     db.commit()
     knowledge_retrieval_service.invalidate_machine(deleted_machine_id)
+    _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, deleted_payload_machine, deleted=True)
     await publish_machine_session_event(None, -1, machine_id=deleted_machine_id)
     return None
@@ -926,6 +1004,7 @@ async def reset_machine_status(
     machine.in_uso = False
     machine.operatore_attuale_id = None
     db.commit()
+    _invalidate_admin_metadata_cache()
     await publish_machine_session_event(machine, -1, db=db)
     return {"message": f"Macchinario {machine.nome} liberato"}
 

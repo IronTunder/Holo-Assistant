@@ -16,6 +16,7 @@ from app.services.ollama_service import (
     rerank_knowledge_candidates,
     verify_knowledge_match,
 )
+from app.services.cache import retrieval_result_cache
 
 try:
     from rapidfuzz import fuzz
@@ -524,25 +525,62 @@ class RetrievalResult:
     ollama_latency_ms: float | None = None
 
 
+@dataclass(frozen=True)
+class MachineKnowledgeCacheEntry:
+    machine_id: int
+    version: int
+    items: tuple[IndexedKnowledgeItem, ...]
+    domain_vocabulary: frozenset[str]
+
+
 class KnowledgeRetrievalService:
     def __init__(self) -> None:
-        self._machine_cache: dict[int, tuple[IndexedKnowledgeItem, ...]] = {}
+        self._machine_cache: dict[int, MachineKnowledgeCacheEntry] = {}
+        self._machine_versions: dict[int, int] = {}
         self._lock = threading.RLock()
 
     def invalidate_machine(self, machine_id: int) -> None:
         with self._lock:
+            self._machine_versions[machine_id] = self._machine_versions.get(machine_id, 0) + 1
             self._machine_cache.pop(machine_id, None)
+        deleted_results = retrieval_result_cache.invalidate(
+            predicate=lambda key: isinstance(key, tuple) and len(key) >= 3 and key[0] == "retrieval" and key[1] == machine_id
+        )
+        logger.info("invalidated knowledge cache machine_id=%s retrieval_entries=%s", machine_id, deleted_results)
 
     def invalidate_machines(self, machine_ids: Iterable[int]) -> None:
+        unique_machine_ids = set(machine_ids)
         with self._lock:
-            for machine_id in set(machine_ids):
+            for machine_id in unique_machine_ids:
+                self._machine_versions[machine_id] = self._machine_versions.get(machine_id, 0) + 1
                 self._machine_cache.pop(machine_id, None)
+        deleted_results = retrieval_result_cache.invalidate(
+            predicate=lambda key: isinstance(key, tuple) and len(key) >= 3 and key[0] == "retrieval" and key[1] in unique_machine_ids
+        )
+        logger.info("invalidated knowledge cache machine_ids=%s retrieval_entries=%s", sorted(unique_machine_ids), deleted_results)
 
     def invalidate_all(self) -> None:
         with self._lock:
+            for machine_id in list(self._machine_cache):
+                self._machine_versions[machine_id] = self._machine_versions.get(machine_id, 0) + 1
             self._machine_cache.clear()
+        deleted_results = retrieval_result_cache.clear()
+        logger.info("invalidated all knowledge cache retrieval_entries=%s", deleted_results)
+
+    def cache_stats(self) -> dict:
+        with self._lock:
+            machine_entries = len(self._machine_cache)
+            machine_items = sum(len(entry.items) for entry in self._machine_cache.values())
+        return {
+            "machine_entries": machine_entries,
+            "machine_items": machine_items,
+            "result_cache": retrieval_result_cache.stats().__dict__,
+        }
 
     def get_machine_knowledge(self, db: Session, machine_id: int) -> tuple[IndexedKnowledgeItem, ...]:
+        return self.get_machine_knowledge_cache(db, machine_id).items
+
+    def get_machine_knowledge_cache(self, db: Session, machine_id: int) -> MachineKnowledgeCacheEntry:
         with self._lock:
             cached = self._machine_cache.get(machine_id)
         if cached is not None:
@@ -561,9 +599,17 @@ class KnowledgeRetrievalService:
             .all()
         )
         indexed = tuple(IndexedKnowledgeItem.from_model(item) for item in knowledge_items)
+        domain_vocabulary = self._machine_domain_vocabulary(indexed)
         with self._lock:
-            self._machine_cache[machine_id] = indexed
-        return indexed
+            version = self._machine_versions.get(machine_id, 0)
+            cached = MachineKnowledgeCacheEntry(
+                machine_id=machine_id,
+                version=version,
+                items=indexed,
+                domain_vocabulary=domain_vocabulary,
+            )
+            self._machine_cache[machine_id] = cached
+        return cached
 
     def _machine_domain_vocabulary(self, candidates: Sequence[IndexedKnowledgeItem]) -> frozenset[str]:
         vocabulary = set(TECHNICAL_HINT_WORDS)
@@ -828,9 +874,28 @@ class KnowledgeRetrievalService:
         question: str,
         selected_knowledge_item_id: int | None = None,
     ) -> RetrievalResult:
-        indexed_candidates = self.get_machine_knowledge(db, machine_id)
+        knowledge_cache = self.get_machine_knowledge_cache(db, machine_id)
+        indexed_candidates = knowledge_cache.items
+        normalized_question = _normalize_text(question)
+        cache_key = (
+            "retrieval",
+            machine_id,
+            selected_knowledge_item_id,
+            normalized_question,
+            knowledge_cache.version,
+        )
+        cached_result = retrieval_result_cache.get(cache_key)
+        if cached_result is not None:
+            logger.debug("retrieval cache hit machine_id=%s question=%r", machine_id, question)
+            return cached_result
+
+        def cache_and_return(result: RetrievalResult, *, cacheable: bool = True) -> RetrievalResult:
+            if cacheable:
+                retrieval_result_cache.set(cache_key, result)
+            return result
+
         if not indexed_candidates:
-            return RetrievalResult(
+            result = RetrievalResult(
                 mode="fallback",
                 response=FALLBACK_MESSAGE,
                 confidence=0.0,
@@ -840,11 +905,13 @@ class KnowledgeRetrievalService:
                 reason_code="no_match",
                 top_candidates=[],
             )
+            retrieval_result_cache.set(cache_key, result)
+            return result
 
         if selected_knowledge_item_id is not None:
             selected_candidate = self._find_selected_candidate(selected_knowledge_item_id, indexed_candidates)
             if selected_candidate is None:
-                return RetrievalResult(
+                result = RetrievalResult(
                     mode="fallback",
                     response=FALLBACK_MESSAGE,
                     confidence=0.0,
@@ -854,7 +921,9 @@ class KnowledgeRetrievalService:
                     reason_code="no_match",
                     top_candidates=[],
                 )
-            return RetrievalResult(
+                retrieval_result_cache.set(cache_key, result)
+                return result
+            result = RetrievalResult(
                 mode="answer",
                 response=selected_candidate.answer_text,
                 confidence=0.99,
@@ -864,11 +933,13 @@ class KnowledgeRetrievalService:
                 reason_code="matched",
                 top_candidates=[],
             )
+            retrieval_result_cache.set(cache_key, result)
+            return result
 
         question_tokens = _tokenize(question)
         question_all_words = _tokenize_all(question)
         specific_question_tokens, _generic_question_tokens = _split_question_tokens(question_tokens)
-        machine_vocabulary = self._machine_domain_vocabulary(indexed_candidates)
+        machine_vocabulary = knowledge_cache.domain_vocabulary
         is_out_of_scope, scope_details = self._detect_query_scope(
             question,
             question_tokens,
@@ -896,7 +967,7 @@ class KnowledgeRetrievalService:
                 question,
                 scope_details,
             )
-            return RetrievalResult(
+            return cache_and_return(RetrievalResult(
                 mode="fallback",
                 response=out_of_scope_response,
                 confidence=0.0,
@@ -906,11 +977,11 @@ class KnowledgeRetrievalService:
                 reason_code="out_of_scope",
                 top_candidates=[],
                 ollama_latency_ms=ollama_latency_ms,
-            )
+            ))
 
         scored_candidates = self.score_candidates(question, indexed_candidates)
         if not scored_candidates or scored_candidates[0].score < MIN_DIRECT_SCORE:
-            return RetrievalResult(
+            return cache_and_return(RetrievalResult(
                 mode="fallback",
                 response=FALLBACK_MESSAGE,
                 confidence=0.0,
@@ -919,7 +990,7 @@ class KnowledgeRetrievalService:
                 route="fallback_low_score",
                 reason_code="no_match",
                 top_candidates=scored_candidates[:3],
-            )
+            ))
 
         top_candidate = scored_candidates[0]
         second_candidate = scored_candidates[1] if len(scored_candidates) > 1 else None
@@ -929,7 +1000,7 @@ class KnowledgeRetrievalService:
         if is_generic_ambiguous_query:
             generic_pool = [candidate for candidate in scored_candidates[:3] if candidate.score >= MIN_DIRECT_SCORE]
             if len(generic_pool) >= 2:
-                return RetrievalResult(
+                return cache_and_return(RetrievalResult(
                     mode="clarification",
                     response=CLARIFICATION_MESSAGE,
                     confidence=min(confidence, 0.6),
@@ -938,8 +1009,8 @@ class KnowledgeRetrievalService:
                     route="clarification_generic_query",
                     reason_code="clarification",
                     top_candidates=scored_candidates[:3],
-                )
-            return RetrievalResult(
+                ))
+            return cache_and_return(RetrievalResult(
                 mode="fallback",
                 response=FALLBACK_MESSAGE,
                 confidence=0.0,
@@ -948,7 +1019,7 @@ class KnowledgeRetrievalService:
                 route="fallback_generic_query",
                 reason_code="no_match",
                 top_candidates=scored_candidates[:3],
-            )
+            ))
 
         if not self._should_request_clarification(top_candidate, second_candidate, confidence):
             if self._requires_llm_verification(top_candidate, confidence):
@@ -966,7 +1037,7 @@ class KnowledgeRetrievalService:
                             question,
                             top_candidate.item.knowledge_item_id,
                         )
-                        return RetrievalResult(
+                        return cache_and_return(RetrievalResult(
                             mode="fallback",
                             response=FALLBACK_MESSAGE,
                             confidence=0.0,
@@ -976,7 +1047,7 @@ class KnowledgeRetrievalService:
                             reason_code="no_match",
                             top_candidates=scored_candidates[:3],
                             ollama_latency_ms=verification_latency_ms,
-                        )
+                        ))
                 except OllamaServiceError as exc:
                     verification_latency_ms = round((perf_counter() - verification_start) * 1000, 2)
                     logger.warning(
@@ -985,7 +1056,7 @@ class KnowledgeRetrievalService:
                         question,
                         exc,
                     )
-                    return RetrievalResult(
+                    return cache_and_return(RetrievalResult(
                         mode="fallback",
                         response=FALLBACK_MESSAGE,
                         confidence=0.0,
@@ -995,8 +1066,8 @@ class KnowledgeRetrievalService:
                         reason_code="no_match",
                         top_candidates=scored_candidates[:3],
                         ollama_latency_ms=verification_latency_ms,
-                    )
-            return RetrievalResult(
+                    ), cacheable=False)
+            return cache_and_return(RetrievalResult(
                 mode="answer",
                 response=top_candidate.item.answer_text,
                 confidence=confidence,
@@ -1005,11 +1076,11 @@ class KnowledgeRetrievalService:
                 route="retrieval_direct",
                 reason_code="matched",
                 top_candidates=scored_candidates[:3],
-            )
+            ))
 
         rerank_pool = self._build_rerank_pool(scored_candidates)
         if len(rerank_pool) < 2:
-            return RetrievalResult(
+            return cache_and_return(RetrievalResult(
                 mode="fallback",
                 response=FALLBACK_MESSAGE,
                 confidence=0.0,
@@ -1018,7 +1089,7 @@ class KnowledgeRetrievalService:
                 route="fallback_ambiguous_weak",
                 reason_code="no_match",
                 top_candidates=scored_candidates[:3],
-            )
+            ))
 
         ollama_latency_ms = None
         prompt_candidates = [candidate.item.to_rerank_prompt_candidate() for candidate in rerank_pool]
@@ -1035,7 +1106,7 @@ class KnowledgeRetrievalService:
                 0.74,
             )
             if reranked_confidence >= 0.8:
-                return RetrievalResult(
+                return cache_and_return(RetrievalResult(
                     mode="answer",
                     response=reranked_candidate.item.answer_text,
                     confidence=reranked_confidence,
@@ -1045,12 +1116,12 @@ class KnowledgeRetrievalService:
                     reason_code="matched",
                     top_candidates=scored_candidates[:3],
                     ollama_latency_ms=ollama_latency_ms,
-                )
+                ))
         except OllamaServiceError as exc:
             ollama_latency_ms = round((perf_counter() - rerank_start) * 1000, 2)
             logger.warning("Ollama rerank unavailable for machine_id=%s question=%r: %s", machine_id, question, exc)
 
-        return RetrievalResult(
+        return cache_and_return(RetrievalResult(
             mode="clarification",
             response=CLARIFICATION_MESSAGE,
             confidence=min(confidence, 0.74),
@@ -1060,7 +1131,7 @@ class KnowledgeRetrievalService:
             reason_code="clarification",
             top_candidates=scored_candidates[:3],
             ollama_latency_ms=ollama_latency_ms,
-        )
+        ))
 
 
 knowledge_retrieval_service = KnowledgeRetrievalService()

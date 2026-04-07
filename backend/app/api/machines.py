@@ -9,8 +9,14 @@ from app.models.department import Department
 from app.models.machine import Machine
 from app.models.user import User
 from app.schemas.machine import MachineCreate, MachineResponse, MachineUpdate
+from app.services.cache import admin_metadata_cache
+from app.services.knowledge_retrieval import knowledge_retrieval_service
 
 router = APIRouter(tags=["machines"])
+
+
+def _invalidate_admin_metadata_cache() -> None:
+    admin_metadata_cache.clear()
 
 
 def _require_department(db: Session, department_id: int | None) -> Department:
@@ -95,6 +101,7 @@ async def create_machine(
     db.add(db_machine)
     db.commit()
     db.refresh(db_machine)
+    _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, db_machine)
     return db_machine
 
@@ -125,6 +132,7 @@ async def update_machine(
 
     db.commit()
     db.refresh(db_machine)
+    _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, db_machine)
     return db_machine
 
@@ -145,6 +153,7 @@ async def update_machine_status(
     db_machine.in_uso = in_uso
     db_machine.operatore_attuale_id = operatore_id if in_uso else None
     db.commit()
+    _invalidate_admin_metadata_cache()
     await publish_machine_session_event(db_machine, -1, db=db)
     return {"success": True, "message": f"Macchinario {'in uso' if in_uso else 'liberato'} con successo"}
 
@@ -175,6 +184,8 @@ async def delete_machine(
     deleted_payload_machine.department = db_machine.department
     db.delete(db_machine)
     db.commit()
+    knowledge_retrieval_service.invalidate_machine(deleted_machine_id)
+    _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, deleted_payload_machine, deleted=True)
     await publish_machine_session_event(None, -1, machine_id=deleted_machine_id)
     return None

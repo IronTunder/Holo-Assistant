@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import hashlib
 import threading
 import wave
 from dataclasses import dataclass
@@ -9,6 +10,12 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from piper import PiperVoice
 
+from app.services.cache import (
+    TTS_CACHE_MAX_AUDIO_BYTES,
+    TTS_CACHE_MAX_TEXT_CHARS,
+    estimate_size_bytes,
+    tts_synthesis_cache,
+)
 from app.services.tts_lipsync import build_lipsync_result
 from app.services.tts_models import TtsSynthesisResult
 
@@ -89,6 +96,13 @@ class PiperTTSService:
             raise ValueError("Il testo TTS non puo essere vuoto")
 
         voice_model = self.resolve_voice_model(language)
+        cache_key = self._build_synthesis_cache_key(clean_text, voice_model)
+        cacheable_text = len(clean_text) <= TTS_CACHE_MAX_TEXT_CHARS
+        if cacheable_text:
+            cached = tts_synthesis_cache.get(cache_key)
+            if cached is not None:
+                return self._clone_synthesis_result(cached)
+
         voice = self._get_voice(voice_model)
         wav_buffer = io.BytesIO()
 
@@ -103,7 +117,7 @@ class PiperTTSService:
         duration_ms = self._get_wav_duration_ms(audio_bytes)
         lipsync = build_lipsync_result(clean_text, duration_ms, voice, alignments)
 
-        return TtsSynthesisResult(
+        result = TtsSynthesisResult(
             audio_bytes=audio_bytes,
             mime_type="audio/wav",
             duration_ms=duration_ms,
@@ -114,6 +128,10 @@ class PiperTTSService:
             vtimes=lipsync.vtimes,
             vdurations=lipsync.vdurations,
         )
+        if cacheable_text and len(audio_bytes) <= TTS_CACHE_MAX_AUDIO_BYTES:
+            tts_synthesis_cache.set(cache_key, self._clone_synthesis_result(result), size_bytes=estimate_size_bytes(result))
+
+        return result
 
     def resolve_voice_model(self, language: Optional[str] = None) -> VoiceModel:
         if not self.enabled:
@@ -171,6 +189,23 @@ class PiperTTSService:
                 self._voice_cache[voice_model.key] = cached
 
         return cached
+
+    def _build_synthesis_cache_key(self, clean_text: str, voice_model: VoiceModel) -> tuple[str, str, str, bool]:
+        text_hash = hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
+        return ("tts", voice_model.key, text_hash, self.use_cuda)
+
+    def _clone_synthesis_result(self, result: TtsSynthesisResult) -> TtsSynthesisResult:
+        return TtsSynthesisResult(
+            audio_bytes=bytes(result.audio_bytes),
+            mime_type=result.mime_type,
+            duration_ms=result.duration_ms,
+            words=list(result.words),
+            wtimes=list(result.wtimes),
+            wdurations=list(result.wdurations),
+            visemes=list(result.visemes),
+            vtimes=list(result.vtimes),
+            vdurations=list(result.vdurations),
+        )
 
     def _load_available_models(self) -> Dict[str, VoiceModel]:
         manifest_models = self._load_models_from_manifest()

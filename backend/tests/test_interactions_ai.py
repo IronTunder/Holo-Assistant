@@ -230,6 +230,54 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
         self.assertGreater(response.confidence, 0.7)
 
+    async def test_ask_question_uses_retrieval_cache_but_still_logs_each_request(self) -> None:
+        request = AskQuestionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            question="Come faccio il cambio olio della pressa?",
+        )
+
+        with (
+            patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()),
+            patch.object(
+                knowledge_retrieval_service,
+                "score_candidates",
+                wraps=knowledge_retrieval_service.score_candidates,
+            ) as score_candidates,
+        ):
+            first_response = await ask_question(request, db=self.db)
+            second_response = await ask_question(request, db=self.db)
+
+        self.assertEqual(first_response.knowledge_item_title, "Cambio olio pressa")
+        self.assertEqual(second_response.knowledge_item_title, "Cambio olio pressa")
+        self.assertEqual(score_candidates.call_count, 1)
+        self.assertEqual(self.db.query(InteractionLog).count(), 2)
+
+    async def test_retrieval_cache_invalidation_allows_updated_knowledge_answer(self) -> None:
+        request = AskQuestionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            question="Come faccio il cambio olio della pressa?",
+        )
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            first_response = await ask_question(request, db=self.db)
+
+        item = (
+            self.db.query(KnowledgeItem)
+            .filter(KnowledgeItem.id == self.item_ids["Cambio olio pressa"])
+            .first()
+        )
+        item.answer_text = "Risposta aggiornata dopo modifica knowledge."
+        self.db.commit()
+        knowledge_retrieval_service.invalidate_machine(self.machine_id)
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            second_response = await ask_question(request, db=self.db)
+
+        self.assertIn("spegni la pressa", first_response.response.lower())
+        self.assertEqual(second_response.response, "Risposta aggiornata dopo modifica knowledge.")
+
     async def test_quick_action_creates_maintenance_signal(self) -> None:
         request = QuickActionRequest(
             machine_id=self.machine_id,

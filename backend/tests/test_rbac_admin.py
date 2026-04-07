@@ -12,6 +12,7 @@ from app.api.admin import (
     create_department,
     create_role,
     delete_department,
+    list_departments_metadata,
     update_role,
 )
 from app.api.auth.auth import user_has_permission
@@ -20,6 +21,7 @@ from app.models.department import Department
 from app.models.machine import Machine
 from app.models.role import ADMIN_ROLE_CODE, ALL_PERMISSIONS, MAINTENANCE_TECH_ROLE_CODE, Role
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
+from app.services.cache import admin_metadata_cache
 
 
 class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
@@ -33,11 +35,13 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
         self.db = self.SessionLocal()
         self._seed_fixture()
+        admin_metadata_cache.clear()
 
     def tearDown(self) -> None:
         self.db.close()
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
+        admin_metadata_cache.clear()
 
     def _seed_fixture(self) -> None:
         self.admin_role = Role(
@@ -180,6 +184,26 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(created_department["name"], "Assemblaggio")
         self.assertTrue(created_department["is_active"])
+
+    async def test_department_metadata_cache_hits_and_mutation_invalidates(self) -> None:
+        first_payload = await list_departments_metadata(admin=self.admin, db=self.db)
+        second_payload = await list_departments_metadata(admin=self.admin, db=self.db)
+
+        self.assertEqual(first_payload, second_payload)
+        self.assertGreaterEqual(admin_metadata_cache.stats().hits, 1)
+
+        await create_department(
+            DepartmentRequest(
+                name="Assemblaggio",
+                code="assemblaggio",
+                description="Linea assemblaggio",
+                is_active=True,
+            ),
+            admin=self.admin,
+            db=self.db,
+        )
+
+        self.assertEqual(admin_metadata_cache.stats().entries, 0)
 
 
 if __name__ == "__main__":
