@@ -172,7 +172,7 @@ Nota: `wsl --shutdown` spegne tutte le distro WSL attive, non solo Docker Deskto
 
 ## HTTPS in rete locale
 
-Backend e frontend vengono avviati in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve includere l'IP statico con cui i dispositivi aprono Ditto; quello attuale include `192.168.1.119`, `127.0.0.1`, `localhost` e `ditto.lan`.
+Backend e frontend vengono avviati in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve includere l'IP statico con cui i dispositivi aprono Ditto, ad esempio `{server-ip}`, `127.0.0.1`, `localhost` e `ditto.lan`.
 
 Su Windows, `setup.bat` e `start.bat` provano a generare automaticamente questi file se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, aggiorna il `PATH` della sessione e poi genera il certificato. Se `winget` non e disponibile o `mkcert` non entra nel `PATH`, lo script mostra un errore guidato e chiede di riaprire il terminale o installare il prerequisito manualmente.
 

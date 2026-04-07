@@ -147,7 +147,7 @@ Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quell
 
 ## HTTPS in LAN
 
-Gli script avviano backend e frontend in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve contenere l'IP statico del server usato dai dispositivi; quello presente nel repository locale include `192.168.1.119`, `127.0.0.1`, `localhost` e `ditto.lan`.
+Gli script avviano backend e frontend in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve contenere l'IP statico del server usato dai dispositivi, ad esempio `{server-ip}`, `127.0.0.1`, `localhost` e `ditto.lan`.
 
 Su Windows, `setup.bat` e `start.bat` generano automaticamente `certs/ditto.crt` e `certs/ditto.key` se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, aggiorna il `PATH` della sessione e poi genera il certificato. Se `winget` non e disponibile o `mkcert` non entra nel `PATH`, lo script mostra un errore guidato e chiede di riaprire il terminale o installare il prerequisito manualmente.
 
