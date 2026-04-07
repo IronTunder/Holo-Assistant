@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
-import { UserCircle, ChevronDown, Key } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { UserCircle, ChevronDown, Key, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import badgeIcon from '@/app/components/images/icon.png';
 import { CredentialsLogin } from './CredentialsLogin';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { API_ENDPOINTS } from '@/shared/api/config';
 
 interface Machine {
   id: number;
@@ -18,29 +20,79 @@ interface BadgeReaderProps {
   onCredentialsLogin: (username: string, password: string, machineId: number) => void;
 }
 
+type MachineSelectorRect = {
+  left: number;
+  top: number;
+  width: number;
+  maxHeight: number;
+};
+
 export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReaderProps) {
   const [scanning, setScanning] = useState(false);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [showMachineSelector, setShowMachineSelector] = useState(false);
   const [showCredentialsLogin, setShowCredentialsLogin] = useState(false);
+  const [machineSearch, setMachineSearch] = useState('');
+  const [machineSelectorRect, setMachineSelectorRect] = useState<MachineSelectorRect | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const machineSelectorButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     fetchMachines();
   }, []);
 
+  const updateMachineSelectorRect = () => {
+    const button = machineSelectorButtonRef.current;
+    if (!button) {
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const viewportPadding = 12;
+    const preferredMaxHeight = 320;
+    const minUsableHeight = 180;
+    const availableBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const availableAbove = rect.top - viewportPadding;
+    const openAbove = availableBelow < minUsableHeight && availableAbove > availableBelow;
+    const maxHeight = Math.max(
+      minUsableHeight,
+      Math.min(preferredMaxHeight, openAbove ? availableAbove : availableBelow)
+    );
+
+    setMachineSelectorRect({
+      left: Math.max(viewportPadding, rect.left),
+      top: openAbove ? Math.max(viewportPadding, rect.top - maxHeight - 8) : rect.bottom + 8,
+      width: Math.min(rect.width, window.innerWidth - viewportPadding * 2),
+      maxHeight,
+    });
+  };
+
+  useEffect(() => {
+    if (!showMachineSelector) {
+      setMachineSelectorRect(null);
+      return;
+    }
+
+    updateMachineSelectorRect();
+    window.addEventListener('resize', updateMachineSelectorRect);
+    window.addEventListener('scroll', updateMachineSelectorRect, true);
+
+    return () => {
+      window.removeEventListener('resize', updateMachineSelectorRect);
+      window.removeEventListener('scroll', updateMachineSelectorRect, true);
+    };
+  }, [showMachineSelector]);
+
   const fetchMachines = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/machines/available`);
+      const response = await fetch(API_ENDPOINTS.GET_AVAILABLE_MACHINES);
       if (!response.ok) throw new Error('Errore nel caricamento dei macchinari');
       const data = await response.json();
       setMachines(data);
-      if (data.length > 0) {
-        setSelectedMachine(data[0]);
-      }
+      setSelectedMachine(null);
       setError(null);
     } catch (err) {
       setError('Impossibile caricare i macchinari disponibili');
@@ -73,6 +125,26 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
     setShowCredentialsLogin(false);
   };
 
+  const filteredMachines = useMemo(() => {
+    const normalizedSearch = machineSearch.trim().toLowerCase();
+    if (!normalizedSearch) {
+      return machines;
+    }
+
+    return machines.filter((machine) => {
+      const haystack = `${machine.nome} ${machine.reparto} ${machine.id_postazione}`.toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [machineSearch, machines]);
+
+  const toggleMachineSelector = () => {
+    const nextValue = !showMachineSelector;
+    setShowMachineSelector(nextValue);
+    if (nextValue) {
+      window.requestAnimationFrame(updateMachineSelectorRect);
+    }
+  };
+
   return (
     <>
       <div className="h-full min-h-0">
@@ -80,12 +152,12 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
           initial={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.35 }}
-          className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(320px,0.9fr)_minmax(380px,1.1fr)]"
+          className="grid h-full gap-4 md:min-h-0 md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)]"
         >
-          <section className="flex min-h-0 flex-col justify-center rounded-[28px] border border-white/10 bg-slate-950/20 p-5 text-center backdrop-blur-sm sm:p-6">
+          <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 text-center backdrop-blur-sm sm:min-h-[340px] sm:p-6 md:min-h-0">
             <div className="flex flex-1 flex-col items-center justify-center">
               <div className="relative inline-block">
-                <div className={`flex h-36 w-36 items-center justify-center rounded-[32px] border-4 border-white/20 bg-gradient-to-br from-blue-500/20 to-cyan-500/10 backdrop-blur-sm sm:h-44 sm:w-44 ${scanning ? 'animate-pulse' : ''}`}>
+                <div className={`flex h-36 w-36 items-center justify-center rounded-[24px] border-4 border-white/20 bg-gradient-to-br from-blue-500/20 to-cyan-500/10 backdrop-blur-sm sm:h-44 sm:w-44 ${scanning ? 'animate-pulse' : ''}`}>
                   <img
                     src={badgeIcon}
                     alt="Badge Reader"
@@ -95,7 +167,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
 
                 {scanning && (
                   <motion.div
-                    className="absolute inset-0 rounded-[32px] border-4 border-blue-400"
+                    className="absolute inset-0 rounded-[24px] border-4 border-blue-400"
                     animate={{
                       scale: [1, 1.06, 1],
                       opacity: [1, 0, 1],
@@ -125,13 +197,16 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+          <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm md:min-h-0">
             <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
               <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Accesso operatore</p>
               <h3 className="mt-1 text-lg font-semibold text-white">Seleziona il macchinario e il metodo di accesso</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Scegli la postazione corrente e accedi con badge o credenziali per iniziare la sessione.
+              </p>
             </div>
 
-            <ScrollArea className="min-h-0 flex-1 px-4 py-4 sm:px-5">
+            <ScrollArea className="flex-1 px-4 py-4 sm:px-5 md:min-h-0 md:pr-3">
               <div className="space-y-4">
                 {loading ? (
                   <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-slate-300">
@@ -149,8 +224,9 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                 ) : (
                   <div className="relative">
                     <button
-                      onClick={() => setShowMachineSelector(!showMachineSelector)}
-                      className="flex w-full items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-left transition-colors hover:bg-white/15"
+                      ref={machineSelectorButtonRef}
+                      onClick={toggleMachineSelector}
+                      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-left transition-colors hover:bg-white/15"
                     >
                       <div className="min-w-0">
                         <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Macchinario selezionato</div>
@@ -159,34 +235,6 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                       </div>
                       <ChevronDown className={`h-5 w-5 shrink-0 transition-transform ${showMachineSelector ? 'rotate-180' : ''}`} />
                     </button>
-
-                    {showMachineSelector && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-white/20 bg-slate-900/95 shadow-2xl"
-                      >
-                        <ScrollArea className="max-h-64">
-                          <div className="p-2">
-                            {machines.map((machine) => (
-                              <button
-                                key={machine.id}
-                                onClick={() => {
-                                  setSelectedMachine(machine);
-                                  setShowMachineSelector(false);
-                                }}
-                                className={`w-full rounded-xl px-4 py-3 text-left transition-colors hover:bg-white/10 ${
-                                  selectedMachine?.id === machine.id ? 'bg-blue-500/20' : ''
-                                }`}
-                              >
-                                <div className="font-semibold text-white">{machine.nome}</div>
-                                <div className="text-xs text-slate-400">{machine.reparto} - {machine.id_postazione}</div>
-                              </button>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </motion.div>
-                    )}
                   </div>
                 )}
 
@@ -194,7 +242,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   <button
                     onClick={simulateBadgeScan}
                     disabled={scanning || !selectedMachine || machines.length === 0}
-                    className="flex items-center justify-center gap-3 rounded-2xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+                    className="flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
                   >
                     <UserCircle className="h-5 w-5" />
                     {scanning ? 'Scansione in corso...' : 'Simula scansione badge'}
@@ -203,7 +251,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   <button
                     onClick={() => setShowCredentialsLogin(true)}
                     disabled={!selectedMachine || machines.length === 0}
-                    className="flex items-center justify-center gap-3 rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+                    className="flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
                   >
                     <Key className="h-5 w-5" />
                     Accedi con credenziali
@@ -232,6 +280,60 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
           </section>
         </motion.div>
       </div>
+
+      {showMachineSelector && machineSelectorRect && createPortal(
+        <div
+          className="fixed z-[9999] overflow-hidden rounded-2xl border border-white/20 bg-slate-900 shadow-2xl"
+          style={{
+            left: machineSelectorRect.left,
+            top: machineSelectorRect.top,
+            width: machineSelectorRect.width,
+          }}
+        >
+          <div className="border-b border-white/10 p-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={machineSearch}
+                onChange={(event) => setMachineSearch(event.target.value)}
+                placeholder="Cerca macchina, reparto o postazione..."
+                className="w-full rounded-xl border border-white/15 bg-white/10 py-3 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div
+            className="overflow-y-auto overscroll-contain p-2"
+            style={{ maxHeight: machineSelectorRect.maxHeight }}
+          >
+            {filteredMachines.length === 0 ? (
+              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                Nessun macchinario trovato.
+              </div>
+            ) : (
+              filteredMachines.map((machine) => (
+                <button
+                  key={machine.id}
+                  onClick={() => {
+                    setSelectedMachine(machine);
+                    setShowMachineSelector(false);
+                    setMachineSearch('');
+                  }}
+                  className={`w-full rounded-xl px-4 py-3 text-left transition-colors hover:bg-white/10 ${
+                    selectedMachine?.id === machine.id ? 'bg-blue-500/20' : ''
+                  }`}
+                >
+                  <div className="font-semibold text-white">{machine.nome}</div>
+                  <div className="text-xs text-slate-400">{machine.reparto} - {machine.id_postazione}</div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
 
       <AnimatePresence>
         {showCredentialsLogin && (

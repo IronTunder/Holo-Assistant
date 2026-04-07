@@ -10,13 +10,18 @@ set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..\..") do set ROOT_DIR=%%~fI
 set BACKEND_PORT=8000
 set FRONTEND_PORT=5173
-set OLLAMA_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+set OLLAMA_MODEL=qwen3.5:9b
 set OLLAMA_BASE_URL=http://127.0.0.1:11434
 set OLLAMA_KEEP_ALIVE=30m
 set OLLAMA_TOP_K=20
 set OLLAMA_TOP_P=0.8
 set OLLAMA_NUM_CTX=2048
 set OLLAMA_NUM_THREAD=4
+set OLLAMA_RUNTIME=auto
+set OLLAMA_ACCELERATOR=auto
+set OLLAMA_COMPOSE_ARGS=-f docker-compose.yml
+set OLLAMA_USE_NATIVE=false
+set OLLAMA_NATIVE_VULKAN=1
 
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4"') do (
     set IP=%%a
@@ -37,7 +42,13 @@ if not exist docker-compose.yml (
     exit /b 1
 )
 
-docker-compose up -d
+call :resolve_ollama_runtime
+if /I "%OLLAMA_USE_NATIVE%"=="true" (
+    docker compose -f docker-compose.yml stop ollama >nul 2>&1
+    docker compose -f docker-compose.yml up -d postgres adminer
+) else (
+    docker compose %OLLAMA_COMPOSE_ARGS% up -d
+)
 if errorlevel 1 (
     echo [AVVISO] Impossibile avviare Docker con docker-compose.
     echo [AVVISO] Continuo comunque: assicurati che PostgreSQL e Ollama siano gia' in esecuzione.
@@ -77,16 +88,37 @@ if exist %ROOT_DIR%\backend\.env (
         if /I "%%A"=="OLLAMA_TOP_P" set OLLAMA_TOP_P=%%B
         if /I "%%A"=="OLLAMA_NUM_CTX" set OLLAMA_NUM_CTX=%%B
         if /I "%%A"=="OLLAMA_NUM_THREAD" set OLLAMA_NUM_THREAD=%%B
+        if /I "%%A"=="OLLAMA_RUNTIME" set OLLAMA_RUNTIME=%%B
+        if /I "%%A"=="OLLAMA_ACCELERATOR" set OLLAMA_ACCELERATOR=%%B
+        if /I "%%A"=="OLLAMA_NATIVE_VULKAN" set OLLAMA_NATIVE_VULKAN=%%B
+        if /I "%%A"=="OLLAMA_VULKAN" set OLLAMA_NATIVE_VULKAN=%%~B
     )
 )
 
 echo Preparazione modello AI: %OLLAMA_MODEL%
-docker exec ditto_ollama ollama list 2>nul | findstr /i /c:"%OLLAMA_MODEL%" >nul
-if errorlevel 1 (
-    echo [AVVISO] Modello %OLLAMA_MODEL% non trovato nel container Ollama
-    echo [AVVISO] Esegui setup.bat oppure: docker exec ditto_ollama ollama pull %OLLAMA_MODEL%
+if /I "%OLLAMA_USE_NATIVE%"=="true" (
+    where ollama >nul 2>&1
+    if errorlevel 1 (
+        echo [ERRORE] Ollama nativo non trovato. Installa Ollama per Windows oppure imposta OLLAMA_RUNTIME=docker.
+        pause
+        exit /b 1
+    )
+    call :ensure_native_ollama
+    ollama list 2>nul | findstr /i /c:"%OLLAMA_MODEL%" >nul
+    if errorlevel 1 (
+        echo [AVVISO] Modello %OLLAMA_MODEL% non trovato in Ollama nativo
+        echo [AVVISO] Esegui setup.bat oppure: ollama pull %OLLAMA_MODEL%
+    ) else (
+        call :warmup_ollama
+    )
 ) else (
-    call :warmup_ollama
+    docker exec ditto_ollama ollama list 2>nul | findstr /i /c:"%OLLAMA_MODEL%" >nul
+    if errorlevel 1 (
+        echo [AVVISO] Modello %OLLAMA_MODEL% non trovato nel container Ollama
+        echo [AVVISO] Esegui setup.bat oppure: docker exec ditto_ollama ollama pull %OLLAMA_MODEL%
+    ) else (
+        call :warmup_ollama
+    )
 )
 echo.
 
@@ -99,6 +131,16 @@ if not exist venv\ (
     pause
     exit /b 1
 )
+
+echo Riallineamento knowledge base tecnica...
+call venv\Scripts\activate.bat
+python scripts\seed_categories.py
+if errorlevel 1 (
+    echo [AVVISO] Riallineamento knowledge base non completato
+) else (
+    echo [OK] Knowledge base riallineata
+)
+echo.
 
 python --version >nul 2>&1
 if errorlevel 1 (
@@ -179,10 +221,78 @@ timeout /t 2 /nobreak >nul
 goto :wait_ollama
 :ollama_ready
 echo [INFO] Warmup modello AI in corso...
-powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; $body = '{\"model\":\"%OLLAMA_MODEL%\",\"prompt\":\"Rispondi solo OK\",\"stream\":false,\"keep_alive\":\"%OLLAMA_KEEP_ALIVE%\",\"options\":{\"temperature\":0,\"top_k\":%OLLAMA_TOP_K%,\"top_p\":%OLLAMA_TOP_P%,\"num_predict\":12,\"num_ctx\":%OLLAMA_NUM_CTX%,\"num_thread\":%OLLAMA_NUM_THREAD%}}'; try { Invoke-RestMethod -Uri '%OLLAMA_BASE_URL%/api/generate' -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; $body = '{\"model\":\"%OLLAMA_MODEL%\",\"prompt\":\"Rispondi solo OK\",\"stream\":false,\"think\":false,\"keep_alive\":\"%OLLAMA_KEEP_ALIVE%\",\"options\":{\"temperature\":0,\"top_k\":%OLLAMA_TOP_K%,\"top_p\":%OLLAMA_TOP_P%,\"num_predict\":12,\"num_ctx\":%OLLAMA_NUM_CTX%,\"num_thread\":%OLLAMA_NUM_THREAD%}}'; try { Invoke-RestMethod -Uri '%OLLAMA_BASE_URL%/api/generate' -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 120 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 (
     echo [AVVISO] Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento.
 ) else (
     echo [OK] Modello AI pronto
 )
+goto :eof
+
+:ensure_native_ollama
+echo [INFO] Verifica server Ollama nativo su %OLLAMA_BASE_URL%...
+powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-RestMethod -Uri '%OLLAMA_BASE_URL%/api/tags' -Method Get -TimeoutSec 3 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 goto :eof
+
+echo [INFO] Avvio Ollama nativo in background...
+start "DITTO Ollama" cmd /k "set OLLAMA_VULKAN=%OLLAMA_NATIVE_VULKAN% && ollama serve"
+set NATIVE_OLLAMA_ATTEMPT=1
+set MAX_NATIVE_OLLAMA_ATTEMPTS=20
+:wait_native_ollama
+timeout /t 2 /nobreak >nul
+powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-RestMethod -Uri '%OLLAMA_BASE_URL%/api/tags' -Method Get -TimeoutSec 3 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] Ollama nativo raggiungibile
+    goto :eof
+)
+if %NATIVE_OLLAMA_ATTEMPT% equ %MAX_NATIVE_OLLAMA_ATTEMPTS% (
+    echo [AVVISO] Ollama nativo non risponde ancora su %OLLAMA_BASE_URL%
+    goto :eof
+)
+set /a NATIVE_OLLAMA_ATTEMPT+=1
+goto :wait_native_ollama
+
+:resolve_ollama_runtime
+set OLLAMA_USE_NATIVE=false
+if exist %ROOT_DIR%\backend\.env (
+    for /f "usebackq tokens=1,* delims==" %%A in ("%ROOT_DIR%\backend\.env") do (
+        if /I "%%A"=="OLLAMA_MODEL" set OLLAMA_MODEL=%%B
+        if /I "%%A"=="OLLAMA_BASE_URL" set OLLAMA_BASE_URL=%%B
+        if /I "%%A"=="OLLAMA_KEEP_ALIVE" set OLLAMA_KEEP_ALIVE=%%B
+        if /I "%%A"=="OLLAMA_TOP_K" set OLLAMA_TOP_K=%%B
+        if /I "%%A"=="OLLAMA_TOP_P" set OLLAMA_TOP_P=%%B
+        if /I "%%A"=="OLLAMA_NUM_CTX" set OLLAMA_NUM_CTX=%%B
+        if /I "%%A"=="OLLAMA_NUM_THREAD" set OLLAMA_NUM_THREAD=%%B
+        if /I "%%A"=="OLLAMA_RUNTIME" set OLLAMA_RUNTIME=%%B
+        if /I "%%A"=="OLLAMA_ACCELERATOR" set OLLAMA_ACCELERATOR=%%B
+    )
+)
+if /I "%OLLAMA_RUNTIME%"=="native" (
+    set OLLAMA_USE_NATIVE=true
+    echo [INFO] Runtime Ollama: nativo Windows
+    goto :eof
+)
+if /I "%OLLAMA_RUNTIME%"=="docker" goto :configure_docker_runtime
+
+where ollama >nul 2>&1
+if not errorlevel 1 (
+    set OLLAMA_USE_NATIVE=true
+    echo [INFO] Runtime Ollama auto: uso Ollama nativo su Windows
+    goto :eof
+)
+
+:configure_docker_runtime
+set OLLAMA_COMPOSE_ARGS=-f docker-compose.yml
+if /I "%OLLAMA_ACCELERATOR%"=="nvidia" (
+    set OLLAMA_COMPOSE_ARGS=-f docker-compose.yml -f docker-compose.nvidia.yml
+    echo [INFO] Accelerazione Ollama Docker: NVIDIA
+    goto :eof
+)
+if /I "%OLLAMA_ACCELERATOR%"=="amd" (
+    echo [AVVISO] GPU AMD in Docker e' supportata soprattutto su host Linux/WSL con ROCm.
+    echo [AVVISO] Su Windows e' consigliato Ollama nativo per usare la GPU AMD.
+    set OLLAMA_COMPOSE_ARGS=-f docker-compose.yml -f docker-compose.amd.yml
+    goto :eof
+)
+echo [INFO] Runtime Ollama: Docker CPU/default
 goto :eof

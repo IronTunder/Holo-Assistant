@@ -65,6 +65,11 @@ uploads/
 *.mp3
 *.ogg
 
+# Modelli Vosk locali
+frontend/my-app/public/models/*.tar.gz
+frontend/my-app/public/models/*.zip
+frontend/my-app/public/models/vosk-model-*/
+
 # Docker
 docker-compose.override.yml
 *.pid

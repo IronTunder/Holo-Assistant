@@ -20,6 +20,7 @@ from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
+from app.schemas.interaction import FeedbackStatus, InteractionActionType, InteractionPriority
 from app.api.presenters import (
     serialize_category,
     serialize_department,
@@ -109,6 +110,10 @@ class InteractionLogResponse(BaseModel):
     knowledge_item_title: Optional[str] = None
     domanda: str
     risposta: Optional[str] = None
+    feedback_status: Optional[FeedbackStatus] = None
+    feedback_timestamp: Optional[datetime] = None
+    action_type: InteractionActionType = "question"
+    priority: InteractionPriority = "normal"
     timestamp: datetime
 
 
@@ -836,6 +841,7 @@ async def list_logs(
     machine_id: Optional[int] = None,
     category_id: Optional[int] = None,
     department_id: Optional[int] = None,
+    feedback_status: Optional[FeedbackStatus] = None,
     admin: User = Depends(verify_admin),
     db: Session = Depends(get_db),
 ):
@@ -856,6 +862,8 @@ async def list_logs(
         query = query.filter(InteractionLog.machine_id == machine_id)
     if category_id is not None:
         query = query.filter(InteractionLog.category_id == category_id)
+    if feedback_status is not None:
+        query = query.filter(InteractionLog.feedback_status == feedback_status)
 
     logs = (
         query.order_by(InteractionLog.timestamp.desc())
@@ -892,6 +900,10 @@ async def list_logs(
                 knowledge_item_title=log.knowledge_item.question_title if log.knowledge_item else None,
                 domanda=log.domanda,
                 risposta=log.risposta,
+                feedback_status=log.feedback_status,
+                feedback_timestamp=log.feedback_timestamp,
+                action_type=log.action_type or "question",
+                priority=log.priority or "normal",
                 timestamp=log.timestamp,
             )
         )

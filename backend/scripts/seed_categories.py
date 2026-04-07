@@ -41,13 +41,57 @@ CATEGORIES_DATA = {
     "Operazioni": {
         "description": "Domande sulle operazioni e il funzionamento della macchina",
         "responses": [
-            {"text": "Sequenza di avvio:\n1. Verificare le protezioni\n2. Inserire il materiale\n3. Selezionare il programma\n4. Impostare parametri velocita/potenza\n5. Premere START", "keywords": "avvio, sequenza, programma, parametri", "examples": "Come avvio la macchina?\nQual e la sequenza di start?\nCosa faccio prima di premere start?"},
-            {"text": "Parametri di funzionamento: velocita (default 50%), potenza (default 75%), tempo ciclo variabile in base al materiale", "keywords": "velocita, potenza, parametri, ciclo", "examples": "Quali parametri devo impostare?\nChe velocita uso?\nQual e la potenza standard?"},
-            {"text": "Se la macchina non si avvia:\n1. Verificare l'alimentazione\n2. Controllare gli interruttori di sicurezza\n3. Spegnere e riaccendere", "keywords": "avvio fallito, alimentazione, interruttori", "examples": "La macchina non parte\nNon riesco ad avviare il macchinario\nCosa controllo se non si accende?"},
-            {"text": "Per regolare la velocita di lavoro: utilizzare il potenziometro sul pannello di controllo, non superare il 90% per materiali delicati", "keywords": "velocita, potenziometro, regolazione, materiali delicati", "examples": "Come regolo la velocita?\nDove imposto la velocita di lavoro?\nPosso aumentare il potenziometro?"},
+            {"question_title": "Sequenza di avvio macchina", "text": "Sequenza di avvio:\n1. Verificare le protezioni\n2. Inserire il materiale\n3. Selezionare il programma\n4. Impostare parametri velocita/potenza\n5. Premere START", "keywords": "sequenza avvio macchina, start macchina, programma lavorazione, parametri avvio", "examples": "Come avvio la macchina in sicurezza?\nQual e la sequenza di start della postazione?\nCosa faccio prima di premere start sul pannello?"},
+            {"question_title": "Parametri standard ciclo macchina", "text": "Parametri di funzionamento: velocita (default 50%), potenza (default 75%), tempo ciclo variabile in base al materiale", "keywords": "parametri ciclo macchina, velocita lavorazione, potenza standard, tempo ciclo materiale", "examples": "Quali parametri macchina devo impostare sul ciclo?\nChe velocita di lavorazione uso per il materiale?\nQual e la potenza standard della macchina?"},
+            {"question_title": "Macchina non si avvia", "text": "Se la macchina non si avvia:\n1. Verificare l'alimentazione\n2. Controllare gli interruttori di sicurezza\n3. Spegnere e riaccendere", "keywords": "macchina non si avvia, alimentazione macchina, interruttori sicurezza start", "examples": "La macchina non parte al primo avvio\nNon riesco ad avviare il macchinario dal pannello\nCosa controllo se la macchina non si accende?"},
+            {"question_title": "Regolazione velocita dal pannello", "text": "Per regolare la velocita di lavoro: utilizzare il potenziometro sul pannello di controllo, non superare il 90% per materiali delicati", "keywords": "regolazione velocita pannello, potenziometro macchina, velocita lavoro materiale delicato", "examples": "Come regolo la velocita dal pannello macchina?\nDove imposto la velocita di lavoro del ciclo?\nPosso aumentare il potenziometro della macchina?"},
         ],
     },
 }
+
+LEGACY_ITEM_UPDATES = (
+    {
+        "match_text": "Per regolare la velocita di lavoro: utilizzare il potenziometro sul pannello di controllo, non superare il 90% per materiali delicati",
+        "question_title": "Regolazione velocita dal pannello",
+        "keywords": "regolazione velocita pannello, potenziometro macchina, velocita lavoro materiale delicato",
+        "example_questions": "Come regolo la velocita dal pannello macchina?\nDove imposto la velocita di lavoro del ciclo?\nPosso aumentare il potenziometro della macchina?",
+    },
+    {
+        "match_text": "Parametri di funzionamento: velocita (default 50%), potenza (default 75%), tempo ciclo variabile in base al materiale",
+        "question_title": "Parametri standard ciclo macchina",
+        "keywords": "parametri ciclo macchina, velocita lavorazione, potenza standard, tempo ciclo materiale",
+        "example_questions": "Quali parametri macchina devo impostare sul ciclo?\nChe velocita di lavorazione uso per il materiale?\nQual e la potenza standard della macchina?",
+    },
+    {
+        "match_text": "Sequenza di avvio:\n1. Verificare le protezioni\n2. Inserire il materiale\n3. Selezionare il programma\n4. Impostare parametri velocita/potenza\n5. Premere START",
+        "question_title": "Sequenza di avvio macchina",
+        "keywords": "sequenza avvio macchina, start macchina, programma lavorazione, parametri avvio",
+        "example_questions": "Come avvio la macchina in sicurezza?\nQual e la sequenza di start della postazione?\nCosa faccio prima di premere start sul pannello?",
+    },
+)
+
+
+def align_existing_seed_data(db) -> int:
+    updated_items = 0
+    for update in LEGACY_ITEM_UPDATES:
+        item = db.query(KnowledgeItem).filter(KnowledgeItem.answer_text == update["match_text"]).first()
+        if item is None:
+            continue
+
+        changed = False
+        if item.question_title != update["question_title"]:
+            item.question_title = update["question_title"]
+            changed = True
+        if item.keywords != update["keywords"]:
+            item.keywords = update["keywords"]
+            changed = True
+        if item.example_questions != update["example_questions"]:
+            item.example_questions = update["example_questions"]
+            changed = True
+        if changed:
+            updated_items += 1
+
+    return updated_items
 
 
 def seed_database():
@@ -56,9 +100,15 @@ def seed_database():
 
     db = SessionLocal()
     try:
+        updated_items = align_existing_seed_data(db)
         existing_categories = db.query(Category).count()
         existing_knowledge_items = db.query(KnowledgeItem).count()
         if existing_categories > 0 or existing_knowledge_items > 0:
+            if updated_items:
+                db.commit()
+                logger.info("Knowledge item legacy riallineati: %s", updated_items)
+            else:
+                db.rollback()
             logger.info(
                 "Database gia popolato con %s categorie e %s knowledge items. Saltando il seeding.",
                 existing_categories,
@@ -78,7 +128,7 @@ def seed_database():
             db.flush()
 
             for sort_order, response_data in enumerate(category_data["responses"], start=1):
-                first_keyword = next(
+                first_keyword = response_data.get("question_title") or next(
                     (token.strip() for token in response_data["keywords"].split(",") if token.strip()),
                     None,
                 )
@@ -105,6 +155,8 @@ def seed_database():
                     )
 
         db.commit()
+        if updated_items:
+            logger.info("Knowledge item legacy riallineati: %s", updated_items)
         logger.info("Seeding completato con successo")
         logger.info("Categorie create: %s", len(CATEGORIES_DATA))
         logger.info("Knowledge item creati: %s", total_items)

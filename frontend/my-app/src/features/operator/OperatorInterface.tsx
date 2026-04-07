@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Mic, Radio, X } from 'lucide-react';
+import { AlertTriangle, Mic, MicOff, Radio, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { StartupChecklistDialog } from './StartupChecklistDialog';
 import { useAuth, type AuthMachine } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
-import { API_BASE_URL, API_ENDPOINTS } from '@/shared/api/config';
+import { API_ENDPOINTS } from '@/shared/api/config';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { useVoskWakeWord, type VoskWakeWordStatus } from './voice/useVoskWakeWord';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
 type SessionStatusReason = 'ok' | 'machine_released' | 'machine_reassigned' | 'machine_not_found';
@@ -27,6 +28,7 @@ type ClarificationOption = {
 };
 
 type AskQuestionApiResponse = {
+  interaction_id?: number | null;
   response: string;
   mode: 'answer' | 'clarification' | 'fallback';
   reason_code: 'matched' | 'clarification' | 'no_match' | 'out_of_scope';
@@ -38,11 +40,79 @@ type AskQuestionApiResponse = {
   knowledge_item_title?: string | null;
 };
 
+type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
+type QuickActionType = 'maintenance' | 'emergency';
+
+type QuickActionApiResponse = {
+  interaction_id: number;
+  action_type: QuickActionType;
+  priority: 'normal' | 'critical';
+  feedback_status: InteractionFeedbackStatus;
+  message: string;
+  timestamp: string;
+};
+
+const UNRESOLVED_CONFIRMATION_MESSAGE =
+  "L'assistenza è stata informata del tuo problema e inviera al piu presto un tecnico. Quando il tecnico avra risolto il problema, l'intervento potra essere confermato nel sistema.";
+
+const VOSK_MODEL_URL = import.meta.env.VITE_VOSK_MODEL_URL || '/models/vosk-model-small-it-0.22.tar.gz';
+
 const quickActions = [
-  { title: 'Emergenza', subtitle: 'Alert rapido' },
-  { title: 'Manutenzione', subtitle: 'Chiama tecnico' },
-  { title: 'Supporto', subtitle: 'Apri aiuto' },
-];
+  { actionType: 'emergency', title: 'Emergenza', subtitle: 'Alert rapido' },
+  { actionType: 'maintenance', title: 'Manutenzione', subtitle: 'Chiama tecnico' },
+] as const satisfies readonly {
+  actionType: QuickActionType;
+  title: string;
+  subtitle: string;
+}[];
+
+const quickActionFallbackMessages: Record<QuickActionType, string> = {
+  maintenance: 'La richiesta di manutenzione e stata inviata.',
+  emergency: 'Emergenza inviata. Allontanati dalla macchina e segui le procedure di sicurezza del reparto.',
+};
+
+const quickActionButtonStyles: Record<QuickActionType, string> = {
+  emergency: 'border-red-400/40 bg-red-500/15 text-red-50 hover:bg-red-500/25 disabled:border-red-500/20 disabled:bg-red-500/10 disabled:text-red-200',
+  maintenance: 'border-amber-400/30 bg-amber-500/10 text-amber-50 hover:bg-amber-500/20 disabled:border-amber-500/20 disabled:bg-amber-500/10 disabled:text-amber-200',
+};
+
+const quickActionTitleStyles: Record<QuickActionType, string> = {
+  emergency: 'text-red-200',
+  maintenance: 'text-amber-200',
+};
+
+const quickActionSubtitleStyles: Record<QuickActionType, string> = {
+  emergency: 'text-white',
+  maintenance: 'text-white',
+};
+
+function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
+  switch (status) {
+    case 'loading-model':
+      return 'Caricamento wake word';
+    case 'requesting-microphone':
+      return 'Permesso microfono';
+    case 'wake-listening':
+      return 'Wake word attivo';
+    case 'command-listening':
+      return 'In ascolto domanda';
+    case 'error':
+      return error ? 'Wake word non disponibile' : 'Errore wake word';
+    case 'ready':
+      return 'Wake word in pausa';
+    case 'disabled':
+    default:
+      return 'Wake word disattivato';
+  }
+}
+
+function isWakeWordActive(status: VoskWakeWordStatus): boolean {
+  return status === 'wake-listening' || status === 'command-listening';
+}
+
+function shouldAutoMarkAsNotApplicable(response: AskQuestionApiResponse): boolean {
+  return response.mode === 'fallback' || response.reason_code === 'out_of_scope' || response.reason_code === 'no_match';
+}
 
 export function OperatorInterface() {
   const { 
@@ -58,7 +128,6 @@ export function OperatorInterface() {
   
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
   const [, setTranscript] = useState('');
-  const [wakeWordActive, setWakeWordActive] = useState(true);
   const [, setShowSubtitles] = useState(false);
   const [loading, setLoading] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
@@ -70,6 +139,12 @@ export function OperatorInterface() {
   const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
+  const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [quickActionInFlight, setQuickActionInFlight] = useState<QuickActionType | null>(null);
+  const [showEmergencyConfirmation, setShowEmergencyConfirmation] = useState(false);
+  const [wakeWordMuted, setWakeWordMuted] = useState(false);
+  const activeInteractionIdRef = useRef<number | null>(null);
   const [showStartupChecklist, setShowStartupChecklist] = useState(false);
   const [startupChecklistCompleted, setStartupChecklistCompleted] = useState(false);
   const [pendingLoginData, setPendingLoginData] = useState<{
@@ -107,6 +182,11 @@ export function OperatorInterface() {
   const showTimedLogoutMessage = (message: string) => {
     setLogoutMessage(message);
     setLogoutMessageKey(Date.now());
+  };
+
+  const setTrackedActiveInteractionId = (interactionId: number | null) => {
+    activeInteractionIdRef.current = interactionId;
+    setActiveInteractionId(interactionId);
   };
 
   useEffect(() => {
@@ -315,6 +395,11 @@ export function OperatorInterface() {
           return;
         }
 
+        if (tokenResponse.status === 409) {
+          await stopAndLogout('Sessione non piu valida');
+          return;
+        }
+
         if (!tokenResponse.ok) {
           console.error(`SSE token creation failed with status: ${tokenResponse.status}`);
           startPollingFallback();
@@ -456,9 +541,48 @@ export function OperatorInterface() {
     }
   };
 
+  const submitInteractionFeedback = async (
+    interactionId: number,
+    feedbackStatus: InteractionFeedbackStatus,
+    token: string
+  ) => {
+    const response = await fetch(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        feedback_status: feedbackStatus,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Errore nel salvataggio del feedback');
+    }
+  };
+
+  const markActiveInteractionAsNotApplicable = async () => {
+    const interactionId = activeInteractionIdRef.current;
+
+    if (!interactionId || !accessToken || isSubmittingFeedback) {
+      return;
+    }
+
+    try {
+      await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
+      setShowFollowUp(false);
+      setTrackedActiveInteractionId(null);
+    } catch (error) {
+      console.error('Errore salvataggio feedback non rilevante durante logout:', error);
+    }
+  };
+
   const handleLogout = async () => {
     manualLogoutInProgressRef.current = true;
     dismissLogoutMessage();
+    await markActiveInteractionAsNotApplicable();
     avatarDisplayRef.current?.stopSpeech();
     setAvatarState('idle');
     setTranscript('');
@@ -468,11 +592,13 @@ export function OperatorInterface() {
     setClarificationOptions([]);
     setPendingQuestion(null);
     setFallbackReasonCode(null);
+    setTrackedActiveInteractionId(null);
+    setIsSubmittingFeedback(false);
+    setQuickActionInFlight(null);
+    setShowEmergencyConfirmation(false);
+    setWakeWordMuted(false);
     setIsTyping(false);
     setShowSubtitles(false);
-    setWakeWordActive(true);
-    setStartupChecklistCompleted(false);
-    setShowStartupChecklist(false);
     await logout();
   };
 
@@ -485,9 +611,10 @@ export function OperatorInterface() {
     setShowFollowUp(false);
     setClarificationOptions([]);
     setFallbackReasonCode(null);
+    setTrackedActiveInteractionId(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/interactions/ask`, {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_ASK, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -507,12 +634,32 @@ export function OperatorInterface() {
       }
 
       const data = (await response.json()) as AskQuestionApiResponse;
+      const interactionId = data.interaction_id ?? null;
+
+      if (interactionId) {
+        setTrackedActiveInteractionId(interactionId);
+      }
+
+      if (interactionId && manualLogoutInProgressRef.current) {
+        await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
+        setTrackedActiveInteractionId(null);
+        return;
+      }
+
       const speechPayload = await handleTTS(data.response);
       let playback: TtsPlayback | null = null;
+
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
 
       if (speechPayload) {
         setAvatarState('speaking');
         playback = await startSpeechPlayback(speechPayload);
+      }
+
+      if (manualLogoutInProgressRef.current) {
+        return;
       }
 
       await startTypingEffect(data.response, speechPayload?.durationMs);
@@ -529,6 +676,28 @@ export function OperatorInterface() {
       setAvatarState('idle');
       setShowSubtitles(false);
 
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
+
+      if (shouldAutoMarkAsNotApplicable(data)) {
+        setPendingQuestion(null);
+        setClarificationOptions([]);
+        setFallbackReasonCode(data.reason_code);
+        setShowFollowUp(false);
+
+        if (interactionId) {
+          try {
+            await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
+            setTrackedActiveInteractionId(null);
+          } catch (feedbackError) {
+            console.error('Errore salvataggio feedback non rilevante per risposta fallback:', feedbackError);
+          }
+        }
+
+        return;
+      }
+
       if (data.mode === 'clarification') {
         setPendingQuestion(userQuestion);
         setClarificationOptions(data.clarification_options);
@@ -538,8 +707,13 @@ export function OperatorInterface() {
       setPendingQuestion(null);
       setClarificationOptions([]);
       setFallbackReasonCode(data.mode === 'fallback' ? data.reason_code : null);
-      setShowFollowUp(data.mode === 'answer');
+      setTrackedActiveInteractionId(interactionId);
+      setShowFollowUp(Boolean(data.interaction_id));
     } catch (error) {
+      if (manualLogoutInProgressRef.current) {
+        return;
+      }
+
       console.error('Error asking question:', error);
       setAvatarState('idle');
       const errorMsg = error instanceof Error ? error.message : 'Errore sconosciuto';
@@ -582,10 +756,122 @@ export function OperatorInterface() {
     return playTtsAudio(payload);
   };
 
-  const handleFollowUpResponse = (resolved: boolean) => {
-    console.log(`Problema risolto: ${resolved}`);
+  const playAssistantMessage = async (message: string) => {
+    const speechPayload = await handleTTS(message);
+    let playback: TtsPlayback | null = null;
+
+    if (speechPayload) {
+      setAvatarState('speaking');
+      playback = await startSpeechPlayback(speechPayload);
+    }
+
+    await startTypingEffect(message, speechPayload?.durationMs);
+
+    if (playback) {
+      try {
+        await playback.finished;
+      } catch (playbackError) {
+        console.error('Audio playback error:', playbackError);
+      }
+    }
+
+    setIsTyping(false);
+    setAvatarState('idle');
+    setShowSubtitles(false);
+  };
+
+  const resetInteractionStateForQuickAction = () => {
+    setQuestionInput('');
     setShowFollowUp(false);
-    setCurrentTranscription('');
+    setClarificationOptions([]);
+    setPendingQuestion(null);
+    setFallbackReasonCode(null);
+    setTrackedActiveInteractionId(null);
+  };
+
+  const submitQuickAction = async (actionType: QuickActionType) => {
+    if (!user || !machine || !accessToken || quickActionInFlight || isTyping || avatarState === 'speaking' || avatarState === 'thinking') {
+      return;
+    }
+
+    setQuickActionInFlight(actionType);
+    setShowEmergencyConfirmation(false);
+    resetInteractionStateForQuickAction();
+
+    try {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_QUICK_ACTION, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          machine_id: machine.id,
+          user_id: user.id,
+          action_type: actionType,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Errore durante l invio della segnalazione');
+      }
+
+      const data = (await response.json()) as QuickActionApiResponse;
+      await playAssistantMessage(data.message || quickActionFallbackMessages[actionType]);
+    } catch (error) {
+      console.error('Errore invio segnalazione rapida:', error);
+      setAvatarState('idle');
+      setIsTyping(false);
+      setShowSubtitles(false);
+      alert(error instanceof Error ? error.message : 'Errore durante l invio della segnalazione');
+    } finally {
+      setQuickActionInFlight(null);
+    }
+  };
+
+  const handleFollowUpResponse = async (feedbackStatus: InteractionFeedbackStatus) => {
+    if (!activeInteractionId || !accessToken || isSubmittingFeedback) {
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    try {
+      await submitInteractionFeedback(activeInteractionId, feedbackStatus, accessToken);
+
+      setShowFollowUp(false);
+      setTrackedActiveInteractionId(null);
+      if (feedbackStatus === 'unresolved') {
+        const speechPayload = await handleTTS(UNRESOLVED_CONFIRMATION_MESSAGE);
+        let playback: TtsPlayback | null = null;
+
+        if (speechPayload) {
+          setAvatarState('speaking');
+          playback = await startSpeechPlayback(speechPayload);
+        }
+
+        await startTypingEffect(UNRESOLVED_CONFIRMATION_MESSAGE, speechPayload?.durationMs);
+
+        if (playback) {
+          try {
+            await playback.finished;
+          } catch (playbackError) {
+            console.error('Audio playback error:', playbackError);
+          }
+        }
+
+        setIsTyping(false);
+        setAvatarState('idle');
+        setShowSubtitles(false);
+      } else {
+        setCurrentTranscription('');
+      }
+    } catch (error) {
+      console.error('Errore invio feedback interazione:', error);
+      alert(error instanceof Error ? error.message : 'Errore nel salvataggio del feedback');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
   };
 
   const handleClarificationSelection = async (knowledgeItemId: number) => {
@@ -627,8 +913,46 @@ export function OperatorInterface() {
     });
   };
 
+  const wakeWordAutomaticallyPaused = loading || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+  const wakeWordPaused = wakeWordMuted || wakeWordAutomaticallyPaused;
+  const {
+    status: wakeWordStatus,
+    partialTranscript: voicePartialTranscript,
+    lastTranscript: voiceLastTranscript,
+    error: wakeWordError,
+  } = useVoskWakeWord({
+    enabled: isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine),
+    paused: wakeWordPaused,
+    wakePhrase: 'Ehi Ditto',
+    modelUrl: VOSK_MODEL_URL,
+    onWake: () => {
+      setAvatarState('listening');
+      setQuestionInput('');
+      setCurrentTranscription('');
+      setShowFollowUp(false);
+      setClarificationOptions([]);
+      setPendingQuestion(null);
+      setFallbackReasonCode(null);
+      setTrackedActiveInteractionId(null);
+    },
+    onTranscriptFinal: (transcript) => {
+      setQuestionInput(transcript);
+      setAvatarState('idle');
+      void submitQuestion(transcript);
+    },
+    onError: (voiceError) => {
+      console.error('Wake word Vosk error:', voiceError);
+      setAvatarState('idle');
+    },
+  });
+  const wakeWordActive = isWakeWordActive(wakeWordStatus);
+  const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
+  const canToggleWakeWord = isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine);
+  const voiceDebugTranscript = voicePartialTranscript || voiceLastTranscript;
+  const quickActionsDisabled = Boolean(quickActionInFlight) || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <div className="relative min-h-[100dvh] overflow-x-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       {/* Logout notification */}
       {logoutMessage && (
         <div
@@ -669,10 +993,10 @@ export function OperatorInterface() {
         }}></div>
       </div>
 
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
+      <div className="relative z-10 flex min-h-[100dvh] flex-col">
         <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">
                 <span className="text-blue-400">DITTO</span> Assistente
               </h1>
@@ -687,11 +1011,37 @@ export function OperatorInterface() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-start gap-3 xl:justify-end">
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <div
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${
+                  wakeWordStatus === 'error'
+                    ? 'border-red-400/30 bg-red-500/10 text-red-100'
+                    : wakeWordMuted
+                      ? 'border-slate-400/20 bg-slate-500/10 text-slate-200'
+                    : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
+                }`}
+                title={wakeWordError || 'Il browser chiedera il permesso microfono al primo avvio.'}
+              >
                 <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
-                <span>{wakeWordActive ? 'Wake word attivo' : 'Wake word disattivato'}</span>
+                <span>{wakeWordMuted ? 'Wake word mutato' : wakeWordLabel}</span>
               </div>
+
+              {canToggleWakeWord && (
+                <button
+                  type="button"
+                  onClick={() => setWakeWordMuted((current) => !current)}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${
+                    wakeWordMuted
+                      ? 'border-blue-400/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20'
+                      : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'
+                  }`}
+                  aria-pressed={wakeWordMuted}
+                  title={wakeWordMuted ? 'Riattiva ascolto wake word' : 'Metti in pausa la wake word'}
+                >
+                  {wakeWordMuted ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                  <span>{wakeWordMuted ? 'Riattiva wake word' : 'Muta wake word'}</span>
+                </button>
+              )}
 
               {isLoggedIn && user && (
                 <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
@@ -713,7 +1063,7 @@ export function OperatorInterface() {
           </div>
         </header>
 
-        <main className="flex-1 min-h-0 px-4 py-4 sm:px-6 sm:py-5">
+        <main className="flex-1 px-3 py-3 sm:px-6 sm:py-5">
           {!isLoggedIn ? (
             <BadgeReader
               onBadgeDetected={handleBadgeLogin}
@@ -727,8 +1077,8 @@ export function OperatorInterface() {
               </div>
             </div>
           ) : (
-            <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[minmax(320px,0.95fr)_minmax(380px,1.05fr)]">
-              <section className="flex min-h-0 flex-col rounded-[28px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:p-6">
+            <div className="grid gap-4 md:min-h-0 md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)]">
+              <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:min-h-[340px] sm:p-6 md:min-h-0">
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 text-center">
                   <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
 
@@ -743,7 +1093,7 @@ export function OperatorInterface() {
                   {avatarState === 'listening' && (
                     <>
                           <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
-                      <span>In ascolto...</span>
+                      <span>{voicePartialTranscript || 'In ascolto...'}</span>
                     </>
                   )}
                   {avatarState === 'thinking' && (
@@ -763,28 +1113,29 @@ export function OperatorInterface() {
                     </>
                   )}
                     </div>
-
-                    <p className="mx-auto max-w-md text-sm text-slate-300">
-                      Il tuo assistente digitale per il supporto tecnico. Fai domande, ricevi risposte e accedi a procedure guidate senza distogliere lo sguardo dal tuo lavoro.
-                    </p>
+                    {wakeWordActive && voiceDebugTranscript && (
+                      <p className="mx-auto max-w-md break-words text-xs text-slate-400">
+                        Riconosciuto: {voiceDebugTranscript}
+                      </p>
+                    )}
                   </div>
                 </div>
               </section>
 
-              <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+              <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm md:min-h-0">
                 <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
                   <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
                   <h2 className="mt-1 text-lg font-semibold text-white">Domande, risposte e azioni rapide</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                      Fai domande tecniche o seleziona azioni rapide. Le risposte appariranno qui senza far scorrere la pagina, così puoi mantenere il focus sul tuo lavoro.
+                      Scrivi o pronuncia le tue domande tecniche. L'assistente fornirà risposte dettagliate, suggerimenti e procedure guidate per aiutarti a risolvere i problemi senza dover consultare manuali o cercare online.
                   </p>
                 </div>
 
-                <div className="min-h-0 flex-1 px-4 py-4 sm:px-5">
-                  <ScrollArea className="h-full pr-3">
+                <div className="flex-1 px-4 py-4 sm:px-5 md:min-h-0">
+                  <ScrollArea className="h-full md:pr-3">
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                           <h3 className="text-sm font-semibold text-slate-200">Risposta assistente</h3>
                           {isTyping && (
                             <span className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
@@ -795,13 +1146,13 @@ export function OperatorInterface() {
 
                         {currentTranscription ? (
                           <>
-                            <div className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-100">
+                          <div className="mt-3 break-words whitespace-pre-line text-sm leading-6 text-slate-100">
                               {currentTranscription}
                               {isTyping && <span className="animate-pulse">|</span>}
                             </div>
                             {!isTyping && fallbackReasonCode === 'out_of_scope' && (
                               <p className="mt-3 text-xs text-amber-200">
-                                Questa richiesta sembra fuori ambito rispetto al supporto macchina.
+                                Richiesta fuori ambito: posso aiutarti solo con macchine, sicurezza e procedure di reparto.
                               </p>
                             )}
                             {!isTyping && fallbackReasonCode === 'no_match' && (
@@ -812,7 +1163,7 @@ export function OperatorInterface() {
                           </>
                         ) : (
                           <p className="mt-3 text-sm leading-6 text-slate-400">
-                            Scrivi o pronuncia una domanda tecnica. La risposta apparira qui senza far scorrere la pagina.
+                            Scrivi una domanda tecnica per iniziare.
                           </p>
                         )}
                       </div>
@@ -841,17 +1192,58 @@ export function OperatorInterface() {
                           <p className="text-lg font-semibold text-white">Hai risolto il problema?</p>
                           <div className="mt-4 flex flex-wrap justify-center gap-3">
                             <button
-                              onClick={() => handleFollowUpResponse(true)}
-                              className="rounded-xl bg-green-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600"
+                              onClick={() => void handleFollowUpResponse('resolved')}
+                              disabled={isSubmittingFeedback}
+                              className="rounded-xl bg-green-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               Si
                             </button>
                             <button
-                              onClick={() => handleFollowUpResponse(false)}
-                              className="rounded-xl bg-red-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+                              onClick={() => void handleFollowUpResponse('unresolved')}
+                              disabled={isSubmittingFeedback}
+                              className="rounded-xl bg-red-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               No
                             </button>
+                            <button
+                              onClick={() => void handleFollowUpResponse('not_applicable')}
+                              disabled={isSubmittingFeedback}
+                              className="rounded-xl bg-slate-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Non rilevante
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {showEmergencyConfirmation && (
+                        <div className="rounded-2xl border border-red-400/50 bg-red-500/15 p-4">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-red-200" />
+                            <div className="min-w-0 flex-1">
+                              <h3 className="text-base font-semibold text-red-50">Conferma emergenza</h3>
+                              <p className="mt-1 text-sm leading-6 text-red-100">
+                                Invia un segnale critico all'area admin per questa macchina. Non arresta fisicamente la macchina.
+                              </p>
+                              <div className="mt-4 flex flex-wrap gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => void submitQuickAction('emergency')}
+                                  disabled={quickActionsDisabled}
+                                  className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {quickActionInFlight === 'emergency' ? 'Invio emergenza...' : 'Conferma emergenza'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEmergencyConfirmation(false)}
+                                  disabled={Boolean(quickActionInFlight)}
+                                  className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Annulla
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -873,6 +1265,7 @@ export function OperatorInterface() {
                             setClarificationOptions([]);
                             setPendingQuestion(null);
                             setFallbackReasonCode(null);
+                            setTrackedActiveInteractionId(null);
                           }
                         }}
                         placeholder="Scrivi la tua domanda..."
@@ -887,21 +1280,31 @@ export function OperatorInterface() {
                       <button
                         onClick={handleQuestionSubmit}
                         disabled={isTyping || !questionInput.trim()}
-                        className="rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
+                        className="w-full rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto"
                       >
                         Invia
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {quickActions.map((action) => (
                         <button
                           key={action.title}
                           type="button"
-                          className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left transition-colors hover:bg-white/10"
+                          onClick={() => {
+                            if (action.actionType === 'emergency') {
+                              setShowEmergencyConfirmation(true);
+                              return;
+                            }
+                            void submitQuickAction(action.actionType);
+                          }}
+                          disabled={quickActionsDisabled}
+                          className={`rounded-2xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${quickActionButtonStyles[action.actionType]}`}
                         >
-                          <span className="block text-xs uppercase tracking-[0.18em] text-slate-400">{action.title}</span>
-                          <span className="mt-1 block text-sm font-semibold text-white">{action.subtitle}</span>
+                          <span className={`block text-xs uppercase tracking-[0.18em] ${quickActionTitleStyles[action.actionType]}`}>{action.title}</span>
+                          <span className={`mt-1 block text-sm font-semibold ${quickActionSubtitleStyles[action.actionType]}`}>
+                            {quickActionInFlight === action.actionType ? 'Invio in corso...' : action.subtitle}
+                          </span>
                         </button>
                       ))}
                     </div>

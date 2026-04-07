@@ -26,6 +26,18 @@ const statCards = [
   { key: 'knowledge_items', label: 'Template knowledge', icon: BookText, accent: 'bg-rose-50 text-rose-700' },
 ] as const;
 
+const feedbackLabels = {
+  resolved: 'Risolto',
+  unresolved: 'Non risolto',
+  not_applicable: 'Non rilevante',
+} as const;
+
+const actionLabels = {
+  question: 'Domanda',
+  maintenance: 'Manutenzione',
+  emergency: 'Emergenza',
+} as const;
+
 export const AdminDashboard = () => {
   const { accessToken, isAdmin, logout, refreshAccessToken, user } = useAuth();
   const { apiCall } = useApiClient();
@@ -34,7 +46,9 @@ export const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [recentLogs, setRecentLogs] = useState<InteractionLogEntry[]>([]);
+  const [recentUnresolvedLogs, setRecentUnresolvedLogs] = useState<InteractionLogEntry[]>([]);
   const [isLoadingOverview, setIsLoadingOverview] = useState(true);
+  const [updatingInteractionId, setUpdatingInteractionId] = useState<number | null>(null);
 
   const authorizedFetch = useCallback(
     async (
@@ -75,9 +89,10 @@ export const AdminDashboard = () => {
     }
 
     try {
-      const [summaryResponse, logsResponse] = await Promise.all([
+      const [summaryResponse, logsResponse, unresolvedLogsResponse] = await Promise.all([
         apiCall(API_ENDPOINTS.ADMIN_DASHBOARD_SUMMARY),
         apiCall(`${API_ENDPOINTS.LIST_LOGS}?page=1&size=5`),
+        apiCall(`${API_ENDPOINTS.LIST_LOGS}?page=1&size=5&feedback_status=unresolved`),
       ]);
 
       if (summaryResponse.ok) {
@@ -85,6 +100,9 @@ export const AdminDashboard = () => {
       }
       if (logsResponse.ok) {
         setRecentLogs((await logsResponse.json()) as InteractionLogEntry[]);
+      }
+      if (unresolvedLogsResponse.ok) {
+        setRecentUnresolvedLogs((await unresolvedLogsResponse.json()) as InteractionLogEntry[]);
       }
     } catch (error) {
       console.error(error);
@@ -115,6 +133,16 @@ export const AdminDashboard = () => {
     return `${summary.total_users} utenti, ${summary.total_machines} macchinari, ${summary.knowledge_items} template knowledge.`;
   }, [summary]);
 
+  const recentCriticalEmergencyLogs = useMemo(
+    () => recentUnresolvedLogs.filter((log) => log.action_type === 'emergency' && log.priority === 'critical'),
+    [recentUnresolvedLogs]
+  );
+
+  const recentStandardUnresolvedLogs = useMemo(
+    () => recentUnresolvedLogs.filter((log) => !(log.action_type === 'emergency' && log.priority === 'critical')),
+    [recentUnresolvedLogs]
+  );
+
   const handleLogout = async () => {
     await logout();
     navigate('/admin-login', { replace: true });
@@ -124,6 +152,45 @@ export const AdminDashboard = () => {
   const refreshAll = useCallback(async () => {
     await Promise.all([refresh(), loadOverview()]);
   }, [loadOverview, refresh]);
+
+  const markInteractionAsResolved = useCallback(
+    async (interactionId: number) => {
+      setUpdatingInteractionId(interactionId);
+      try {
+        const response = await apiCall(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+          method: 'POST',
+          body: JSON.stringify({
+            feedback_status: 'resolved',
+          }),
+        });
+        if (!response.ok) {
+          throw new Error('Errore nell\'aggiornamento del problema');
+        }
+
+        setRecentUnresolvedLogs((currentLogs) =>
+          currentLogs.filter((log) => log.id !== interactionId)
+        );
+        setRecentLogs((currentLogs) =>
+          currentLogs.map((log) =>
+            log.id === interactionId
+              ? {
+                  ...log,
+                  feedback_status: 'resolved',
+                  feedback_timestamp: new Date().toISOString(),
+                }
+              : log
+          )
+        );
+        toast.success('Problema segnato come risolto');
+      } catch (error) {
+        console.error(error);
+        toast.error('Impossibile aggiornare il problema');
+      } finally {
+        setUpdatingInteractionId(null);
+      }
+    },
+    [apiCall]
+  );
 
   useEffect(() => {
     if (!accessToken || !isAdmin) {
@@ -152,7 +219,11 @@ export const AdminDashboard = () => {
         await refresh();
       }
 
-      if (eventName === 'machine_status' || eventName === 'interaction_created') {
+      if (
+        eventName === 'machine_status' ||
+        eventName === 'interaction_created' ||
+        eventName === 'interaction_feedback_updated'
+      ) {
         await loadOverview({ silent: true });
       }
     };
@@ -275,7 +346,7 @@ export const AdminDashboard = () => {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#eff6ff,_#f8fafc_55%)]">
       <div className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
@@ -286,12 +357,12 @@ export const AdminDashboard = () => {
               </Badge>
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Dashboard operativa</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">Dashboard operativa</h1>
               <p className="text-sm text-slate-500">{headerSubtitle}</p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
               Aggiornamento automatico attivo
             </Badge>
@@ -305,30 +376,30 @@ export const AdminDashboard = () => {
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 gap-2 rounded-2xl bg-white p-2 shadow-sm lg:grid-cols-6">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3 lg:grid-cols-6">
             <TabsTrigger value="overview" className="gap-2">
               <LayoutDashboard className="h-4 w-4" />
-              <span className="hidden sm:inline">Panoramica</span>
+              <span>Panoramica</span>
             </TabsTrigger>
             <TabsTrigger value="users" className="gap-2">
               <Users className="h-4 w-4" />
-              <span className="hidden sm:inline">Utenti</span>
+              <span>Utenti</span>
             </TabsTrigger>
             <TabsTrigger value="machines" className="gap-2">
               <Cpu className="h-4 w-4" />
-              <span className="hidden sm:inline">Macchinari</span>
+              <span>Macchinari</span>
             </TabsTrigger>
             <TabsTrigger value="knowledge" className="gap-2">
               <BookText className="h-4 w-4" />
-              <span className="hidden sm:inline">Knowledge</span>
+              <span>Knowledge</span>
             </TabsTrigger>
             <TabsTrigger value="logs" className="gap-2">
               <ScrollText className="h-4 w-4" />
-              <span className="hidden sm:inline">Log</span>
+              <span>Log</span>
             </TabsTrigger>
             <TabsTrigger value="settings" className="gap-2">
               <Settings className="h-4 w-4" />
-              <span className="hidden sm:inline">Impostazioni</span>
+              <span>Impostazioni</span>
             </TabsTrigger>
           </TabsList>
 
@@ -355,6 +426,100 @@ export const AdminDashboard = () => {
               })}
             </section>
 
+            <section>
+              <Card className="border-red-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-950">Problemi non risolti recenti</h2>
+                    <p className="text-sm text-slate-500">
+                      Segnalazioni arrivate dagli operatori quando la risposta non e bastata.
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+                    {recentUnresolvedLogs.length} aperti
+                  </Badge>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {recentCriticalEmergencyLogs.length > 0 ? (
+                    <div className="rounded-xl border border-red-300 bg-red-600 p-4 text-white shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-white/40 bg-white text-red-700">
+                          Emergenza critica
+                        </Badge>
+                        <span className="text-xs text-red-100">{recentCriticalEmergencyLogs.length} attive</span>
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        {recentCriticalEmergencyLogs.map((log) => (
+                          <div key={log.id} className="rounded-xl border border-white/20 bg-white/10 p-3">
+                            <p className="text-sm font-semibold">
+                              {log.machine_name} - {log.user_name}
+                            </p>
+                            <p className="mt-1 text-sm text-red-50">{log.domanda}</p>
+                            <p className="mt-1 text-xs text-red-100">
+                              {new Date(log.timestamp).toLocaleString('it-IT')}
+                            </p>
+                            <div className="mt-3">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                disabled={updatingInteractionId === log.id}
+                                onClick={() => void markInteractionAsResolved(log.id)}
+                              >
+                                Conferma risoluzione
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {recentUnresolvedLogs.length === 0 ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                      Nessun problema non risolto nelle interazioni piu recenti.
+                    </div>
+                  ) : (
+                    recentStandardUnresolvedLogs.map((log) => (
+                      <div key={log.id} className="rounded-xl border border-red-100 bg-red-50/60 p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="border-red-200 bg-white text-red-700">
+                            {feedbackLabels.unresolved}
+                          </Badge>
+                          <Badge variant="outline" className={log.action_type === 'maintenance' ? 'border-amber-200 bg-amber-50 text-amber-700' : ''}>
+                            {actionLabels[log.action_type]}
+                          </Badge>
+                          <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          <span className="text-xs text-slate-500">
+                            {new Date(log.timestamp).toLocaleString('it-IT')}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">
+                          {log.machine_name} - {log.user_name}
+                        </p>
+                        <p className="mt-1 line-clamp-2 text-sm text-slate-700">{log.domanda}</p>
+                        {log.risposta ? (
+                          <p className="mt-2 line-clamp-2 text-xs text-slate-500">{log.risposta}</p>
+                        ) : null}
+                        <div className="mt-3">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={updatingInteractionId === log.id}
+                            onClick={() => void markInteractionAsResolved(log.id)}
+                          >
+                            Conferma risoluzione
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Card>
+            </section>
+
             <section className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
               <Card className="border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
@@ -377,6 +542,11 @@ export const AdminDashboard = () => {
                       <div key={log.id} className="rounded-xl border border-slate-200 p-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          {log.feedback_status ? (
+                            <Badge variant="outline">
+                              {feedbackLabels[log.feedback_status]}
+                            </Badge>
+                          ) : null}
                           <span className="text-xs text-slate-400">
                             {new Date(log.timestamp).toLocaleString('it-IT')}
                           </span>

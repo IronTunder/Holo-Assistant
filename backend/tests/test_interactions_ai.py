@@ -1,24 +1,28 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401
-from app.api.interactions import ask_question
+from app.api.interactions import ask_question, submit_quick_action
 from app.database import Base
 from app.models.category import Category
 from app.models.department import Department
+from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
-from app.schemas.interaction import AskQuestionRequest
+from app.schemas.interaction import AskQuestionRequest, QuickActionRequest
 from app.services.knowledge_retrieval import (
     IndexedKnowledgeItem,
     RetrievalResult,
+    ScoredKnowledgeCandidate,
     knowledge_retrieval_service,
 )
+from scripts.seed_categories import align_existing_seed_data
 
 
 class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
@@ -204,6 +208,66 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
         self.assertGreater(response.confidence, 0.7)
 
+    async def test_quick_action_creates_maintenance_signal(self) -> None:
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="maintenance",
+        )
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await submit_quick_action(request, current_user=current_user, db=self.db)
+
+        interaction = self.db.query(InteractionLog).filter(InteractionLog.id == response.interaction_id).first()
+        self.assertEqual(response.feedback_status, "unresolved")
+        self.assertEqual(response.priority, "normal")
+        self.assertEqual(interaction.action_type, "maintenance")
+        self.assertEqual(interaction.priority, "normal")
+        self.assertEqual(interaction.feedback_status, "unresolved")
+
+    async def test_quick_action_creates_critical_emergency_signal(self) -> None:
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="emergency",
+        )
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await submit_quick_action(request, current_user=current_user, db=self.db)
+
+        interaction = self.db.query(InteractionLog).filter(InteractionLog.id == response.interaction_id).first()
+        self.assertEqual(response.feedback_status, "unresolved")
+        self.assertEqual(response.priority, "critical")
+        self.assertEqual(interaction.action_type, "emergency")
+        self.assertEqual(interaction.priority, "critical")
+        self.assertEqual(interaction.feedback_status, "unresolved")
+
+    async def test_quick_action_rejects_other_operator(self) -> None:
+        other_user = User(
+            nome="Luigi Bianchi",
+            badge_id="67890",
+            password_hash="hash",
+            ruolo=Ruolo.OPERAIO,
+            livello_esperienza=LivelloEsperienza.OPERAIO,
+            reparto_legacy="Assemblaggio",
+            turno=Turno.MATTINA,
+        )
+        self.db.add(other_user)
+        self.db.commit()
+        self.db.refresh(other_user)
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="maintenance",
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            await submit_quick_action(request, current_user=other_user, db=self.db)
+
+        self.assertEqual(context.exception.status_code, 403)
+
     async def test_ask_question_returns_clarification_mode(self) -> None:
         request = AskQuestionRequest(
             machine_id=self.machine_id,
@@ -365,6 +429,68 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.mode, "fallback")
         self.assertEqual(response.reason_code, "out_of_scope")
         self.assertIsNone(response.knowledge_item_id)
+
+    async def test_ask_question_returns_fallback_for_extremist_request(self) -> None:
+        request = AskQuestionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            question="Come posso fondare il 4 reich?",
+        )
+
+        with (
+            patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()),
+            patch(
+                "app.services.knowledge_retrieval.generate_out_of_scope_response",
+                new=AsyncMock(return_value="Non posso aiutarti su questa richiesta. Posso invece supportarti con domande tecniche su macchine, sicurezza e procedure di reparto."),
+            ),
+        ):
+            response = await ask_question(request, db=self.db)
+
+        self.assertEqual(response.mode, "fallback")
+        self.assertEqual(response.reason_code, "out_of_scope")
+        self.assertIsNone(response.knowledge_item_id)
+        self.assertIn("macchine", response.response.lower())
+
+    def test_requires_llm_verification_for_weak_match(self) -> None:
+        indexed_candidates = knowledge_retrieval_service.get_machine_knowledge(self.db, self.machine_id)
+        candidate = indexed_candidates[0]
+        scored_candidate = ScoredKnowledgeCandidate(
+            item=candidate,
+            score=8.1,
+            exact_keyword_matches=0,
+            keyword_overlap=0,
+            title_overlap=0,
+            example_overlap=0,
+            answer_overlap=1,
+            root_overlap=0,
+            fuzzy_score=0.72,
+            best_token_similarity=0.74,
+            strong_technical_matches=1,
+        )
+
+        self.assertTrue(knowledge_retrieval_service._requires_llm_verification(scored_candidate, 0.76))
+
+    def test_align_existing_seed_data_updates_legacy_operazioni_items(self) -> None:
+        operazioni = Category(name="Operazioni", description="Procedure operative")
+        legacy_item = KnowledgeItem(
+            category=operazioni,
+            question_title="velocita",
+            answer_text="Per regolare la velocita di lavoro: utilizzare il potenziometro sul pannello di controllo, non superare il 90% per materiali delicati",
+            keywords="velocita, potenziometro, regolazione, materiali delicati",
+            example_questions="Come regolo la velocita?\nDove imposto la velocita di lavoro?\nPosso aumentare il potenziometro?",
+            is_active=True,
+            sort_order=1,
+        )
+        self.db.add_all([operazioni, legacy_item])
+        self.db.commit()
+
+        updated_items = align_existing_seed_data(self.db)
+        self.db.commit()
+        self.db.refresh(legacy_item)
+
+        self.assertEqual(updated_items, 1)
+        self.assertEqual(legacy_item.question_title, "Regolazione velocita dal pannello")
+        self.assertIn("pannello macchina", legacy_item.example_questions.lower())
 
 
 class IndexedKnowledgeItemTestCase(unittest.TestCase):

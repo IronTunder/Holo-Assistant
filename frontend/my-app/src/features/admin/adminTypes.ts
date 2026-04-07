@@ -74,6 +74,10 @@ export interface DashboardSummary {
   recent_interactions: number;
 }
 
+export type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
+export type InteractionActionType = 'question' | 'maintenance' | 'emergency';
+export type InteractionPriority = 'normal' | 'critical';
+
 export interface InteractionLogEntry {
   id: number;
   user_id: number;
@@ -87,5 +91,9 @@ export interface InteractionLogEntry {
   knowledge_item_title?: string | null;
   domanda: string;
   risposta?: string | null;
+  feedback_status?: InteractionFeedbackStatus | null;
+  feedback_timestamp?: string | null;
+  action_type: InteractionActionType;
+  priority: InteractionPriority;
   timestamp: string;
 }

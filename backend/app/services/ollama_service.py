@@ -73,6 +73,7 @@ async def _generate(prompt: str, temperature: float, num_predict: int) -> str:
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "think": False,
                 "keep_alive": OLLAMA_KEEP_ALIVE,
                 "options": _build_options(temperature, num_predict),
             },
@@ -80,21 +81,41 @@ async def _generate(prompt: str, temperature: float, num_predict: int) -> str:
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         status_code = exc.response.status_code
+        response_text = exc.response.text.strip()
         if status_code == 404:
+            lowered_text = response_text.lower()
+            if "model" in lowered_text and "not found" in lowered_text:
+                raise OllamaConfigurationError(
+                    f"Modello Ollama non trovato: {MODEL}. Verifica che sia stato scaricato nel runtime di Ollama."
+                ) from exc
             raise OllamaConfigurationError(
                 f"Ollama endpoint non valido o non disponibile su {OLLAMA_BASE_URL}/api/generate"
             ) from exc
         raise OllamaServiceError(
             f"Ollama ha risposto con status {status_code}"
         ) from exc
+    except httpx.TimeoutException as exc:
+        raise OllamaUnavailableError(
+            f"Ollama raggiungibile su {OLLAMA_BASE_URL}, ma non ha risposto entro {OLLAMA_TIMEOUT:g}s"
+        ) from exc
     except httpx.HTTPError as exc:
         raise OllamaUnavailableError(
             f"Ollama non raggiungibile su {OLLAMA_BASE_URL}"
+        ) from exc
+    except RuntimeError as exc:
+        raise OllamaUnavailableError(
+            f"Ollama non disponibile nel runtime corrente: {exc}"
         ) from exc
 
     payload = response.json()
     generated_response = payload.get("response", "").strip()
     if not generated_response:
+        thinking_response = payload.get("thinking", "").strip()
+        done_reason = payload.get("done_reason")
+        if thinking_response:
+            raise OllamaServiceError(
+                f"Ollama ha restituito solo thinking senza risposta finale (done_reason={done_reason or 'n/d'})"
+            )
         raise OllamaServiceError("Ollama ha restituito una risposta vuota")
     return generated_response
 
@@ -238,6 +259,68 @@ async def rerank_knowledge_candidates(question: str, candidates: List[dict]) -> 
         raise
 
     return _extract_choice_index(selection, len(candidates))
+
+
+async def verify_knowledge_match(question: str, candidate: dict) -> bool:
+    prompt = (
+        "Valuta se il candidato risponde davvero alla domanda di un operatore industriale.\n"
+        "Restituisci solo JSON valido nel formato {\"relevant\": true} oppure {\"relevant\": false}.\n"
+        "Imposta relevant=false se la domanda e fuori dominio, pericolosa, politica, ideologica, personale, "
+        "oppure se il candidato e solo vagamente collegato.\n"
+        "Non aggiungere testo extra.\n"
+        f"Domanda: {question}\n"
+        f"Titolo candidato: {candidate.get('question_title', '')}\n"
+        f"Categoria: {candidate.get('category_name') or 'N/D'}\n"
+        f"Keyword: {candidate.get('keywords') or 'N/D'}\n"
+        f"Esempi: {candidate.get('example_questions') or 'N/D'}\n"
+        f"Risposta: {candidate.get('answer_text', '')[:500]}"
+    )
+
+    try:
+        selection = await _generate(
+            prompt,
+            temperature=OLLAMA_TEMPERATURE_SELECT,
+            num_predict=max(OLLAMA_NUM_PREDICT_RERANK, 12),
+        )
+    except OllamaServiceError as exc:
+        logger.error("Error verifying knowledge candidate with Ollama: %s", exc, exc_info=True)
+        logger.error("Attempted to connect to: %s", OLLAMA_BASE_URL)
+        raise
+
+    normalized = selection.strip().lower()
+    if '"relevant": true' in normalized or "'relevant': true" in normalized:
+        return True
+    if '"relevant": false' in normalized or "'relevant': false" in normalized:
+        return False
+    raise OllamaServiceError(f"Ollama ha restituito una verifica non valida: {selection}")
+
+
+async def generate_out_of_scope_response(question: str) -> str:
+    prompt = (
+        "Sei un assistente per operatori industriali.\n"
+        "La richiesta seguente e fuori ambito rispetto al supporto macchina oppure e inappropriata.\n"
+        "Scrivi una risposta breve in italiano, naturale e ferma.\n"
+        "Vincoli:\n"
+        "- non fornire istruzioni, suggerimenti pratici o supporto sul contenuto richiesto\n"
+        "- non ripetere o sviluppare l'argomento sensibile\n"
+        "- reindirizza solo verso domande tecniche su macchine, sicurezza o procedure di reparto\n"
+        "- massimo 2 frasi\n"
+        "Restituisci solo il testo finale.\n"
+        f"Richiesta: {question}"
+    )
+
+    try:
+        response = await _generate(
+            prompt,
+            temperature=0.2,
+            num_predict=max(OLLAMA_NUM_PREDICT_RERANK, 48),
+        )
+    except OllamaServiceError as exc:
+        logger.error("Error generating out-of-scope response with Ollama: %s", exc, exc_info=True)
+        logger.error("Attempted to connect to: %s", OLLAMA_BASE_URL)
+        raise
+
+    return response.strip()
 
 
 async def is_ollama_available() -> bool:
