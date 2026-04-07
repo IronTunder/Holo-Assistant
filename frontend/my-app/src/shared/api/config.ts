@@ -62,6 +62,7 @@ export const API_ENDPOINTS = {
 
   // Admin endpoints
   ADMIN_DASHBOARD_SUMMARY: `${API_BASE_URL}/admin/dashboard-summary`,
+  ADMIN_SETTINGS: `${API_BASE_URL}/admin/settings`,
   ADMIN_METADATA_DEPARTMENTS: `${API_BASE_URL}/admin/metadata/departments`,
   ADMIN_METADATA_CATEGORIES: `${API_BASE_URL}/admin/metadata/categories`,
   ADMIN_METADATA_MACHINES: `${API_BASE_URL}/admin/metadata/machines`,

@@ -8,6 +8,8 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+backend/tests/tmp*/
+backend/tests/_tmp_admin_settings/
 .coverage
 htmlcov/
 

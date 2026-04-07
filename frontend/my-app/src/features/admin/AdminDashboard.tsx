@@ -438,10 +438,12 @@ export const AdminDashboard = () => {
                 <span>Log</span>
               </TabsTrigger>
             ) : null}
-            <TabsTrigger value="settings" className="gap-2">
-              <Settings className="h-4 w-4" />
-              <span>Impostazioni</span>
-            </TabsTrigger>
+            {hasPermission('settings.view') ? (
+              <TabsTrigger value="settings" className="gap-2">
+                <Settings className="h-4 w-4" />
+                <span>Impostazioni</span>
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
@@ -628,9 +630,11 @@ export const AdminDashboard = () => {
                       Aggiorna knowledge e assegnazioni
                     </Button>
                   ) : null}
-                  <Button variant="outline" className="justify-start" onClick={() => setActiveTab('settings')}>
-                    Controlla impostazioni sistema
-                  </Button>
+                  {hasPermission('settings.view') ? (
+                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('settings')}>
+                      Controlla impostazioni sistema
+                    </Button>
+                  ) : null}
                 </div>
               </Card>
             </section>
@@ -700,15 +704,17 @@ export const AdminDashboard = () => {
             ) : null}
           </TabsContent>
 
-          <TabsContent value="settings" className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-950">Impostazioni</h2>
-              <p className="text-sm text-slate-500">
-                Mantieni le configurazioni di sistema sotto controllo.
-              </p>
-            </div>
-            <SettingsPanel />
-          </TabsContent>
+          {hasPermission('settings.view') ? (
+            <TabsContent value="settings" className="space-y-4">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950">Impostazioni</h2>
+                <p className="text-sm text-slate-500">
+                  Mantieni le configurazioni di sistema sotto controllo.
+                </p>
+              </div>
+              <SettingsPanel canEdit={hasPermission('settings.edit')} />
+            </TabsContent>
+          ) : null}
         </Tabs>
       </div>
     </div>

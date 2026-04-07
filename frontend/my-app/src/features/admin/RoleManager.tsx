@@ -22,6 +22,8 @@ const permissionOptions = [
   { value: 'machines.manage', label: 'Gestione macchinari' },
   { value: 'knowledge.manage', label: 'Gestione knowledge' },
   { value: 'logs.view', label: 'Visualizza log' },
+  { value: 'settings.view', label: 'Visualizza impostazioni' },
+  { value: 'settings.edit', label: 'Modifica impostazioni' },
   { value: 'maintenance.view', label: 'Richieste manutenzione' },
   { value: 'emergencies.view', label: 'Alert emergenze' },
   { value: 'interactions.resolve', label: 'Conferma risoluzioni' },

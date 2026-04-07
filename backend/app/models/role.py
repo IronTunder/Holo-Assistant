@@ -11,6 +11,8 @@ ALL_PERMISSIONS = [
     "machines.manage",
     "knowledge.manage",
     "logs.view",
+    "settings.view",
+    "settings.edit",
     "maintenance.view",
     "emergencies.view",
     "interactions.resolve",

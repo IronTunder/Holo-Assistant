@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import ipaddress
 import socket
 import logging
+import os
 
 from app.api.auth.auth import router as auth_router
 from app.api.machines import router as machines_router
@@ -88,9 +89,17 @@ else:
     cors_regex = r"http://192\.168\..*\..*:5173"
 
 # Configura CORS dinamico
+configured_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+base_origins = ["http://localhost:3000", "http://localhost:5173"]
+allowed_origins = list(dict.fromkeys(base_origins + configured_origins))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # Base
+    allow_origins=allowed_origins,  # Base + backend/.env ALLOWED_ORIGINS
     allow_origin_regex=cors_regex,  # Regex dinamico per la rete locale
     allow_credentials=True,
     allow_methods=["*"],

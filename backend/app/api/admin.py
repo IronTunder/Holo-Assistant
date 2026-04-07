@@ -38,6 +38,7 @@ from app.api.presenters import (
     serialize_user,
 )
 from app.services.cache import admin_metadata_cache, cache_stats_payload
+from app.services.admin_settings import SettingsValidationError, get_settings_payload, update_env_file
 from app.services.knowledge_retrieval import knowledge_retrieval_service
 from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
@@ -134,6 +135,10 @@ class RoleRequest(BaseModel):
         if invalid_permissions:
             raise ValueError(f"Permessi non validi: {', '.join(invalid_permissions)}")
         return normalized_permissions
+
+
+class AdminSettingsUpdateRequest(BaseModel):
+    settings: dict[str, str | int | float | bool]
 
 
 class KnowledgeItemRequest(BaseModel):
@@ -379,6 +384,29 @@ async def cache_status(
         **cache_stats_payload(),
         "knowledge": knowledge_retrieval_service.cache_stats(),
     }
+
+
+@router.get("/settings")
+async def get_admin_settings(
+    admin: User = Depends(verify_permission("settings.view")),
+):
+    del admin
+    return get_settings_payload()
+
+
+@router.put("/settings")
+async def update_admin_settings(
+    request: AdminSettingsUpdateRequest,
+    admin: User = Depends(verify_permission("settings.edit")),
+):
+    del admin
+    try:
+        return update_env_file(request.settings)
+    except SettingsValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Impostazioni non valide", "errors": exc.errors},
+        ) from exc
 
 
 @router.get("/dashboard-summary", response_model=DashboardSummaryResponse)
