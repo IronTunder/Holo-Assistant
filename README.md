@@ -31,7 +31,7 @@ Ditto e un sistema di supporto per postazioni e macchinari industriali composto 
 
 ## Quick Start
 
-Il percorso Windows e attualmente la source of truth operativa: i wrapper in root (`setup.bat` e `start.bat`) chiamano `scripts/windows/setup.bat` e `scripts/windows/start.bat`.
+Il percorso Windows e attualmente la source of truth operativa: i wrapper in root (`setup.bat` e `start.bat`) chiamano i wrapper in `scripts/windows`, che a loro volta avviano `scripts/windows/setup.ps1` e `scripts/windows/start.ps1`. La logica Windows vive in PowerShell per gestire meglio prerequisiti, retry e riparazioni automatiche.
 
 I wrapper Unix (`setup.sh` e `start.sh`) sono disponibili, ma il loro flusso non e ancora perfettamente allineato a quello Windows: usano Ollama in Docker come percorso principale, hanno default legacy per il modello AI se `backend/.env` non e presente e non preparano automaticamente il modello Vosk nel normale `start`.
 
@@ -48,6 +48,9 @@ Linux:
 ```
 
 Nel flusso Windows documentato come source of truth, lo script di setup:
+- controlla Docker, Python, Node.js/npm, mkcert e Ollama nativo quando serve;
+- se manca un prerequisito prova a installarlo con `winget` e aggiorna il `PATH` della sessione;
+- se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
 - esegue `docker compose down` e poi `docker compose up -d`;
 - aspetta PostgreSQL;
 - prepara il modello `qwen3.5:9b` in Ollama;
@@ -72,14 +75,18 @@ Linux:
 ```
 
 Nel flusso Windows documentato come source of truth, lo script di start:
+- controlla e prova a riparare prerequisiti mancanti con `winget` quando possibile;
+- se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
 - riallinea Docker con `docker compose up -d` senza forzare il reset dei container;
 - aspetta PostgreSQL;
 - verifica o genera il certificato HTTPS locale;
 - legge `OLLAMA_MODEL` e i parametri principali da `backend/.env`;
-- controlla la presenza del modello con `ollama list`;
+- controlla la presenza del modello con `ollama list` e, se manca, prova a scaricarlo;
 - prova il warmup del modello via `POST /api/generate`;
 - aggiorna `backend/.env` con origini CORS HTTPS e cookie refresh secure;
 - aggiorna `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000`;
+- ricrea il virtualenv backend o reinstalla le dipendenze frontend se mancano;
+- prepara il modello Vosk se l'archivio locale manca;
 - su Windows riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py`;
 - avvia backend e frontend.
 
@@ -88,6 +95,8 @@ Nel flusso Windows documentato come source of truth, lo script di start:
 - Docker Desktop o Docker Engine con Compose
 - Python 3 con `venv`
 - Node.js e `npm`
+
+Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente questi prerequisiti con `winget` quando possibile. Se `winget` non e disponibile, lo script non usa percorsi fragili: stampa un errore guidato per installare App Installer/winget o il prerequisito mancante.
 
 Versioni consigliate per evitare incompatibilita:
 - Python 3.10 o superiore
@@ -146,11 +155,26 @@ Configurazioni GPU consigliate:
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
 
+## Stop completo su Windows
+
+Per fermare backend e frontend, chiudi le finestre terminale aperte dagli script oppure premi `Ctrl+C`. Per fermare anche i container del progetto, esegui:
+```bat
+cd docker
+docker compose down
+```
+
+Per chiudere completamente Docker Desktop, usa l'icona nella barra delle applicazioni vicino all'orologio e scegli `Quit Docker Desktop`. Solo dopo aver chiuso Docker, se vuoi spegnere anche il backend WSL, esegui:
+```bat
+wsl --shutdown
+```
+
+Nota: `wsl --shutdown` spegne tutte le distro WSL attive, non solo Docker Desktop.
+
 ## HTTPS in rete locale
 
 Backend e frontend vengono avviati in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve includere l'IP statico con cui i dispositivi aprono Ditto; quello attuale include `192.168.1.119`, `127.0.0.1`, `localhost` e `ditto.lan`.
 
-Su Windows, `setup.bat` e `start.bat` provano a generare automaticamente questi file se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, poi genera il certificato. Se dopo l'installazione `mkcert` non e ancora nel `PATH`, riapri il terminale e rilancia lo script.
+Su Windows, `setup.bat` e `start.bat` provano a generare automaticamente questi file se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, aggiorna il `PATH` della sessione e poi genera il certificato. Se `winget` non e disponibile o `mkcert` non entra nel `PATH`, lo script mostra un errore guidato e chiede di riaprire il terminale o installare il prerequisito manualmente.
 
 Su Unix, gli script non installano `mkcert` automaticamente: `setup.sh` e `start.sh` controllano che `certs/ditto.crt` e `certs/ditto.key` esistano e si fermano se mancano. Generali prima dell'avvio con un comando equivalente a quello indicato sotto.
 
@@ -392,4 +416,4 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 ## Stato attuale
 
 - ultimo aggiornamento documentazione: 7 aprile 2026
-- source of truth operativa: `scripts/windows/setup.bat` e `scripts/windows/start.bat`
+- source of truth operativa Windows: `scripts/windows/setup.ps1` e `scripts/windows/start.ps1`

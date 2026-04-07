@@ -11,6 +11,8 @@ Ultimo aggiornamento: 7 aprile 2026
 - setup iniziale: `setup.bat`
 - avvio successivo: `start.bat`
 
+Questi comandi restano i punti di ingresso pubblici. Su Windows i `.bat` chiamano script PowerShell (`scripts/windows/setup.ps1` e `scripts/windows/start.ps1`) che gestiscono prerequisiti, retry e riparazioni automatiche.
+
 ### Linux
 
 - setup iniziale: `./setup.sh`
@@ -24,6 +26,8 @@ Gli script Windows restano la source of truth operativa. Quelli Unix sono dispon
 - Python 3 e supporto `venv`
 - Node.js con `npm`
 
+Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente prerequisiti mancanti con `winget`: Docker Desktop, Python, Node.js LTS, mkcert e Ollama quando e' richiesto il runtime nativo. Se `winget` non e disponibile, lo script si ferma con un messaggio guidato invece di tentare workaround fragili.
+
 Servizi Docker previsti da `docker/docker-compose.yml`:
 - `ditto_postgres`
 - `ditto_adminer`
@@ -34,6 +38,9 @@ Servizi Docker previsti da `docker/docker-compose.yml`:
 `setup.bat` esegue il bootstrap completo dell'ambiente secondo il flusso Windows documentato come source of truth. `setup.sh` resta disponibile, ma va considerato separatamente per le differenze indicate sopra.
 
 Passi principali:
+- su Windows controllano Docker, Python, Node.js/npm, mkcert e Ollama nativo quando serve;
+- su Windows provano a installare automaticamente i prerequisiti mancanti con `winget`;
+- su Windows provano ad avviare Docker Desktop se e' installato ma il daemon non risponde;
 - eseguono `docker compose down`;
 - eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto con `pg_isready`;
@@ -56,14 +63,18 @@ Passi principali:
 `start.bat` serve per l'avvio quotidiano senza reinstallare tutto secondo il flusso Windows documentato come source of truth. `start.sh` resta disponibile, ma va considerato separatamente per le differenze indicate sopra.
 
 Passi principali:
+- su Windows controllano e provano a riparare prerequisiti mancanti con `winget` quando possibile;
+- su Windows provano ad avviare Docker Desktop se e' installato ma il daemon non risponde;
 - eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto;
 - verificano la presenza del certificato HTTPS locale e, su Windows, lo generano se manca;
 - leggono `OLLAMA_MODEL`, `OLLAMA_BASE_URL` e gli altri parametri AI da `backend/.env` se presente;
-- verificano la presenza del modello con il runtime Ollama configurato;
+- verificano la presenza del modello con il runtime Ollama configurato e provano a scaricarlo se manca;
 - provano il warmup del modello via `POST /api/generate` dopo il check su `GET /api/tags`;
 - aggiornano `backend/.env` con `ALLOWED_ORIGINS` HTTPS e cookie refresh secure;
 - aggiornano `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000`;
+- su Windows ricreano il virtualenv backend o reinstallano le dipendenze frontend se mancano;
+- su Windows preparano il modello Vosk se l'archivio locale manca;
 - su Windows riallineano la knowledge base tecnica con `backend/scripts/seed_categories.py`;
 - avviano backend FastAPI in HTTPS in una finestra dedicata;
 - avviano frontend Vite in HTTPS in una finestra dedicata quando il certificato e presente.
@@ -138,7 +149,7 @@ Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quell
 
 Gli script avviano backend e frontend in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve contenere l'IP statico del server usato dai dispositivi; quello presente nel repository locale include `192.168.1.119`, `127.0.0.1`, `localhost` e `ditto.lan`.
 
-Su Windows, `setup.bat` e `start.bat` generano automaticamente `certs/ditto.crt` e `certs/ditto.key` se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, poi genera il certificato. Se dopo l'installazione `mkcert` non e ancora nel `PATH`, riapri il terminale e rilancia lo script.
+Su Windows, `setup.bat` e `start.bat` generano automaticamente `certs/ditto.crt` e `certs/ditto.key` se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, aggiorna il `PATH` della sessione e poi genera il certificato. Se `winget` non e disponibile o `mkcert` non entra nel `PATH`, lo script mostra un errore guidato e chiede di riaprire il terminale o installare il prerequisito manualmente.
 
 Su Unix, `setup.sh` e `start.sh` non installano `mkcert`: controllano che `certs/ditto.crt` e `certs/ditto.key` esistano e si fermano se mancano. Generali manualmente prima dell'avvio. I file `*.crt` e `*.key` sono ignorati da Git, quindi il certificato locale non viene versionato.
 
@@ -157,6 +168,7 @@ Per ospitare l'intero stack sulla stessa macchina:
 
 Note operative:
 - su Windows, se e disponibile `ollama` nel `PATH`, gli script preferiscono il runtime nativo
+- su Windows, se `OLLAMA_RUNTIME=native` ma `ollama` manca, lo script prova a installarlo con `winget install -e --id Ollama.Ollama`
 - per GPU NVIDIA in Docker usa `docker/docker-compose.nvidia.yml`
 - per GPU AMD in Docker il percorso piu realistico resta Linux/WSL con ROCm; su Windows e consigliato Ollama nativo
 - gli script attuali avviano frontend e backend in modalita sviluppo, quindi per un host permanente conviene prevedere un servizio dedicato per FastAPI e una build statica del frontend
@@ -182,10 +194,33 @@ Windows:
 start.bat
 ```
 
+Controllo non distruttivo Windows:
+```powershell
+scripts\windows\setup.ps1 -CheckOnly
+scripts\windows\start.ps1 -CheckOnly
+```
+
 Linux:
 ```bash
 ./start.sh
 ```
+
+### Stop completo su Windows
+
+Per fermare backend e frontend, chiudi le finestre terminale aperte dagli script oppure premi `Ctrl+C` in ciascuna finestra.
+
+Per fermare anche i servizi Docker del progetto:
+```bat
+cd docker
+docker compose down
+```
+
+Se vuoi chiudere completamente Docker Desktop, non basta chiudere le finestre terminale: apri la barra delle applicazioni vicino all'orologio, clic destro sull'icona Docker Desktop e scegli `Quit Docker Desktop`. Dopo che Docker e' chiuso, puoi spegnere anche il backend WSL con:
+```bat
+wsl --shutdown
+```
+
+Nota: `wsl --shutdown` spegne tutte le distro WSL attive, non solo Docker Desktop. Usalo quando non ti servono altre sessioni WSL aperte.
 
 ## Sessioni operatore in tempo reale
 
