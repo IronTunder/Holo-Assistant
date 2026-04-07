@@ -66,6 +66,7 @@ export const API_ENDPOINTS = {
   ADMIN_METADATA_CATEGORIES: `${API_BASE_URL}/admin/metadata/categories`,
   ADMIN_METADATA_MACHINES: `${API_BASE_URL}/admin/metadata/machines`,
   ADMIN_METADATA_USERS: `${API_BASE_URL}/admin/metadata/users`,
+  ADMIN_METADATA_ROLES: `${API_BASE_URL}/admin/metadata/roles`,
 
   LIST_USERS: `${API_BASE_URL}/admin/users`,
   GET_USER: (id: number) => `${API_BASE_URL}/admin/users/${id}`,
@@ -73,6 +74,16 @@ export const API_ENDPOINTS = {
   UPDATE_USER: (id: number) => `${API_BASE_URL}/admin/users/${id}`,
   DELETE_USER: (id: number) => `${API_BASE_URL}/admin/users/${id}`,
   RESET_PASSWORD: (id: number) => `${API_BASE_URL}/admin/users/${id}/reset-password`,
+
+  LIST_ROLES: `${API_BASE_URL}/admin/roles`,
+  CREATE_ROLE: `${API_BASE_URL}/admin/roles`,
+  UPDATE_ROLE: (id: number) => `${API_BASE_URL}/admin/roles/${id}`,
+  DELETE_ROLE: (id: number) => `${API_BASE_URL}/admin/roles/${id}`,
+
+  LIST_DEPARTMENTS: `${API_BASE_URL}/admin/departments`,
+  CREATE_DEPARTMENT: `${API_BASE_URL}/admin/departments`,
+  UPDATE_DEPARTMENT: (id: number) => `${API_BASE_URL}/admin/departments/${id}`,
+  DELETE_DEPARTMENT: (id: number) => `${API_BASE_URL}/admin/departments/${id}`,
 
   LIST_MACHINES: `${API_BASE_URL}/admin/machines`,
   ADMIN_MACHINE_EVENTS: `${API_BASE_URL}/admin/machine-events`,

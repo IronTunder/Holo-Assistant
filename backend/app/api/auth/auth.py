@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Request, Response, status, Depends, Header, Cookie
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -15,6 +15,7 @@ import secrets
 
 from app.core.database import get_db
 from app.models.user import User, RefreshToken, Ruolo
+from app.models.role import ALL_PERMISSIONS
 from app.models.machine import Machine
 from app.schemas.user import UserResponse
 from app.schemas.machine import MachineResponse
@@ -119,15 +120,43 @@ def utc_now() -> datetime:
 
 
 def get_access_token_expires_delta(user: User) -> timedelta:
-    if user.ruolo == Ruolo.ADMIN:
+    if user_has_permission(user, "backoffice.access"):
         return timedelta(minutes=ADMIN_TOKEN_EXPIRE_MINUTES)
     return timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
 
 def get_refresh_token_expires_delta(user: User) -> timedelta:
-    if user.ruolo == Ruolo.ADMIN:
+    if user_has_permission(user, "backoffice.access"):
         return timedelta(minutes=ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES)
     return timedelta(minutes=OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES)
+
+
+def user_has_permission(user: User, permission: str) -> bool:
+    if user.role is not None and user.role.is_active:
+        return permission in user.role.permissions
+    if user.ruolo == Ruolo.ADMIN:
+        return permission in ALL_PERMISSIONS
+    if getattr(user.livello_esperienza, "value", user.livello_esperienza) == "manutentore":
+        return permission in {
+            "backoffice.access",
+            "maintenance.view",
+            "emergencies.view",
+            "logs.view",
+            "interactions.resolve",
+        }
+    return False
+
+
+def verify_permission(permission: str):
+    async def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not user_has_permission(current_user, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permesso insufficiente",
+            )
+        return current_user
+
+    return dependency
 
 
 class SessionStatusResponse(BaseModel):
@@ -157,6 +186,10 @@ def build_user_response_model(user: User) -> UserResponse:
         id=payload["id"],
         nome=payload["nome"],
         badge_id=payload["badge_id"],
+        role_id=payload["role_id"],
+        role_name=payload["role_name"],
+        role_code=payload["role_code"],
+        permissions=payload["permissions"],
         livello_esperienza=payload["livello_esperienza"],
         department_id=payload["department_id"],
         department_name=payload["department_name"],
@@ -348,14 +381,14 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    user = db.query(User).options(joinedload(User.role)).filter(User.id == int(user_id)).first()
     if user is None:
         raise credentials_exception
     return user
 
 async def verify_admin(current_user: User = Depends(get_current_user)) -> User:
     """Dipendenza per verificare che l'utente sia un admin."""
-    if current_user.ruolo != Ruolo.ADMIN:
+    if not user_has_permission(current_user, "backoffice.access"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acceso admin richiesto"
@@ -487,7 +520,7 @@ async def get_current_session_user(
 ):
     return CurrentUserResponse(
         user=build_user_response_model(current_user),
-        is_admin=current_user.ruolo == Ruolo.ADMIN,
+        is_admin=user_has_permission(current_user, "backoffice.access"),
     )
 
 
@@ -536,7 +569,7 @@ async def refresh_token_status(
     return RefreshTokenStatusResponse(
         valid=True,
         user_id=current_user.id,
-        is_admin=current_user.ruolo == Ruolo.ADMIN,
+        is_admin=user_has_permission(current_user, "backoffice.access"),
     )
 
 
@@ -546,7 +579,7 @@ async def create_operator_sse_token(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if current_user.ruolo == Ruolo.ADMIN:
+    if user_has_permission(current_user, "backoffice.access"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Canale SSE disponibile solo per operatori",
@@ -793,7 +826,7 @@ async def refresh_token(
     
     access_token_expires_delta = get_access_token_expires_delta(user)
     access_token = create_access_token(
-        data={"sub": str(user.id), "username": user.nome, "is_admin": user.ruolo == Ruolo.ADMIN},
+        data={"sub": str(user.id), "username": user.nome, "is_admin": user_has_permission(user, "backoffice.access")},
         expires_delta=access_token_expires_delta,
     )
     
@@ -846,13 +879,12 @@ async def admin_login(
 ):
     """Endpoint per il login degli amministratori."""
     
-    # Cerca utente per username con ruolo ADMIN
-    user = db.query(User).filter(
+    # Cerca utente per username con permesso di backoffice
+    user = db.query(User).options(joinedload(User.role)).filter(
         User.nome == request.username.strip(),
-        User.ruolo == Ruolo.ADMIN
     ).first()
     
-    if not user:
+    if not user or not user_has_permission(user, "backoffice.access"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Admin username non trovato"
@@ -877,7 +909,7 @@ async def admin_login(
     # Crea token di accesso (2 ore per admin, più corto)
     admin_access_token_expiry = ADMIN_TOKEN_EXPIRE_MINUTES
     access_token = create_access_token(
-        data={"sub": str(user.id), "username": user.nome, "is_admin": True},
+        data={"sub": str(user.id), "username": user.nome, "is_admin": user_has_permission(user, "backoffice.access")},
         expires_delta=timedelta(minutes=admin_access_token_expiry)
     )
     

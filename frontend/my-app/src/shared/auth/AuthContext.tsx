@@ -6,6 +6,10 @@ export interface AuthUser {
   id: number;
   nome: string;
   badge_id: string;
+  role_id?: number | null;
+  role_name?: string | null;
+  role_code?: string | null;
+  permissions?: string[];
   livello_esperienza: string;
   department_id?: number | null;
   department_name?: string | null;
@@ -113,14 +117,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setMachine(null);
       setExpiresIn(data.expires_in);
       setIsLoggedIn(true);
-      setIsAdmin(true);
+      setIsAdmin(Boolean(data.is_admin));
 
       localStorage.setItem('accessToken', data.access_token);
       localStorage.setItem('user', JSON.stringify(data.user));
       localStorage.removeItem('machine');
       localStorage.setItem('expiresIn', data.expires_in.toString());
       localStorage.setItem('loginTimestamp', Date.now().toString());
-      localStorage.setItem('isAdmin', 'true');
+      localStorage.setItem('isAdmin', data.is_admin ? 'true' : 'false');
       localStorage.removeItem('refreshToken');
 
       return { success: true };
@@ -177,14 +181,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return false;
       }
 
+      let nextUser = parsedUser;
+      let nextIsAdmin = storedIsAdmin;
+      try {
+        const meResponse = await fetch(API_ENDPOINTS.AUTH_ME, {
+          headers: { Authorization: `Bearer ${refreshedAccessToken}` },
+          credentials: 'include',
+        });
+        if (meResponse.ok) {
+          const sessionData = await meResponse.json();
+          nextUser = sessionData.user;
+          nextIsAdmin = sessionData.is_admin;
+          localStorage.setItem('user', JSON.stringify(nextUser));
+          localStorage.setItem('isAdmin', nextIsAdmin ? 'true' : 'false');
+        }
+      } catch (error) {
+        console.error('Errore nel refresh dati utente:', error);
+      }
+
       const refreshedExpiresIn = parseInt(localStorage.getItem('expiresIn') || '0', 10);
 
       setAccessToken(refreshedAccessToken);
-      setUser(parsedUser);
+      setUser(nextUser);
       setMachine(parsedMachine);
       setExpiresIn(refreshedExpiresIn);
       setIsLoggedIn(true);
-      setIsAdmin(storedIsAdmin);
+      setIsAdmin(nextIsAdmin);
       return true;
     } catch (error) {
       console.error('Errore nel ripristino della sessione:', error);

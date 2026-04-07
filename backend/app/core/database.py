@@ -93,6 +93,83 @@ def _backfill_departments() -> None:
         db.close()
 
 
+def _slugify_role_code(name: str) -> str:
+    value = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return value[:64] or "role"
+
+
+def _backfill_roles() -> None:
+    from app.models.role import (
+        ADMIN_ROLE_CODE,
+        MAINTENANCE_TECH_ROLE_CODE,
+        OPERATOR_ROLE_CODE,
+        SYSTEM_ROLE_DEFINITIONS,
+        Role,
+    )
+    from app.models.user import LivelloEsperienza, Ruolo, User
+
+    db = SessionLocal()
+    try:
+        existing_roles = {role.code: role for role in db.query(Role).filter(Role.code.isnot(None)).all()}
+        used_codes = {role.code for role in existing_roles.values() if role.code}
+        used_names = {role.name for role in db.query(Role).all()}
+
+        for role_code, role_data in SYSTEM_ROLE_DEFINITIONS.items():
+            role = existing_roles.get(role_code)
+            if role is None:
+                role_name = role_data["name"]
+                if role_name in used_names:
+                    role_name = f"{role_name} ({role_code})"
+                role = Role(
+                    name=role_name,
+                    code=role_code,
+                    description=role_data["description"],
+                    is_system=True,
+                    is_active=True,
+                )
+                role.permissions = role_data["permissions"]
+                db.add(role)
+                db.flush()
+                existing_roles[role_code] = role
+                used_codes.add(role_code)
+                used_names.add(role_name)
+                continue
+
+            role.name = role_data["name"]
+            role.description = role_data["description"]
+            role.permissions = role_data["permissions"]
+            role.is_system = True
+            role.is_active = True
+
+        for role in db.query(Role).filter(Role.code.is_(None)).all():
+            base_code = _slugify_role_code(role.name)
+            candidate = base_code
+            suffix = 2
+            while candidate in used_codes:
+                candidate = f"{base_code[:58]}-{suffix}"
+                suffix += 1
+            role.code = candidate
+            used_codes.add(candidate)
+
+        admin_role = existing_roles[ADMIN_ROLE_CODE]
+        technician_role = existing_roles[MAINTENANCE_TECH_ROLE_CODE]
+        operator_role = existing_roles[OPERATOR_ROLE_CODE]
+
+        for user in db.query(User).all():
+            if user.role_id is not None:
+                continue
+            if user.ruolo == Ruolo.ADMIN:
+                user.role_id = admin_role.id
+            elif user.livello_esperienza == LivelloEsperienza.MANUTENTORE:
+                user.role_id = technician_role.id
+            else:
+                user.role_id = operator_role.id
+
+        db.commit()
+    finally:
+        db.close()
+
+
 def _migrate_legacy_preset_responses() -> None:
     from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
     from app.models.machine import Machine
@@ -184,6 +261,14 @@ def apply_compatible_migrations():
         )
 
         if "users" in inspector.get_table_names():
+            _ensure_column(connection, inspector, "users", "role_id", "role_id INTEGER")
+            _ensure_index(
+                connection,
+                inspector,
+                "users",
+                "ix_users_role_id",
+                "CREATE INDEX ix_users_role_id ON users (role_id)",
+            )
             _ensure_column(connection, inspector, "users", "department_id", "department_id INTEGER")
             _ensure_index(
                 connection,
@@ -275,7 +360,21 @@ def apply_compatible_migrations():
                 text("UPDATE machines SET startup_checklist = '[]'::jsonb WHERE startup_checklist IS NULL")
             )
 
+        if "roles" in inspector.get_table_names():
+            _ensure_column(connection, inspector, "roles", "code", "code VARCHAR(64)")
+            _ensure_column(connection, inspector, "roles", "description", "description TEXT")
+            _ensure_column(connection, inspector, "roles", "is_system", "is_system BOOLEAN NOT NULL DEFAULT FALSE")
+            _ensure_column(connection, inspector, "roles", "is_active", "is_active BOOLEAN NOT NULL DEFAULT TRUE")
+            _ensure_index(
+                connection,
+                inspector,
+                "roles",
+                "ix_roles_code",
+                "CREATE UNIQUE INDEX ix_roles_code ON roles (code)",
+            )
+
     _backfill_departments()
+    _backfill_roles()
     _migrate_legacy_preset_responses()
 
 def get_db():

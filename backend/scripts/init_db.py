@@ -13,6 +13,7 @@ from app import models  # noqa: F401
 from app.api.auth.auth import get_password_hash
 from app.database import Base, SessionLocal, apply_compatible_migrations, engine
 from app.models.department import Department
+from app.models.role import ADMIN_ROLE_CODE, Role
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
 
 load_dotenv()
@@ -59,6 +60,9 @@ if admin_username and admin_password:
                 reparto_legacy=admin_department.name,
                 turno=Turno.MATTINA,
             )
+            admin_role = db.query(Role).filter(Role.code == ADMIN_ROLE_CODE).first()
+            if admin_role is not None:
+                admin_user.role_id = admin_role.id
             db.add(admin_user)
             db.commit()
             print(f"Utente admin '{admin_username}' creato con successo")

@@ -12,6 +12,7 @@ from app.api.auth.auth import (
     publish_admin_machine_event,
     publish_machine_session_event,
     verify_admin,
+    verify_permission,
 )
 from app.core.database import get_db
 from app.models.category import Category
@@ -19,6 +20,12 @@ from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
+from app.models.role import (
+    ADMIN_ROLE_CODE,
+    ALL_PERMISSIONS,
+    Role,
+    normalize_permissions,
+)
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
 from app.schemas.interaction import FeedbackStatus, InteractionActionType, InteractionPriority
 from app.api.presenters import (
@@ -26,6 +33,7 @@ from app.api.presenters import (
     serialize_department,
     serialize_knowledge_item,
     serialize_machine,
+    serialize_role,
     serialize_user,
 )
 from app.services.knowledge_retrieval import knowledge_retrieval_service
@@ -38,6 +46,7 @@ class UserCreateRequest(BaseModel):
     nome: str
     badge_id: str
     password: str
+    role_id: Optional[int] = None
     ruolo: str = "operaio"
     livello_esperienza: str
     department_id: int
@@ -47,6 +56,7 @@ class UserCreateRequest(BaseModel):
 class UserUpdateRequest(BaseModel):
     nome: Optional[str] = None
     badge_id: Optional[str] = None
+    role_id: Optional[int] = None
     ruolo: Optional[str] = None
     livello_esperienza: Optional[str] = None
     department_id: Optional[int] = None
@@ -95,6 +105,32 @@ class MachineUpdateRequest(BaseModel):
 class CategoryRequest(BaseModel):
     name: str
     description: Optional[str] = None
+
+
+class DepartmentRequest(BaseModel):
+    name: str
+    code: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class RoleRequest(BaseModel):
+    name: str
+    code: Optional[str] = None
+    description: Optional[str] = None
+    permissions: List[str] = Field(default_factory=list)
+    is_active: bool = True
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, permissions: List[str]) -> List[str]:
+        normalized_permissions = normalize_permissions(permissions)
+        invalid_permissions = [
+            permission for permission in normalized_permissions if permission not in ALL_PERMISSIONS
+        ]
+        if invalid_permissions:
+            raise ValueError(f"Permessi non validi: {', '.join(invalid_permissions)}")
+        return normalized_permissions
 
 
 class KnowledgeItemRequest(BaseModel):
@@ -186,6 +222,73 @@ def _require_department(db: Session, department_id: Optional[int]) -> Department
             detail="Reparto non valido",
         )
     return department
+
+
+def _require_role(db: Session, role_id: Optional[int]) -> Role:
+    if role_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role_id obbligatorio",
+        )
+
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if role is None or not role.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ruolo non valido",
+        )
+    return role
+
+
+def _role_from_legacy_value(db: Session, role_value: str) -> Role:
+    parsed_role = _parse_role(role_value)
+    role_code = ADMIN_ROLE_CODE if parsed_role == Ruolo.ADMIN else "operaio"
+    role = db.query(Role).filter(Role.code == role_code, Role.is_active.is_(True)).first()
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ruolo di sistema non configurato")
+    return role
+
+
+def _legacy_role_for_role(role: Role) -> Ruolo:
+    return Ruolo.ADMIN if role.code == ADMIN_ROLE_CODE else Ruolo.OPERAIO
+
+
+def _ensure_last_admin_access_is_preserved(
+    db: Session,
+    user: Optional[User] = None,
+    next_role: Optional[Role] = None,
+) -> None:
+    admin_role = db.query(Role).filter(Role.code == ADMIN_ROLE_CODE).first()
+    if admin_role is None:
+        return
+
+    admin_user_count = db.query(User).filter(User.role_id == admin_role.id).count()
+    if user is None:
+        if admin_user_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Deve restare almeno un utente con ruolo Admin",
+            )
+        return
+
+    if user.role_id != admin_role.id:
+        return
+    if next_role is not None and next_role.id == admin_role.id:
+        return
+    if admin_user_count <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Non puoi rimuovere l'ultimo accesso Admin",
+        )
+
+
+def _apply_role_request(role: Role, request: RoleRequest) -> None:
+    role.name = request.name.strip()
+    role.description = request.description
+    role.permissions = request.permissions
+    role.is_active = request.is_active
+    if request.code is not None:
+        role.code = request.code.strip() or None
 
 
 def _build_machine_response(machine: Machine, operator: Optional[User] = None, deleted: bool = False) -> dict:
@@ -311,8 +414,206 @@ async def list_user_metadata(
     db: Session = Depends(get_db),
 ):
     del admin
-    users = db.query(User).options(joinedload(User.department)).order_by(User.nome.asc()).all()
+    users = db.query(User).options(joinedload(User.department), joinedload(User.role)).order_by(User.nome.asc()).all()
     return [serialize_user(user) for user in users]
+
+
+@router.get("/metadata/roles")
+async def list_roles_metadata(
+    include_inactive: bool = False,
+    admin: User = Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    del admin
+    query = db.query(Role).order_by(Role.name.asc())
+    if not include_inactive:
+        query = query.filter(Role.is_active.is_(True))
+    return [serialize_role(role) for role in query.all()]
+
+
+@router.get("/roles")
+async def list_roles(
+    include_inactive: bool = True,
+    admin: User = Depends(verify_permission("roles.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    query = db.query(Role).order_by(Role.is_system.desc(), Role.name.asc())
+    if not include_inactive:
+        query = query.filter(Role.is_active.is_(True))
+    return [serialize_role(role) for role in query.all()]
+
+
+@router.get("/roles/{role_id}")
+async def get_role(
+    role_id: int,
+    admin: User = Depends(verify_permission("roles.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ruolo non trovato")
+    return serialize_role(role)
+
+
+@router.post("/roles", status_code=status.HTTP_201_CREATED)
+async def create_role(
+    request: RoleRequest,
+    admin: User = Depends(verify_permission("roles.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    role_name = request.name.strip()
+    role_code = request.code.strip() if request.code else role_name.lower().replace(" ", "-")
+    if db.query(Role).filter(Role.name == role_name).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ruolo gia esistente")
+    if db.query(Role).filter(Role.code == role_code).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Codice ruolo gia esistente")
+
+    role = Role(name=role_name, code=role_code, description=request.description, is_system=False, is_active=request.is_active)
+    role.permissions = request.permissions
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    return serialize_role(role)
+
+
+@router.put("/roles/{role_id}")
+async def update_role(
+    role_id: int,
+    request: RoleRequest,
+    admin: User = Depends(verify_permission("roles.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ruolo non trovato")
+    if role.is_system and role.code == ADMIN_ROLE_CODE:
+        if not request.is_active or set(request.permissions) != set(ALL_PERMISSIONS):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Il ruolo Admin di sistema deve restare attivo con tutti i permessi")
+    duplicate_name = db.query(Role).filter(Role.name == request.name.strip(), Role.id != role_id).first()
+    if duplicate_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ruolo gia esistente")
+    if request.code is not None:
+        duplicate_code = db.query(Role).filter(Role.code == request.code.strip(), Role.id != role_id).first()
+        if duplicate_code:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Codice ruolo gia esistente")
+
+    _apply_role_request(role, request)
+    if role.is_system and role.code == ADMIN_ROLE_CODE:
+        role.permissions = ALL_PERMISSIONS
+        role.is_active = True
+    db.commit()
+    db.refresh(role)
+    return serialize_role(role)
+
+
+@router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_role(
+    role_id: int,
+    admin: User = Depends(verify_permission("roles.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ruolo non trovato")
+    if role.is_system:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="I ruoli di sistema non possono essere eliminati")
+    if db.query(User).filter(User.role_id == role_id).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ruolo assegnato ad almeno un utente")
+    db.delete(role)
+    db.commit()
+    return None
+
+
+@router.get("/departments")
+async def list_departments(
+    include_inactive: bool = True,
+    admin: User = Depends(verify_permission("departments.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    query = db.query(Department).order_by(Department.name.asc())
+    if not include_inactive:
+        query = query.filter(Department.is_active.is_(True))
+    return [serialize_department(department) for department in query.all()]
+
+
+@router.post("/departments", status_code=status.HTTP_201_CREATED)
+async def create_department(
+    request: DepartmentRequest,
+    admin: User = Depends(verify_permission("departments.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    department_name = request.name.strip()
+    department_code = request.code.strip() if request.code else department_name.lower().replace(" ", "-")
+    if db.query(Department).filter(Department.name == department_name).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reparto gia esistente")
+    if db.query(Department).filter(Department.code == department_code).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Codice reparto gia esistente")
+    department = Department(
+        name=department_name,
+        code=department_code,
+        description=request.description,
+        is_active=request.is_active,
+    )
+    db.add(department)
+    db.commit()
+    db.refresh(department)
+    return serialize_department(department)
+
+
+@router.put("/departments/{department_id}")
+async def update_department(
+    department_id: int,
+    request: DepartmentRequest,
+    admin: User = Depends(verify_permission("departments.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    department = db.query(Department).filter(Department.id == department_id).first()
+    if department is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reparto non trovato")
+    duplicate_name = db.query(Department).filter(Department.name == request.name.strip(), Department.id != department_id).first()
+    if duplicate_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reparto gia esistente")
+    if request.code is not None:
+        duplicate_code = db.query(Department).filter(Department.code == request.code.strip(), Department.id != department_id).first()
+        if duplicate_code:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Codice reparto gia esistente")
+
+    department.name = request.name.strip()
+    department.code = request.code.strip() if request.code else department.code
+    department.description = request.description
+    department.is_active = request.is_active
+    db.commit()
+    db.refresh(department)
+    return serialize_department(department)
+
+
+@router.delete("/departments/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_department(
+    department_id: int,
+    admin: User = Depends(verify_permission("departments.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    department = db.query(Department).filter(Department.id == department_id).first()
+    if department is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reparto non trovato")
+    has_users = db.query(User).filter(User.department_id == department_id).first() is not None
+    has_machines = db.query(Machine).filter(Machine.department_id == department_id).first() is not None
+    if has_users or has_machines:
+        department.is_active = False
+        db.commit()
+        return None
+    db.delete(department)
+    db.commit()
+    return None
 
 
 @router.get("/users")
@@ -322,11 +623,11 @@ async def list_users(
     department_id: Optional[int] = None,
     ruolo: Optional[str] = None,
     turno: Optional[str] = None,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("users.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
-    query = db.query(User).options(joinedload(User.department))
+    query = db.query(User).options(joinedload(User.department), joinedload(User.role))
     if department_id is not None:
         query = query.filter(User.department_id == department_id)
     if ruolo:
@@ -341,13 +642,13 @@ async def list_users(
 @router.get("/users/{user_id}")
 async def get_user(
     user_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("users.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
     user = (
         db.query(User)
-        .options(joinedload(User.department))
+        .options(joinedload(User.department), joinedload(User.role))
         .filter(User.id == user_id)
         .first()
     )
@@ -359,7 +660,7 @@ async def get_user(
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
     request: UserCreateRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("users.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -369,11 +670,13 @@ async def create_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Badge ID gia utilizzato")
 
     department = _require_department(db, request.department_id)
+    role = _require_role(db, request.role_id) if request.role_id is not None else _role_from_legacy_value(db, request.ruolo)
     user = User(
         nome=request.nome,
         badge_id=request.badge_id,
         password_hash=get_password_hash(request.password),
-        ruolo=_parse_role(request.ruolo),
+        ruolo=_legacy_role_for_role(role),
+        role_id=role.id,
         livello_esperienza=_parse_experience(request.livello_esperienza),
         department_id=department.id,
         reparto_legacy=department.name,
@@ -383,6 +686,7 @@ async def create_user(
     db.commit()
     db.refresh(user)
     db.refresh(department)
+    db.refresh(role)
     return serialize_user(user)
 
 
@@ -390,11 +694,11 @@ async def create_user(
 async def update_user(
     user_id: int,
     request: UserUpdateRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("users.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
-    user = db.query(User).options(joinedload(User.department)).filter(User.id == user_id).first()
+    user = db.query(User).options(joinedload(User.department), joinedload(User.role)).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utente non trovato")
 
@@ -409,8 +713,15 @@ async def update_user(
         if duplicate_badge:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Badge ID gia utilizzato")
         user.badge_id = request.badge_id
-    if request.ruolo is not None:
-        user.ruolo = _parse_role(request.ruolo)
+    next_role: Optional[Role] = None
+    if request.role_id is not None:
+        next_role = _require_role(db, request.role_id)
+    elif request.ruolo is not None:
+        next_role = _role_from_legacy_value(db, request.ruolo)
+    if next_role is not None:
+        _ensure_last_admin_access_is_preserved(db, user=user, next_role=next_role)
+        user.role_id = next_role.id
+        user.ruolo = _legacy_role_for_role(next_role)
     if request.livello_esperienza is not None:
         user.livello_esperienza = _parse_experience(request.livello_esperienza)
     if request.turno is not None:
@@ -428,13 +739,14 @@ async def update_user(
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("users.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utente non trovato")
+    _ensure_last_admin_access_is_preserved(db, user=user, next_role=None)
     db.delete(user)
     db.commit()
     return None
@@ -444,7 +756,7 @@ async def delete_user(
 async def reset_user_password(
     user_id: int,
     request: ResetPasswordRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("users.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -460,7 +772,7 @@ async def reset_user_password(
 async def list_machines(
     department_id: Optional[int] = None,
     in_use: Optional[bool] = None,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("machines.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -478,7 +790,7 @@ async def list_machines(
 @router.get("/machines/{machine_id}")
 async def get_machine(
     machine_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("machines.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -504,7 +816,7 @@ async def get_machine(
 @router.post("/machines", status_code=status.HTTP_201_CREATED)
 async def create_machine(
     request: MachineCreateRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("machines.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -534,7 +846,7 @@ async def create_machine(
 async def update_machine(
     machine_id: int,
     request: MachineUpdateRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("machines.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -571,7 +883,7 @@ async def update_machine(
 @router.delete("/machines/{machine_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_machine(
     machine_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("machines.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -603,7 +915,7 @@ async def delete_machine(
 @router.post("/machines/{machine_id}/reset-status", response_model=dict)
 async def reset_machine_status(
     machine_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("machines.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -650,7 +962,7 @@ async def machine_events(
 
 @router.get("/categories")
 async def list_categories(
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -660,7 +972,7 @@ async def list_categories(
 @router.post("/categories", status_code=status.HTTP_201_CREATED)
 async def create_category(
     request: CategoryRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -679,7 +991,7 @@ async def create_category(
 async def update_category(
     category_id: int,
     request: CategoryRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -699,7 +1011,7 @@ async def list_knowledge_items(
     category_id: Optional[int] = None,
     machine_id: Optional[int] = None,
     include_inactive: bool = False,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -735,7 +1047,7 @@ async def list_knowledge_items(
 @router.get("/machines/{machine_id}/knowledge")
 async def list_machine_knowledge(
     machine_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -762,7 +1074,7 @@ async def list_machine_knowledge(
 @router.post("/knowledge-items", status_code=status.HTTP_201_CREATED)
 async def create_knowledge_item(
     request: KnowledgeItemRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -798,7 +1110,7 @@ async def create_knowledge_item(
 async def update_knowledge_item(
     knowledge_item_id: int,
     request: KnowledgeItemRequest,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -840,7 +1152,7 @@ async def update_knowledge_item(
 @router.delete("/knowledge-items/{knowledge_item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_item(
     knowledge_item_id: int,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("knowledge.manage")),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -871,7 +1183,7 @@ async def list_logs(
     category_id: Optional[int] = None,
     department_id: Optional[int] = None,
     feedback_status: Optional[FeedbackStatus] = None,
-    admin: User = Depends(verify_admin),
+    admin: User = Depends(verify_permission("logs.view")),
     db: Session = Depends(get_db),
 ):
     del admin

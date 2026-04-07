@@ -4,6 +4,8 @@ from app.models.category import Category
 from app.models.department import Department
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
+from app.models.role import ALL_PERMISSIONS
+from app.models.user import Ruolo
 from app.models.user import User
 
 
@@ -17,13 +19,38 @@ def serialize_department(department: Department) -> dict:
     }
 
 
+def serialize_role(role) -> dict:
+    return {
+        "id": role.id,
+        "name": role.name,
+        "code": role.code,
+        "description": role.description,
+        "permissions": role.permissions,
+        "is_system": role.is_system,
+        "is_active": role.is_active,
+    }
+
+
+def get_user_permissions(user: User) -> list[str]:
+    if user.role is not None and user.role.is_active:
+        return user.role.permissions
+    if user.ruolo == Ruolo.ADMIN:
+        return ALL_PERMISSIONS
+    return []
+
+
 def serialize_user(user: User) -> dict:
     department_name = user.reparto or None
+    role = user.role
     return {
         "id": user.id,
         "nome": user.nome,
         "badge_id": user.badge_id,
         "ruolo": user.ruolo.value,
+        "role_id": role.id if role else None,
+        "role_name": role.name if role else None,
+        "role_code": role.code if role else user.ruolo.value,
+        "permissions": get_user_permissions(user),
         "livello_esperienza": user.livello_esperienza.value,
         "department_id": user.department_id,
         "department_name": department_name,

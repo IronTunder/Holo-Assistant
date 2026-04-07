@@ -11,16 +11,17 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Edit2, Key, Plus, Trash2, UsersRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
-import type { AdminUser, DepartmentOption } from './adminTypes';
+import type { AdminUser, DepartmentOption, RoleOption } from './adminTypes';
 import { ResetPasswordDialog } from './ResetPasswordDialog';
 import { UserForm } from './UserForm';
 
 interface UserListProps {
   departments: DepartmentOption[];
+  roles: RoleOption[];
   onMetadataRefresh: () => Promise<void>;
 }
 
-export const UserList = ({ departments, onMetadataRefresh }: UserListProps) => {
+export const UserList = ({ departments, roles, onMetadataRefresh }: UserListProps) => {
   const { apiCall } = useApiClient();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -62,7 +63,7 @@ export const UserList = ({ departments, onMetadataRefresh }: UserListProps) => {
         user.badge_id.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesDepartment =
         departmentFilter === 'all' || String(user.department_id ?? '') === departmentFilter;
-      const matchesRole = roleFilter === 'all' || user.ruolo === roleFilter;
+      const matchesRole = roleFilter === 'all' || String(user.role_id ?? '') === roleFilter;
       const matchesShift = shiftFilter === 'all' || user.turno === shiftFilter;
       return matchesSearch && matchesDepartment && matchesRole && matchesShift;
     });
@@ -136,8 +137,11 @@ export const UserList = ({ departments, onMetadataRefresh }: UserListProps) => {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Tutti i ruoli</SelectItem>
-                <SelectItem value="operaio">Operaio</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
+                {roles.map((role) => (
+                  <SelectItem key={role.id} value={String(role.id)}>
+                    {role.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={shiftFilter} onValueChange={setShiftFilter}>
@@ -192,10 +196,10 @@ export const UserList = ({ departments, onMetadataRefresh }: UserListProps) => {
                     </TableCell>
                     <TableCell>
                       <Badge
-                        variant={user.ruolo === 'admin' ? 'destructive' : 'secondary'}
+                        variant={user.role_code === 'admin' || user.ruolo === 'admin' ? 'destructive' : 'secondary'}
                         className="capitalize"
                       >
-                        {user.ruolo}
+                        {user.role_name || user.ruolo}
                       </Badge>
                     </TableCell>
                     <TableCell className="capitalize">{user.livello_esperienza}</TableCell>
@@ -244,6 +248,7 @@ export const UserList = ({ departments, onMetadataRefresh }: UserListProps) => {
         }}
         user={editingUser}
         departments={departments}
+        roles={roles}
         onSuccess={() => {
           void fetchUsers();
           void onMetadataRefresh();

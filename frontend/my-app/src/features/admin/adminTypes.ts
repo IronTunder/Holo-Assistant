@@ -6,11 +6,25 @@ export interface DepartmentOption {
   is_active: boolean;
 }
 
+export interface RoleOption {
+  id: number;
+  name: string;
+  code?: string | null;
+  description?: string | null;
+  permissions: string[];
+  is_system: boolean;
+  is_active: boolean;
+}
+
 export interface AdminUser {
   id: number;
   nome: string;
   badge_id: string;
   ruolo: string;
+  role_id?: number | null;
+  role_name?: string | null;
+  role_code?: string | null;
+  permissions: string[];
   livello_esperienza: string;
   department_id?: number | null;
   department_name?: string | null;

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.user import LivelloEsperienza, Turno
 
@@ -21,6 +21,10 @@ class UserCreate(UserBase):
 
 class UserResponse(UserBase):
     id: int
+    role_id: Optional[int] = None
+    role_name: Optional[str] = None
+    role_code: Optional[str] = None
+    permissions: list[str] = Field(default_factory=list)
     department_id: Optional[int] = None
     department_name: Optional[str] = None
     reparto: Optional[str] = None

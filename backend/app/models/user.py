@@ -31,6 +31,7 @@ class User(Base):
     badge_id = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=True)  # Nuovo campo per la password
     ruolo = Column(Enum(Ruolo), default=Ruolo.OPERAIO, nullable=False)  # OPERAIO o ADMIN
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=True, index=True)
     livello_esperienza = Column(Enum(LivelloEsperienza), nullable=False)
     reparto_legacy = Column("reparto", String, nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
@@ -38,6 +39,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     department = relationship("Department", back_populates="users")
+    role = relationship("Role")
 
     @property
     def reparto(self) -> str:

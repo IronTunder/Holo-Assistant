@@ -7,13 +7,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { toast } from 'sonner';
-import type { AdminUser, DepartmentOption } from './adminTypes';
+import type { AdminUser, DepartmentOption, RoleOption } from './adminTypes';
 
 interface UserFormProps {
   isOpen: boolean;
   onClose: () => void;
   user: AdminUser | null;
   departments: DepartmentOption[];
+  roles: RoleOption[];
   onSuccess: () => void;
 }
 
@@ -30,12 +31,12 @@ const shiftOptions = [
   { value: 'notte', label: 'Notte' },
 ];
 
-export const UserForm = ({ isOpen, onClose, user, departments, onSuccess }: UserFormProps) => {
+export const UserForm = ({ isOpen, onClose, user, departments, roles, onSuccess }: UserFormProps) => {
   const { apiCall } = useApiClient();
   const [nome, setNome] = useState('');
   const [badgeId, setBadgeId] = useState('');
   const [password, setPassword] = useState('');
-  const [ruolo, setRuolo] = useState('operaio');
+  const [roleId, setRoleId] = useState('');
   const [livelloEsperienza, setLivelloEsperienza] = useState('operaio');
   const [departmentId, setDepartmentId] = useState('');
   const [turno, setTurno] = useState('mattina');
@@ -47,10 +48,11 @@ export const UserForm = ({ isOpen, onClose, user, departments, onSuccess }: User
     }
 
     if (user) {
+      const userRole = roles.find((role) => role.id === user.role_id || role.code === user.role_code || role.code === user.ruolo);
       setNome(user.nome);
       setBadgeId(user.badge_id);
       setPassword('');
-      setRuolo(user.ruolo);
+      setRoleId(userRole ? String(userRole.id) : '');
       setLivelloEsperienza(user.livello_esperienza);
       setDepartmentId(user.department_id ? String(user.department_id) : '');
       setTurno(user.turno);
@@ -60,21 +62,24 @@ export const UserForm = ({ isOpen, onClose, user, departments, onSuccess }: User
     setNome('');
     setBadgeId('');
     setPassword('');
-    setRuolo('operaio');
+    setRoleId(roles[0] ? String(roles[0].id) : '');
     setLivelloEsperienza('operaio');
     setDepartmentId(departments[0] ? String(departments[0].id) : '');
     setTurno('mattina');
-  }, [departments, isOpen, user]);
+  }, [departments, isOpen, roles, user]);
 
   const inlineError = useMemo(() => {
     if (!departmentId) {
       return 'Seleziona un reparto.';
     }
+    if (!roleId) {
+      return 'Seleziona un ruolo.';
+    }
     if (!user && !password.trim()) {
       return 'La password iniziale e obbligatoria.';
     }
     return null;
-  }, [departmentId, password, user]);
+  }, [departmentId, password, roleId, user]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -88,7 +93,7 @@ export const UserForm = ({ isOpen, onClose, user, departments, onSuccess }: User
       const payload: Record<string, unknown> = {
         nome,
         badge_id: badgeId,
-        ruolo,
+        role_id: Number(roleId),
         livello_esperienza: livelloEsperienza,
         department_id: Number(departmentId),
         turno,
@@ -157,13 +162,16 @@ export const UserForm = ({ isOpen, onClose, user, departments, onSuccess }: User
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Ruolo</label>
-              <Select value={ruolo} onValueChange={setRuolo}>
+              <Select value={roleId} onValueChange={setRoleId}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Seleziona ruolo" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="operaio">Operaio</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  {roles.map((role) => (
+                    <SelectItem key={role.id} value={String(role.id)}>
+                      {role.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

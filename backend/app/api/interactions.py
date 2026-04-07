@@ -6,14 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.auth.auth import ADMIN_MACHINE_EVENTS_CHANNEL, get_current_user
+from app.api.auth.auth import ADMIN_MACHINE_EVENTS_CHANNEL, get_current_user, user_has_permission
 from app.api.auth.auth import verify_password
 from app.core.database import get_db
 from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
 from app.models.user import User
-from app.models.user import Ruolo
-from app.models.user import LivelloEsperienza
 from app.schemas.interaction import (
     AskQuestionRequest,
     AskQuestionResponse,
@@ -97,7 +95,7 @@ def _build_interaction_event_payload(interaction: InteractionLog) -> dict:
 
 
 def _is_technician(user: User) -> bool:
-    return user.ruolo == Ruolo.ADMIN or user.livello_esperienza == LivelloEsperienza.MANUTENTORE
+    return user_has_permission(user, "interactions.resolve")
 
 
 def _resolve_technician_user(
@@ -250,7 +248,7 @@ async def submit_quick_action(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if current_user.ruolo != Ruolo.ADMIN and current_user.id != request.user_id:
+    if not user_has_permission(current_user, "backoffice.access") and current_user.id != request.user_id:
         raise HTTPException(status_code=403, detail="Non puoi creare una segnalazione per un altro utente")
 
     try:
@@ -343,7 +341,7 @@ async def submit_interaction_feedback(
         )
         if interaction is None:
             raise HTTPException(status_code=404, detail="Interazione non trovata")
-        if current_user.ruolo != Ruolo.ADMIN and interaction.user_id != current_user.id:
+        if not user_has_permission(current_user, "backoffice.access") and interaction.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Non puoi aggiornare questa interazione")
 
         interaction.feedback_status = request.feedback_status
