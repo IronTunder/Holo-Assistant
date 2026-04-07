@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401
-from app.api.interactions import ask_question, submit_quick_action
+from app.api.interactions import ask_question, resolve_interaction, submit_quick_action
 from app.database import Base
 from app.models.category import Category
 from app.models.department import Department
@@ -15,7 +15,7 @@ from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
-from app.schemas.interaction import AskQuestionRequest, QuickActionRequest
+from app.schemas.interaction import AskQuestionRequest, InteractionResolutionRequest, QuickActionRequest
 from app.services.knowledge_retrieval import (
     IndexedKnowledgeItem,
     RetrievalResult,
@@ -64,6 +64,26 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
             reparto_legacy="Assemblaggio",
             turno=Turno.MATTINA,
         )
+        technician = User(
+            nome="Tecnico Manutentore",
+            badge_id="TECH-001",
+            password_hash="hash",
+            ruolo=Ruolo.OPERAIO,
+            livello_esperienza=LivelloEsperienza.MANUTENTORE,
+            department=department,
+            reparto_legacy="Assemblaggio",
+            turno=Turno.MATTINA,
+        )
+        admin = User(
+            nome="Admin",
+            badge_id="ADMIN-001",
+            password_hash="hash",
+            ruolo=Ruolo.ADMIN,
+            livello_esperienza=LivelloEsperienza.SENIOR,
+            department=department,
+            reparto_legacy="Assemblaggio",
+            turno=Turno.MATTINA,
+        )
         manutenzione = Category(name="Manutenzione", description="Procedure di manutenzione")
         sicurezza = Category(name="Sicurezza", description="Procedure di sicurezza")
         items = [
@@ -105,7 +125,7 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        self.db.add_all([department, machine, user, manutenzione, sicurezza, *items])
+        self.db.add_all([department, machine, user, technician, admin, manutenzione, sicurezza, *items])
         self.db.flush()
         self.db.add_all(
             [
@@ -117,6 +137,8 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.machine_id = machine.id
         self.user_id = user.id
+        self.technician_id = technician.id
+        self.admin_id = admin.id
         self.item_ids = {item.question_title: item.id for item in items}
 
     async def test_ranking_prefers_exact_keyword_match(self) -> None:
@@ -267,6 +289,76 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
             await submit_quick_action(request, current_user=other_user, db=self.db)
 
         self.assertEqual(context.exception.status_code, 403)
+
+    def _create_unresolved_interaction(self) -> InteractionLog:
+        interaction = InteractionLog(
+            user_id=self.user_id,
+            machine_id=self.machine_id,
+            domanda="La risposta non ha risolto il problema",
+            risposta="Procedura suggerita",
+            feedback_status="unresolved",
+            action_type="question",
+            priority="normal",
+        )
+        self.db.add(interaction)
+        self.db.commit()
+        self.db.refresh(interaction)
+        return interaction
+
+    async def test_resolve_interaction_rejects_regular_operator_without_technician_auth(self) -> None:
+        interaction = self._create_unresolved_interaction()
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with self.assertRaises(HTTPException) as context:
+            await resolve_interaction(
+                interaction.id,
+                InteractionResolutionRequest(resolution_note="Ripristino effettuato"),
+                current_user=current_user,
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 403)
+
+    async def test_resolve_interaction_accepts_technician_badge_and_records_resolution(self) -> None:
+        interaction = self._create_unresolved_interaction()
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await resolve_interaction(
+                interaction.id,
+                InteractionResolutionRequest(
+                    resolution_note="Sostituito sensore",
+                    technician_badge_id="TECH-001",
+                ),
+                current_user=current_user,
+                db=self.db,
+            )
+
+        self.db.refresh(interaction)
+        self.assertEqual(response.feedback_status, "resolved")
+        self.assertEqual(response.resolved_by_user_id, self.technician_id)
+        self.assertEqual(response.resolution_note, "Sostituito sensore")
+        self.assertEqual(interaction.feedback_status, "resolved")
+        self.assertEqual(interaction.resolved_by_user_id, self.technician_id)
+        self.assertEqual(interaction.resolution_note, "Sostituito sensore")
+        self.assertIsNotNone(interaction.resolution_timestamp)
+
+    async def test_resolve_interaction_accepts_admin(self) -> None:
+        interaction = self._create_unresolved_interaction()
+        admin_user = self.db.query(User).filter(User.id == self.admin_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await resolve_interaction(
+                interaction.id,
+                InteractionResolutionRequest(resolution_note="Chiuso da admin"),
+                current_user=admin_user,
+                db=self.db,
+            )
+
+        self.db.refresh(interaction)
+        self.assertEqual(response.feedback_status, "resolved")
+        self.assertEqual(response.resolved_by_user_id, self.admin_id)
+        self.assertEqual(interaction.resolved_by_user_id, self.admin_id)
 
     async def test_ask_question_returns_clarification_mode(self) -> None:
         request = AskQuestionRequest(

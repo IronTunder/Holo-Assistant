@@ -49,6 +49,7 @@ export const API_ENDPOINTS = {
   INTERACTION_ASK: `${API_BASE_URL}/api/interactions/ask`,
   INTERACTION_QUICK_ACTION: `${API_BASE_URL}/api/interactions/quick-action`,
   INTERACTION_FEEDBACK: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/feedback`,
+  INTERACTION_RESOLVE: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/resolve`,
 
   // Machines endpoints
   GET_MACHINES: `${API_BASE_URL}/machines`,

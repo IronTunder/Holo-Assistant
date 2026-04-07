@@ -94,6 +94,10 @@ export interface InteractionLogEntry {
   risposta?: string | null;
   feedback_status?: InteractionFeedbackStatus | null;
   feedback_timestamp?: string | null;
+  resolved_by_user_id?: number | null;
+  resolved_by_user_name?: string | null;
+  resolution_note?: string | null;
+  resolution_timestamp?: string | null;
   action_type: InteractionActionType;
   priority: InteractionPriority;
   timestamp: string;

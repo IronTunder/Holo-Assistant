@@ -207,6 +207,9 @@ def apply_compatible_migrations():
             _ensure_column(connection, inspector, "interaction_logs", "knowledge_item_id", "knowledge_item_id INTEGER")
             _ensure_column(connection, inspector, "interaction_logs", "feedback_status", "feedback_status VARCHAR(32)")
             _ensure_column(connection, inspector, "interaction_logs", "feedback_timestamp", "feedback_timestamp TIMESTAMP")
+            _ensure_column(connection, inspector, "interaction_logs", "resolved_by_user_id", "resolved_by_user_id INTEGER")
+            _ensure_column(connection, inspector, "interaction_logs", "resolution_note", "resolution_note TEXT")
+            _ensure_column(connection, inspector, "interaction_logs", "resolution_timestamp", "resolution_timestamp TIMESTAMP")
             _ensure_column(
                 connection,
                 inspector,

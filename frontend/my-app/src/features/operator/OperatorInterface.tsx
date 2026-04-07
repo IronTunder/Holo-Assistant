@@ -52,6 +52,23 @@ type QuickActionApiResponse = {
   timestamp: string;
 };
 
+type PendingResolution = {
+  interactionId: number;
+  message: string;
+  resolvedByName?: string | null;
+  resolutionTimestamp?: string | null;
+};
+
+type InteractionResolutionResponse = {
+  interaction_id: number;
+  feedback_status: 'resolved';
+  feedback_timestamp: string;
+  resolved_by_user_id: number;
+  resolved_by_user_name: string;
+  resolution_note?: string | null;
+  resolution_timestamp: string;
+};
+
 const UNRESOLVED_CONFIRMATION_MESSAGE =
   "L'assistenza è stata informata del tuo problema e inviera al piu presto un tecnico. Quando il tecnico avra risolto il problema, l'intervento potra essere confermato nel sistema.";
 
@@ -144,6 +161,11 @@ export function OperatorInterface() {
   const [quickActionInFlight, setQuickActionInFlight] = useState<QuickActionType | null>(null);
   const [showEmergencyConfirmation, setShowEmergencyConfirmation] = useState(false);
   const [wakeWordMuted, setWakeWordMuted] = useState(false);
+  const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null);
+  const [resolutionNote, setResolutionNote] = useState('');
+  const [technicianUsername, setTechnicianUsername] = useState('');
+  const [technicianPassword, setTechnicianPassword] = useState('');
+  const [isResolvingInteraction, setIsResolvingInteraction] = useState(false);
   const activeInteractionIdRef = useRef<number | null>(null);
   const [showStartupChecklist, setShowStartupChecklist] = useState(false);
   const [startupChecklistCompleted, setStartupChecklistCompleted] = useState(false);
@@ -189,6 +211,13 @@ export function OperatorInterface() {
     setActiveInteractionId(interactionId);
   };
 
+  const resetResolutionForm = () => {
+    setResolutionNote('');
+    setTechnicianUsername('');
+    setTechnicianPassword('');
+    setIsResolvingInteraction(false);
+  };
+
   useEffect(() => {
     if (!logoutMessage) {
       if (logoutMessageTimeoutRef.current !== null) {
@@ -215,6 +244,21 @@ export function OperatorInterface() {
       manualLogoutInProgressRef.current = false;
     }
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!pendingResolution?.resolvedByName) {
+      return;
+    }
+
+    const hideResolutionBannerTimeout = window.setTimeout(() => {
+      setPendingResolution(null);
+      resetResolutionForm();
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(hideResolutionBannerTimeout);
+    };
+  }, [pendingResolution?.resolvedByName]);
 
   useEffect(() => {
     const clearPollingTimeout = () => {
@@ -563,6 +607,31 @@ export function OperatorInterface() {
     }
   };
 
+  const submitInteractionResolution = async (
+    interactionId: number,
+    token: string,
+    technicianAuth: { technician_badge_id?: string; technician_username?: string; technician_password?: string }
+  ): Promise<InteractionResolutionResponse> => {
+    const response = await fetch(API_ENDPOINTS.INTERACTION_RESOLVE(interactionId), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        resolution_note: resolutionNote.trim() || null,
+        ...technicianAuth,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Errore nella conferma della risoluzione');
+    }
+
+    return (await response.json()) as InteractionResolutionResponse;
+  };
+
   const markActiveInteractionAsNotApplicable = async () => {
     const interactionId = activeInteractionIdRef.current;
 
@@ -597,6 +666,8 @@ export function OperatorInterface() {
     setQuickActionInFlight(null);
     setShowEmergencyConfirmation(false);
     setWakeWordMuted(false);
+    setPendingResolution(null);
+    resetResolutionForm();
     setIsTyping(false);
     setShowSubtitles(false);
     await logout();
@@ -818,6 +889,13 @@ export function OperatorInterface() {
       }
 
       const data = (await response.json()) as QuickActionApiResponse;
+      setPendingResolution({
+        interactionId: data.interaction_id,
+        message: actionType === 'emergency'
+          ? 'Emergenza aperta: attendi il tecnico e conferma la risoluzione dopo l intervento.'
+          : 'Richiesta manutenzione aperta: il tecnico potra confermare la risoluzione da questa postazione.',
+      });
+      resetResolutionForm();
       await playAssistantMessage(data.message || quickActionFallbackMessages[actionType]);
     } catch (error) {
       console.error('Errore invio segnalazione rapida:', error);
@@ -840,6 +918,16 @@ export function OperatorInterface() {
       await submitInteractionFeedback(activeInteractionId, feedbackStatus, accessToken);
 
       setShowFollowUp(false);
+      if (feedbackStatus === 'unresolved') {
+        setPendingResolution({
+          interactionId: activeInteractionId,
+          message: 'Problema aperto: attendi il tecnico e conferma la risoluzione dopo l intervento.',
+        });
+        resetResolutionForm();
+      } else {
+        setPendingResolution(null);
+        resetResolutionForm();
+      }
       setTrackedActiveInteractionId(null);
       if (feedbackStatus === 'unresolved') {
         const speechPayload = await handleTTS(UNRESOLVED_CONFIRMATION_MESSAGE);
@@ -871,6 +959,67 @@ export function OperatorInterface() {
       alert(error instanceof Error ? error.message : 'Errore nel salvataggio del feedback');
     } finally {
       setIsSubmittingFeedback(false);
+    }
+  };
+
+  const handleTechnicianBadgeResolution = async () => {
+    if (!pendingResolution || !accessToken || isResolvingInteraction) {
+      return;
+    }
+
+    setIsResolvingInteraction(true);
+    try {
+      const data = await submitInteractionResolution(
+        pendingResolution.interactionId,
+        accessToken,
+        { technician_badge_id: 'NFT-001' }
+      );
+      setPendingResolution({
+        interactionId: data.interaction_id,
+        message: 'Intervento confermato e problema segnato come risolto.',
+        resolvedByName: data.resolved_by_user_name,
+        resolutionTimestamp: data.resolution_timestamp,
+      });
+      setResolutionNote('');
+    } catch (error) {
+      console.error('Errore conferma risoluzione con badge:', error);
+      alert(error instanceof Error ? error.message : 'Errore nella conferma della risoluzione');
+    } finally {
+      setIsResolvingInteraction(false);
+    }
+  };
+
+  const handleTechnicianCredentialsResolution = async () => {
+    if (!pendingResolution || !accessToken || isResolvingInteraction) {
+      return;
+    }
+    if (!technicianUsername.trim() || !technicianPassword) {
+      alert('Inserisci credenziali tecnico');
+      return;
+    }
+
+    setIsResolvingInteraction(true);
+    try {
+      const data = await submitInteractionResolution(
+        pendingResolution.interactionId,
+        accessToken,
+        {
+          technician_username: technicianUsername.trim(),
+          technician_password: technicianPassword,
+        }
+      );
+      setPendingResolution({
+        interactionId: data.interaction_id,
+        message: 'Intervento confermato e problema segnato come risolto.',
+        resolvedByName: data.resolved_by_user_name,
+        resolutionTimestamp: data.resolution_timestamp,
+      });
+      resetResolutionForm();
+    } catch (error) {
+      console.error('Errore conferma risoluzione con credenziali:', error);
+      alert(error instanceof Error ? error.message : 'Errore nella conferma della risoluzione');
+    } finally {
+      setIsResolvingInteraction(false);
     }
   };
 
@@ -1212,6 +1361,73 @@ export function OperatorInterface() {
                             >
                               Non rilevante
                             </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {pendingResolution && (
+                        <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
+                          <div className="flex flex-col gap-4">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.22em] text-amber-200">In attesa tecnico</p>
+                              <h3 className="mt-1 text-lg font-semibold text-white">Conferma intervento tecnico</h3>
+                              <p className="mt-1 text-sm leading-6 text-amber-50">{pendingResolution.message}</p>
+                              {pendingResolution.resolvedByName ? (
+                                <p className="mt-2 text-sm font-semibold text-emerald-200">
+                                  Risolto da {pendingResolution.resolvedByName}
+                                  {pendingResolution.resolutionTimestamp
+                                    ? ` - ${new Date(pendingResolution.resolutionTimestamp).toLocaleString('it-IT')}`
+                                    : ''}
+                                </p>
+                              ) : null}
+                            </div>
+
+                            {!pendingResolution.resolvedByName && (
+                              <>
+                                <textarea
+                                  value={resolutionNote}
+                                  onChange={(event) => setResolutionNote(event.target.value)}
+                                  placeholder="Nota tecnica opzionale..."
+                                  className="min-h-24 w-full resize-none rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                                />
+
+                                <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <input
+                                      type="text"
+                                      value={technicianUsername}
+                                      onChange={(event) => setTechnicianUsername(event.target.value)}
+                                      placeholder="Nome tecnico"
+                                      className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <input
+                                      type="password"
+                                      value={technicianPassword}
+                                      onChange={(event) => setTechnicianPassword(event.target.value)}
+                                      placeholder="Password tecnico"
+                                      className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                                    />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleTechnicianCredentialsResolution()}
+                                    disabled={isResolvingInteraction}
+                                    className="rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Conferma con login
+                                  </button>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => void handleTechnicianBadgeResolution()}
+                                  disabled={isResolvingInteraction}
+                                  className="rounded-xl border border-amber-300/50 bg-amber-300/10 px-4 py-3 text-sm font-semibold text-amber-50 transition-colors hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {isResolvingInteraction ? 'Conferma in corso...' : 'Simula badge manutentore'}
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                       )}

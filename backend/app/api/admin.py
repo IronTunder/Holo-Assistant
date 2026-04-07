@@ -133,6 +133,10 @@ class InteractionLogResponse(BaseModel):
     risposta: Optional[str] = None
     feedback_status: Optional[FeedbackStatus] = None
     feedback_timestamp: Optional[datetime] = None
+    resolved_by_user_id: Optional[int] = None
+    resolved_by_user_name: Optional[str] = None
+    resolution_note: Optional[str] = None
+    resolution_timestamp: Optional[datetime] = None
     action_type: InteractionActionType = "question"
     priority: InteractionPriority = "normal"
     timestamp: datetime
@@ -879,6 +883,7 @@ async def list_logs(
             joinedload(InteractionLog.machine).joinedload(Machine.department),
             joinedload(InteractionLog.category),
             joinedload(InteractionLog.knowledge_item),
+            joinedload(InteractionLog.resolved_by_user),
         )
     )
     if user_id is not None:
@@ -927,6 +932,10 @@ async def list_logs(
                 risposta=log.risposta,
                 feedback_status=log.feedback_status,
                 feedback_timestamp=log.feedback_timestamp,
+                resolved_by_user_id=log.resolved_by_user_id,
+                resolved_by_user_name=log.resolved_by_user.nome if log.resolved_by_user else None,
+                resolution_note=log.resolution_note,
+                resolution_timestamp=log.resolution_timestamp,
                 action_type=log.action_type or "question",
                 priority=log.priority or "normal",
                 timestamp=log.timestamp,

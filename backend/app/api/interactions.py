@@ -7,16 +7,20 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.auth.auth import ADMIN_MACHINE_EVENTS_CHANNEL, get_current_user
+from app.api.auth.auth import verify_password
 from app.core.database import get_db
 from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
 from app.models.user import User
 from app.models.user import Ruolo
+from app.models.user import LivelloEsperienza
 from app.schemas.interaction import (
     AskQuestionRequest,
     AskQuestionResponse,
     InteractionFeedbackRequest,
     InteractionFeedbackResponse,
+    InteractionResolutionRequest,
+    InteractionResolutionResponse,
     QuickActionRequest,
     QuickActionResponse,
 )
@@ -82,10 +86,46 @@ def _build_interaction_event_payload(interaction: InteractionLog) -> dict:
         "response": interaction.risposta,
         "feedback_status": interaction.feedback_status,
         "feedback_timestamp": interaction.feedback_timestamp.isoformat() if interaction.feedback_timestamp else None,
+        "resolved_by_user_id": interaction.resolved_by_user_id,
+        "resolved_by_user_name": interaction.resolved_by_user.nome if interaction.resolved_by_user else None,
+        "resolution_note": interaction.resolution_note,
+        "resolution_timestamp": interaction.resolution_timestamp.isoformat() if interaction.resolution_timestamp else None,
         "action_type": interaction.action_type or "question",
         "priority": interaction.priority or "normal",
         "timestamp": interaction.timestamp.isoformat() if interaction.timestamp else None,
     }
+
+
+def _is_technician(user: User) -> bool:
+    return user.ruolo == Ruolo.ADMIN or user.livello_esperienza == LivelloEsperienza.MANUTENTORE
+
+
+def _resolve_technician_user(
+    request: InteractionResolutionRequest,
+    current_user: User,
+    db: Session,
+) -> User:
+    if _is_technician(current_user):
+        return current_user
+
+    technician: User | None = None
+    if request.technician_badge_id:
+        technician = db.query(User).filter(User.badge_id == request.technician_badge_id.strip()).first()
+    elif request.technician_username and request.technician_password:
+        technician = db.query(User).filter(User.nome == request.technician_username.strip()).first()
+        if technician is None or not technician.password_hash or not verify_password(
+            request.technician_password,
+            technician.password_hash,
+        ):
+            raise HTTPException(status_code=401, detail="Credenziali tecnico non valide")
+
+    if technician is None:
+        raise HTTPException(status_code=403, detail="Autenticazione tecnico richiesta")
+
+    if not _is_technician(technician):
+        raise HTTPException(status_code=403, detail="L'utente autenticato non e un manutentore")
+
+    return technician
 
 
 @router.post("/ask", response_model=AskQuestionResponse)
@@ -161,6 +201,7 @@ async def ask_question(
                 joinedload(InteractionLog.machine),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
+                joinedload(InteractionLog.resolved_by_user),
             )
             .filter(InteractionLog.id == interaction.id)
             .first()
@@ -242,6 +283,7 @@ async def submit_quick_action(
                 joinedload(InteractionLog.machine),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
+                joinedload(InteractionLog.resolved_by_user),
             )
             .filter(InteractionLog.id == interaction.id)
             .first()
@@ -294,6 +336,7 @@ async def submit_interaction_feedback(
                 joinedload(InteractionLog.machine),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
+                joinedload(InteractionLog.resolved_by_user),
             )
             .filter(InteractionLog.id == interaction_id)
             .first()
@@ -329,6 +372,80 @@ async def submit_interaction_feedback(
         db.rollback()
         logger.error("Unexpected interaction feedback error: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Errore aggiornando il feedback") from exc
+
+
+@router.post("/{interaction_id}/resolve", response_model=InteractionResolutionResponse)
+async def resolve_interaction(
+    interaction_id: int,
+    request: InteractionResolutionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        interaction = (
+            db.query(InteractionLog)
+            .options(
+                joinedload(InteractionLog.user),
+                joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.category),
+                joinedload(InteractionLog.knowledge_item),
+                joinedload(InteractionLog.resolved_by_user),
+            )
+            .filter(InteractionLog.id == interaction_id)
+            .first()
+        )
+        if interaction is None:
+            raise HTTPException(status_code=404, detail="Interazione non trovata")
+
+        technician = _resolve_technician_user(request, current_user, db)
+        now = datetime.now(timezone.utc)
+        resolution_note = request.resolution_note.strip() if request.resolution_note else None
+
+        interaction.feedback_status = "resolved"
+        interaction.feedback_timestamp = now
+        interaction.resolved_by_user_id = technician.id
+        interaction.resolution_note = resolution_note
+        interaction.resolution_timestamp = now
+        db.commit()
+        db.refresh(interaction)
+        interaction = (
+            db.query(InteractionLog)
+            .options(
+                joinedload(InteractionLog.user),
+                joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.category),
+                joinedload(InteractionLog.knowledge_item),
+                joinedload(InteractionLog.resolved_by_user),
+            )
+            .filter(InteractionLog.id == interaction.id)
+            .first()
+        )
+
+        await session_event_bus.publish(
+            ADMIN_MACHINE_EVENTS_CHANNEL,
+            "interaction_feedback_updated",
+            _build_interaction_event_payload(interaction),
+        )
+
+        return InteractionResolutionResponse(
+            interaction_id=interaction.id,
+            feedback_status=interaction.feedback_status,
+            feedback_timestamp=interaction.feedback_timestamp,
+            resolved_by_user_id=technician.id,
+            resolved_by_user_name=technician.nome,
+            resolution_note=interaction.resolution_note,
+            resolution_timestamp=interaction.resolution_timestamp,
+        )
+    except HTTPException:
+        raise
+    except OperationalError as exc:
+        db.rollback()
+        logger.error("Database error resolving interaction: %s", exc, exc_info=True)
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+    except Exception as exc:
+        db.rollback()
+        logger.error("Unexpected interaction resolution error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Errore confermando la risoluzione") from exc
 
 
 @router.get("/health")

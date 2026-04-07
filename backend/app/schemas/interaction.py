@@ -80,6 +80,23 @@ class InteractionFeedbackResponse(BaseModel):
     feedback_timestamp: datetime
 
 
+class InteractionResolutionRequest(BaseModel):
+    resolution_note: Optional[str] = None
+    technician_badge_id: Optional[str] = None
+    technician_username: Optional[str] = None
+    technician_password: Optional[str] = None
+
+
+class InteractionResolutionResponse(BaseModel):
+    interaction_id: int
+    feedback_status: FeedbackStatus
+    feedback_timestamp: datetime
+    resolved_by_user_id: int
+    resolved_by_user_name: str
+    resolution_note: Optional[str] = None
+    resolution_timestamp: datetime
+
+
 class QuickActionResponse(BaseModel):
     interaction_id: int
     action_type: QuickActionType

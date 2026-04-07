@@ -38,6 +38,16 @@ const actionLabels = {
   emergency: 'Emergenza',
 } as const;
 
+type InteractionResolutionResponse = {
+  interaction_id: number;
+  feedback_status: 'resolved';
+  feedback_timestamp: string;
+  resolved_by_user_id: number;
+  resolved_by_user_name: string;
+  resolution_note?: string | null;
+  resolution_timestamp: string;
+};
+
 export const AdminDashboard = () => {
   const { accessToken, isAdmin, logout, refreshAccessToken, user } = useAuth();
   const { apiCall } = useApiClient();
@@ -157,15 +167,16 @@ export const AdminDashboard = () => {
     async (interactionId: number) => {
       setUpdatingInteractionId(interactionId);
       try {
-        const response = await apiCall(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+        const response = await apiCall(API_ENDPOINTS.INTERACTION_RESOLVE(interactionId), {
           method: 'POST',
           body: JSON.stringify({
-            feedback_status: 'resolved',
+            resolution_note: 'Risoluzione confermata da admin',
           }),
         });
         if (!response.ok) {
           throw new Error('Errore nell\'aggiornamento del problema');
         }
+        const resolvedData = (await response.json()) as InteractionResolutionResponse;
 
         setRecentUnresolvedLogs((currentLogs) =>
           currentLogs.filter((log) => log.id !== interactionId)
@@ -176,7 +187,11 @@ export const AdminDashboard = () => {
               ? {
                   ...log,
                   feedback_status: 'resolved',
-                  feedback_timestamp: new Date().toISOString(),
+                  feedback_timestamp: resolvedData.feedback_timestamp,
+                  resolved_by_user_id: resolvedData.resolved_by_user_id,
+                  resolved_by_user_name: resolvedData.resolved_by_user_name,
+                  resolution_note: resolvedData.resolution_note,
+                  resolution_timestamp: resolvedData.resolution_timestamp,
                 }
               : log
           )
@@ -432,7 +447,7 @@ export const AdminDashboard = () => {
                   <div>
                     <h2 className="text-lg font-semibold text-slate-950">Problemi non risolti recenti</h2>
                     <p className="text-sm text-slate-500">
-                      Segnalazioni arrivate dagli operatori quando la risposta non e bastata.
+                      Segnalazioni in attesa di conferma da un tecnico manutentore.
                     </p>
                   </div>
                   <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
@@ -485,7 +500,7 @@ export const AdminDashboard = () => {
                       <div key={log.id} className="rounded-xl border border-red-100 bg-red-50/60 p-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline" className="border-red-200 bg-white text-red-700">
-                            {feedbackLabels.unresolved}
+                            In attesa tecnico
                           </Badge>
                           <Badge variant="outline" className={log.action_type === 'maintenance' ? 'border-amber-200 bg-amber-50 text-amber-700' : ''}>
                             {actionLabels[log.action_type]}
@@ -546,6 +561,11 @@ export const AdminDashboard = () => {
                             <Badge variant="outline">
                               {feedbackLabels[log.feedback_status]}
                             </Badge>
+                          ) : null}
+                          {log.resolved_by_user_name ? (
+                            <span className="text-xs text-slate-500">
+                              Chiuso da {log.resolved_by_user_name}
+                            </span>
                           ) : null}
                           <span className="text-xs text-slate-400">
                             {new Date(log.timestamp).toLocaleString('it-IT')}

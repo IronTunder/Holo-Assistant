@@ -27,6 +27,16 @@ interface LogViewerProps {
   users: AdminUser[];
 }
 
+type InteractionResolutionResponse = {
+  interaction_id: number;
+  feedback_status: 'resolved';
+  feedback_timestamp: string;
+  resolved_by_user_id: number;
+  resolved_by_user_name: string;
+  resolution_note?: string | null;
+  resolution_timestamp: string;
+};
+
 export const LogViewer = ({ departments, categories, machines, users }: LogViewerProps) => {
   const { apiCall } = useApiClient();
   const [logs, setLogs] = useState<InteractionLogEntry[]>([]);
@@ -88,15 +98,16 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
   const markInteractionAsResolved = async (interactionId: number) => {
     setUpdatingInteractionId(interactionId);
     try {
-      const response = await apiCall(API_ENDPOINTS.INTERACTION_FEEDBACK(interactionId), {
+      const response = await apiCall(API_ENDPOINTS.INTERACTION_RESOLVE(interactionId), {
         method: 'POST',
         body: JSON.stringify({
-          feedback_status: 'resolved',
+          resolution_note: 'Risoluzione confermata da admin',
         }),
       });
       if (!response.ok) {
         throw new Error('Errore nell\'aggiornamento dello stato');
       }
+      const resolvedData = (await response.json()) as InteractionResolutionResponse;
 
       setLogs((currentLogs) =>
         currentLogs.map((log) =>
@@ -104,7 +115,11 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
             ? {
                 ...log,
                 feedback_status: 'resolved',
-                feedback_timestamp: new Date().toISOString(),
+                feedback_timestamp: resolvedData.feedback_timestamp,
+                resolved_by_user_id: resolvedData.resolved_by_user_id,
+                resolved_by_user_name: resolvedData.resolved_by_user_name,
+                resolution_note: resolvedData.resolution_note,
+                resolution_timestamp: resolvedData.resolution_timestamp,
               }
             : log
         )
@@ -286,13 +301,21 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                             variant="outline"
                             className={feedbackBadgeClassNames[log.feedback_status]}
                           >
-                            {feedbackLabels[log.feedback_status]}
+                            {log.feedback_status === 'unresolved' ? 'In attesa tecnico' : feedbackLabels[log.feedback_status]}
                           </Badge>
                           <p className="text-xs text-slate-400">
                             {log.feedback_timestamp
                               ? new Date(log.feedback_timestamp).toLocaleString('it-IT')
                               : 'Aggiornato'}
                           </p>
+                          {log.resolved_by_user_name ? (
+                            <div className="space-y-1 text-xs text-slate-500">
+                              <p>Chiuso da {log.resolved_by_user_name}</p>
+                              {log.resolution_note ? (
+                                <p className="max-w-xs whitespace-pre-wrap">{log.resolution_note}</p>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       ) : (
                         <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
