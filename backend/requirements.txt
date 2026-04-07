@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+asyncpg
+alembic
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic[email]
+python-multipart
+python-decouple
+python-dotenv
+httpx
+piper-tts
+rapidfuzz

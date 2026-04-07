@@ -1,0 +1,81 @@
+# Dipendenze e ambienti virtuali
+venv/
+env/
+.env
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# File di build e distribuzione
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# File di configurazione IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# File di database locali
+*.db
+*.sqlite
+*.sqlite3
+
+# File di log
+logs/
+*.log
+
+# File temporanei
+tmp/
+temp/
+*.tmp
+
+# File di configurazione sensibili
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+config.local.py
+
+# File audio/video generati
+audio_cache/
+tts_cache/
+uploads/
+*.wav
+*.mp3
+*.ogg
+
+# Docker
+docker-compose.override.yml
+*.pid
+
+# Report e documenti generati
+reports/
+*.pdf
+*.xlsx
+!docs/*.pdf  # se vuoi tenere alcuni PDF nella cartella docs
+
+# File di sistema
+.DS_Store
+.directory
+Desktop.ini
