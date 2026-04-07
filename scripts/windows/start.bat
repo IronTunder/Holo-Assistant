@@ -10,6 +10,8 @@ set SCRIPT_DIR=%~dp0
 for %%I in ("%SCRIPT_DIR%..\..") do set ROOT_DIR=%%~fI
 set BACKEND_PORT=8000
 set FRONTEND_PORT=5173
+set CERT_FILE=%ROOT_DIR%\certs\ditto.crt
+set KEY_FILE=%ROOT_DIR%\certs\ditto.key
 set OLLAMA_MODEL=qwen3.5:9b
 set OLLAMA_BASE_URL=http://127.0.0.1:11434
 set OLLAMA_KEEP_ALIVE=30m
@@ -32,6 +34,9 @@ set IP=%IP: =%
 if "%IP%"=="" set IP=localhost
 
 echo [INFO] IP del server: %IP%
+call :ensure_https_certificate
+if errorlevel 1 exit /b 1
+echo [INFO] HTTPS attivo con certificato: %CERT_FILE%
 echo.
 
 echo [1/3] Avvio PostgreSQL e Ollama con Docker...
@@ -95,6 +100,13 @@ if exist %ROOT_DIR%\backend\.env (
     )
 )
 
+powershell -NoProfile -Command "$envPath='%ROOT_DIR%\backend\.env'; $updates=@{ALLOWED_ORIGINS='https://localhost:5173,https://%IP%:%FRONTEND_PORT%'; REFRESH_TOKEN_COOKIE_SECURE='true'; REFRESH_TOKEN_COOKIE_SAMESITE='lax'}; $lines=@(); if (Test-Path $envPath) { $lines=@(Get-Content $envPath) }; foreach ($key in $updates.Keys) { $line = $key + '=' + $updates[$key]; $index = -1; for ($i=0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match ('^' + [regex]::Escape($key) + '=')) { $index=$i; break } }; if ($index -ge 0) { $lines[$index]=$line } else { $lines += $line } }; Set-Content -Path $envPath -Value $lines"
+if errorlevel 1 (
+    echo [AVVISO] Impossibile aggiornare automaticamente le impostazioni HTTPS in backend\.env
+) else (
+    echo [OK] Impostazioni HTTPS backend aggiornate
+)
+
 echo Preparazione modello AI: %OLLAMA_MODEL%
 if /I "%OLLAMA_USE_NATIVE%"=="true" (
     where ollama >nul 2>&1
@@ -149,8 +161,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-start "DITTO Backend" cmd /k "cd /d %ROOT_DIR%\backend && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT% --no-use-colors"
-echo [OK] Backend avviato su http://%IP%:%BACKEND_PORT%
+start "DITTO Backend" cmd /k "cd /d %ROOT_DIR%\backend && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT% --ssl-certfile ..\certs\ditto.crt --ssl-keyfile ..\certs\ditto.key --no-use-colors"
+echo [OK] Backend avviato su https://%IP%:%BACKEND_PORT%
 echo.
 
 echo Attendendo l'avvio del backend...
@@ -167,7 +179,7 @@ if errorlevel 1 (
 )
 
 (
-echo VITE_API_URL=http://%IP%:%BACKEND_PORT%
+echo VITE_API_URL=https://%IP%:%BACKEND_PORT%
 ) > .env
 
 if not exist node_modules\ (
@@ -183,7 +195,7 @@ if not exist node_modules\ (
 )
 
 start "DITTO Frontend" cmd /k "cd /d %ROOT_DIR%\frontend\my-app && npm run dev -- --host 0.0.0.0"
-echo [OK] Frontend avviato su http://%IP%:%FRONTEND_PORT%
+echo [OK] Frontend avviato su https://%IP%:%FRONTEND_PORT%
 echo.
 
 cd /d %ROOT_DIR%
@@ -192,17 +204,65 @@ echo ========================================
 echo    [OK] SERVIZI AVVIATI
 echo ========================================
 echo.
-echo Frontend locale: http://localhost:%FRONTEND_PORT%
-echo Frontend rete:   http://%IP%:%FRONTEND_PORT%
-echo Backend API:     http://%IP%:%BACKEND_PORT%
-echo API Docs:        http://%IP%:%BACKEND_PORT%/docs
+echo Frontend locale: https://localhost:%FRONTEND_PORT%
+echo Frontend rete:   https://%IP%:%FRONTEND_PORT%
+echo Backend API:     https://%IP%:%BACKEND_PORT%
+echo API Docs:        https://%IP%:%BACKEND_PORT%/docs
 echo Adminer DB:      http://localhost:8080
+echo.
+echo [INFO] Su dispositivi mobile potrebbe comparire un avviso certificato.
+echo [INFO] Se le API non rispondono, apri e accetta anche: https://%IP%:%BACKEND_PORT%/health
 echo.
 echo Per fermare il sistema, chiudi le finestre del terminale
 echo oppure esegui: cd docker ^&^& docker-compose down
 echo.
 
 pause
+goto :eof
+
+:ensure_https_certificate
+if exist "%CERT_FILE%" if exist "%KEY_FILE%" goto :eof
+
+echo [INFO] Certificato HTTPS non trovato o incompleto. Provo a generarlo per IP %IP%...
+where mkcert >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] mkcert non trovato. Provo a installarlo con winget...
+    winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements
+    if errorlevel 1 (
+        echo [ERRORE] Installazione mkcert con winget fallita.
+        echo [INFO] Puoi riprovare manualmente con:
+        echo        winget install -e --id FiloSottile.mkcert
+        pause
+        exit /b 1
+    )
+    where mkcert >nul 2>&1
+    if errorlevel 1 (
+        echo [ERRORE] mkcert installato, ma non ancora disponibile nel PATH di questa finestra.
+        echo [INFO] Riapri il terminale e rilancia start.bat.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "%ROOT_DIR%\certs" mkdir "%ROOT_DIR%\certs"
+mkcert -cert-file "%CERT_FILE%" -key-file "%KEY_FILE%" %IP% localhost 127.0.0.1 ditto.lan
+if errorlevel 1 (
+    echo [ERRORE] Generazione certificato HTTPS fallita.
+    pause
+    exit /b 1
+)
+
+if not exist "%CERT_FILE%" (
+    echo [ERRORE] Certificato HTTPS non creato: %CERT_FILE%
+    pause
+    exit /b 1
+)
+if not exist "%KEY_FILE%" (
+    echo [ERRORE] Chiave HTTPS non creata: %KEY_FILE%
+    pause
+    exit /b 1
+)
+echo [OK] Certificato HTTPS generato per %IP%, localhost, 127.0.0.1 e ditto.lan
 goto :eof
 
 :warmup_ollama

@@ -10,6 +10,8 @@ echo ""
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKEND_PORT=8000
 FRONTEND_PORT=5173
+CERT_FILE="$ROOT_DIR/certs/ditto.crt"
+KEY_FILE="$ROOT_DIR/certs/ditto.key"
 OLLAMA_MODEL="mistral:7b-instruct-v0.3-q4_K_M"
 OLLAMA_BASE_URL="http://127.0.0.1:11434"
 OLLAMA_KEEP_ALIVE="30m"
@@ -45,8 +47,37 @@ run_in_terminal() {
     fi
 }
 
+upsert_env_value() {
+    local env_path="$1"
+    local key="$2"
+    local value="$3"
+    local temp_path="${env_path}.tmp"
+
+    if [ -f "$env_path" ] && grep -q "^${key}=" "$env_path"; then
+        awk -v key="$key" -v value="$value" 'BEGIN { replacement = key "=" value } $0 ~ "^" key "=" { print replacement; next } { print }' "$env_path" > "$temp_path"
+    else
+        if [ -f "$env_path" ]; then
+            cp "$env_path" "$temp_path"
+        else
+            : > "$temp_path"
+        fi
+        printf '%s=%s\n' "$key" "$value" >> "$temp_path"
+    fi
+
+    mv "$temp_path" "$env_path"
+}
+
 IP="$(get_local_ip)"
 echo "[INFO] IP del server: $IP"
+if [ ! -f "$CERT_FILE" ]; then
+    echo "[ERRORE] Certificato HTTPS non trovato: $CERT_FILE"
+    exit 1
+fi
+if [ ! -f "$KEY_FILE" ]; then
+    echo "[ERRORE] Chiave HTTPS non trovata: $KEY_FILE"
+    exit 1
+fi
+echo "[INFO] HTTPS attivo con certificato: $CERT_FILE"
 echo ""
 
 echo "[1/3] Avvio PostgreSQL e Ollama con Docker..."
@@ -117,6 +148,11 @@ if [ -f "$ROOT_DIR/backend/.env" ]; then
     fi
 fi
 
+upsert_env_value "$ROOT_DIR/backend/.env" "ALLOWED_ORIGINS" "https://localhost:$FRONTEND_PORT,https://$IP:$FRONTEND_PORT"
+upsert_env_value "$ROOT_DIR/backend/.env" "REFRESH_TOKEN_COOKIE_SECURE" "true"
+upsert_env_value "$ROOT_DIR/backend/.env" "REFRESH_TOKEN_COOKIE_SAMESITE" "lax"
+echo "[OK] Impostazioni HTTPS backend aggiornate"
+
 echo "Preparazione modello AI: $OLLAMA_MODEL"
 if docker exec ditto_ollama ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "$OLLAMA_MODEL"; then
     echo "[INFO] Attendo che Ollama risponda su $OLLAMA_BASE_URL..."
@@ -160,8 +196,8 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-run_in_terminal "DITTO Backend" "cd '$ROOT_DIR/backend' && source venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT --no-use-colors"
-echo "[OK] Backend avviato su http://$IP:$BACKEND_PORT"
+run_in_terminal "DITTO Backend" "cd '$ROOT_DIR/backend' && source venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT --ssl-certfile ../certs/ditto.crt --ssl-keyfile ../certs/ditto.key --no-use-colors"
+echo "[OK] Backend avviato su https://$IP:$BACKEND_PORT"
 echo ""
 
 echo "Attendendo l'avvio del backend..."
@@ -176,7 +212,7 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 cat > .env <<EOF
-VITE_API_URL=http://$IP:$BACKEND_PORT
+VITE_API_URL=https://$IP:$BACKEND_PORT
 EOF
 
 if [ ! -d node_modules ]; then
@@ -187,7 +223,7 @@ else
 fi
 
 run_in_terminal "DITTO Frontend" "cd '$ROOT_DIR/frontend/my-app' && npm run dev -- --host 0.0.0.0"
-echo "[OK] Frontend avviato su http://$IP:$FRONTEND_PORT"
+echo "[OK] Frontend avviato su https://$IP:$FRONTEND_PORT"
 echo ""
 
 cd "$ROOT_DIR"
@@ -197,10 +233,10 @@ Data avvio: $(date '+%Y-%m-%d %H:%M:%S')
 IP Server: $IP
 
 URL:
-- Frontend locale: http://localhost:$FRONTEND_PORT
-- Frontend rete: http://$IP:$FRONTEND_PORT
-- Backend: http://$IP:$BACKEND_PORT
-- API Docs: http://$IP:$BACKEND_PORT/docs
+- Frontend locale: https://localhost:$FRONTEND_PORT
+- Frontend rete: https://$IP:$FRONTEND_PORT
+- Backend: https://$IP:$BACKEND_PORT
+- API Docs: https://$IP:$BACKEND_PORT/docs
 
 Comandi utili:
 - Ferma container: cd docker && docker compose down
@@ -213,11 +249,14 @@ echo "========================================"
 echo "   [OK] SERVIZI AVVIATI"
 echo "========================================"
 echo ""
-echo "Frontend locale: http://localhost:$FRONTEND_PORT"
-echo "Frontend rete:   http://$IP:$FRONTEND_PORT"
-echo "Backend API:     http://$IP:$BACKEND_PORT"
-echo "API Docs:        http://$IP:$BACKEND_PORT/docs"
+echo "Frontend locale: https://localhost:$FRONTEND_PORT"
+echo "Frontend rete:   https://$IP:$FRONTEND_PORT"
+echo "Backend API:     https://$IP:$BACKEND_PORT"
+echo "API Docs:        https://$IP:$BACKEND_PORT/docs"
 echo "Adminer DB:      http://localhost:8080"
+echo ""
+echo "[INFO] Su dispositivi mobile potrebbe comparire un avviso certificato."
+echo "[INFO] Se le API non rispondono, apri e accetta anche: https://$IP:$BACKEND_PORT/health"
 echo ""
 echo "Per fermare il sistema, chiudi le finestre del terminale"
 echo "oppure esegui: cd docker && docker compose down"

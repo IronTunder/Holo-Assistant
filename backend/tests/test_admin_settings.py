@@ -54,7 +54,7 @@ class AdminSettingsTestCase(unittest.IsolatedAsyncioTestCase):
                     "SECRET_KEY=do-not-show",
                     "ADMIN_PASSWORD=do-not-show",
                     "DATABASE_PASSWORD=do-not-show",
-                    "VITE_API_URL=http://localhost:8000",
+                    "VITE_API_URL=https://localhost:8000",
                     "OLLAMA_MODEL=qwen3.5:9b",
                 ]
             ),
@@ -116,7 +116,7 @@ class AdminSettingsTestCase(unittest.IsolatedAsyncioTestCase):
                 "TTS_ENABLED": "yes",
                 "DATABASE_HOST": "10.0.0.10",
                 "DATABASE_PASSWORD": "new-db-password",
-                "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173",
+                "ALLOWED_ORIGINS": "https://localhost:5173,https://127.0.0.1:5173",
             },
             env_path,
         )
@@ -128,7 +128,7 @@ class AdminSettingsTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("TTS_ENABLED=true", contents)
         self.assertIn("DATABASE_HOST=10.0.0.10", contents)
         self.assertIn("DATABASE_PASSWORD=new-db-password", contents)
-        self.assertIn("ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173", contents)
+        self.assertIn("ALLOWED_ORIGINS=https://localhost:5173,https://127.0.0.1:5173", contents)
         self.assertTrue(payload["pending_restart"])
 
         database_password = next(

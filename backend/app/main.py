@@ -82,11 +82,11 @@ def is_local_network(origin: str) -> bool:
 # Rileva il prefisso di rete e crea il pattern CORS
 network_prefix = get_local_network_prefix()
 if network_prefix:
-    logger.info(f"[CORS] Detected local network prefix: {network_prefix}, allowing origins matching: http://{network_prefix}.*:5173")
-    cors_regex = rf"http://{network_prefix}\..*:5173"
+    logger.info(f"[CORS] Detected local network prefix: {network_prefix}, allowing origins matching: http/https://{network_prefix}.*:5173")
+    cors_regex = rf"https?://{network_prefix}\..*:5173"
 else:
     logger.warning("[CORS] Could not detect local network, using fallback pattern")
-    cors_regex = r"http://192\.168\..*\..*:5173"
+    cors_regex = r"https?://192\.168\..*\..*:5173"
 
 # Configura CORS dinamico
 configured_origins = [
@@ -94,7 +94,12 @@ configured_origins = [
     for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-base_origins = ["http://localhost:3000", "http://localhost:5173"]
+base_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://localhost:5173",
+    "https://127.0.0.1:5173",
+]
 allowed_origins = list(dict.fromkeys(base_origins + configured_origins))
 
 app.add_middleware(

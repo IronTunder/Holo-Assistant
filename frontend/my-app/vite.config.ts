@@ -1,11 +1,19 @@
 import { defineConfig, type Plugin } from 'vite'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
 const VOSK_BROWSER_VENDOR_PATH = '/vendor/vosk-browser.js'
 const VOSK_BROWSER_SOURCE_PATH = path.resolve(__dirname, 'node_modules/vosk-browser/dist/vosk.js')
+const HTTPS_CERT_PATH = path.resolve(__dirname, '../../certs/ditto.crt')
+const HTTPS_KEY_PATH = path.resolve(__dirname, '../../certs/ditto.key')
+const HTTPS_CONFIG = existsSync(HTTPS_CERT_PATH) && existsSync(HTTPS_KEY_PATH)
+  ? {
+      cert: readFileSync(HTTPS_CERT_PATH),
+      key: readFileSync(HTTPS_KEY_PATH),
+    }
+  : undefined
 
 function voskBrowserVendorPlugin(): Plugin {
   return {
@@ -81,6 +89,10 @@ export default defineConfig({
         },
       },
     },
+  },
+
+  server: {
+    https: HTTPS_CONFIG,
   },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.

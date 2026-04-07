@@ -38,6 +38,8 @@ Passi principali:
 - eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto con `pg_isready`;
 - preparano il modello `qwen3.5:9b` in Ollama;
+- su Windows generano `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano;
+- su Unix richiedono che `certs/ditto.crt` e `certs/ditto.key` siano gia presenti;
 - generano `backend/.env`;
 - generano `frontend/my-app/.env`;
 - su Windows preparano `frontend/my-app/public/models/vosk-model-small-it-0.22.tar.gz` se manca;
@@ -56,13 +58,15 @@ Passi principali:
 Passi principali:
 - eseguono `docker compose up -d`;
 - aspettano che PostgreSQL sia pronto;
+- verificano la presenza del certificato HTTPS locale e, su Windows, lo generano se manca;
 - leggono `OLLAMA_MODEL`, `OLLAMA_BASE_URL` e gli altri parametri AI da `backend/.env` se presente;
 - verificano la presenza del modello con il runtime Ollama configurato;
 - provano il warmup del modello via `POST /api/generate` dopo il check su `GET /api/tags`;
-- aggiornano `frontend/my-app/.env` con `VITE_API_URL=http://{server-ip}:8000`;
+- aggiornano `backend/.env` con `ALLOWED_ORIGINS` HTTPS e cookie refresh secure;
+- aggiornano `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000`;
 - su Windows riallineano la knowledge base tecnica con `backend/scripts/seed_categories.py`;
-- avviano backend FastAPI in una finestra dedicata;
-- avviano frontend Vite in una finestra dedicata.
+- avviano backend FastAPI in HTTPS in una finestra dedicata;
+- avviano frontend Vite in HTTPS in una finestra dedicata quando il certificato e presente.
 
 ## Configurazione attuale
 
@@ -86,7 +90,9 @@ ADMIN_TOKEN_EXPIRE_MINUTES=120
 OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
 ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 
-ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
+ALLOWED_ORIGINS=https://localhost:5173,https://{server-ip}:5173
+REFRESH_TOKEN_COOKIE_SECURE=true
+REFRESH_TOKEN_COOKIE_SAMESITE=lax
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3.5:9b
@@ -112,7 +118,7 @@ TTS_ENABLED=true
 ### Frontend
 
 ```ini
-VITE_API_URL=http://{server-ip}:8000
+VITE_API_URL=https://{server-ip}:8000
 VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
@@ -120,13 +126,25 @@ Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quell
 
 ## URL utili
 
-- Frontend locale: `http://localhost:5173`
-- Frontend rete: `http://{server-ip}:5173`
-- Backend API: `http://{server-ip}:8000`
-- Swagger: `http://{server-ip}:8000/docs`
-- Admin login: `http://localhost:5173/admin-login`
+- Frontend locale: `https://localhost:5173`
+- Frontend rete: `https://{server-ip}:5173`
+- Backend API: `https://{server-ip}:8000`
+- Swagger: `https://{server-ip}:8000/docs`
+- Admin login: `https://localhost:5173/admin-login`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
+
+## HTTPS in LAN
+
+Gli script avviano backend e frontend in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve contenere l'IP statico del server usato dai dispositivi; quello presente nel repository locale include `192.168.1.119`, `127.0.0.1`, `localhost` e `ditto.lan`.
+
+Su Windows, `setup.bat` e `start.bat` generano automaticamente `certs/ditto.crt` e `certs/ditto.key` se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, poi genera il certificato. Se dopo l'installazione `mkcert` non e ancora nel `PATH`, riapri il terminale e rilancia lo script.
+
+Su Unix, `setup.sh` e `start.sh` non installano `mkcert`: controllano che `certs/ditto.crt` e `certs/ditto.key` esistano e si fermano se mancano. Generali manualmente prima dell'avvio. I file `*.crt` e `*.key` sono ignorati da Git, quindi il certificato locale non viene versionato.
+
+Su mobile e desktop puo comparire un avviso di certificato non attendibile se la CA locale non e installata nel dispositivo. In questo setup l'obiettivo e cifrare il traffico interno: accetta l'avviso per il frontend e, se le chiamate API vengono bloccate, apri anche `https://{server-ip}:8000/health` e accetta il certificato del backend.
+
+Se l'IP statico cambia, rigenera il certificato prima dello start, ad esempio con `mkcert -cert-file certs/ditto.crt -key-file certs/ditto.key {server-ip} localhost 127.0.0.1 ditto.lan`.
 
 ## Requisiti host consigliati
 
@@ -253,14 +271,14 @@ Controlli Windows:
 ```bat
 cd backend
 venv\Scripts\activate.bat
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-use-colors
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ..\certs\ditto.crt --ssl-keyfile ..\certs\ditto.key --no-use-colors
 ```
 
 Controlli Unix:
 ```bash
 cd backend
 source venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ../certs/ditto.crt --ssl-keyfile ../certs/ditto.key
 ```
 
 ## Note su auth e sessioni
@@ -275,10 +293,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Dopo `setup` o `start` controlla:
 - `backend/.env` creato correttamente;
-- `frontend/my-app/.env` aggiornato con `VITE_API_URL`;
+- `backend/.env` aggiornato con `ALLOWED_ORIGINS` HTTPS, `REFRESH_TOKEN_COOKIE_SECURE=true` e `REFRESH_TOKEN_COOKIE_SAMESITE=lax`;
+- `frontend/my-app/.env` aggiornato con `VITE_API_URL=https://{server-ip}:8000`;
+- `certs/ditto.crt` e `certs/ditto.key` presenti localmente;
 - modello wake-word presente in `frontend/my-app/public/models` oppure URL alternativo configurato con `VITE_VOSK_MODEL_URL`;
 - `docker compose ps` con `ditto_postgres`, `ditto_ollama`, `ditto_adminer`;
-- backend raggiungibile su `8000`;
-- frontend raggiungibile su `5173`;
+- backend raggiungibile su `https://{server-ip}:8000`;
+- frontend raggiungibile su `https://{server-ip}:5173`;
 - accesso admin disponibile su `/admin-login`;
 - selezione macchina e login operatore funzionanti dal frontend.

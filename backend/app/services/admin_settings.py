@@ -79,7 +79,7 @@ SETTINGS: tuple[SettingDefinition, ...] = (
     SettingDefinition("REFRESH_TOKEN_COOKIE_SECURE", "Sessioni / CORS", "Cookie secure", "Richiede HTTPS per il refresh cookie.", "boolean", "false"),
     SettingDefinition("REFRESH_TOKEN_COOKIE_SAMESITE", "Sessioni / CORS", "Cookie SameSite", "Policy SameSite del refresh cookie.", "enum", "lax", True, options=("lax", "strict", "none")),
     SettingDefinition("REFRESH_TOKEN_COOKIE_NAME", "Sessioni / CORS", "Nome cookie refresh", "Nome del cookie HTTP-only del refresh token.", "string", "ditto_refresh_token", True),
-    SettingDefinition("ALLOWED_ORIGINS", "Sessioni / CORS", "Origini CORS", "Origini HTTP abilitate, separate da virgola.", "csv", "http://localhost:5173", False),
+    SettingDefinition("ALLOWED_ORIGINS", "Sessioni / CORS", "Origini CORS", "Origini HTTP/HTTPS abilitate, separate da virgola.", "csv", "https://localhost:5173", False),
 )
 
 SETTINGS_BY_KEY = {definition.key: definition for definition in SETTINGS}

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useAuth } from '@/shared/auth/AuthContext';
+import { API_BASE_URL } from './config';
 
 /**
  * Hook personalizzato per fare richieste API autenticate con auto-refresh del token
@@ -74,7 +75,7 @@ export const createApiClient = (auth: any) => {
 
       if (response.status === 401) {
         // Token scaduto, tenta refresh
-        const refreshResponse = await fetch(`${import.meta.env.VITE_API_URL}/auth/refresh`, {
+        const refreshResponse = await fetch(`${API_BASE_URL}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -114,7 +115,7 @@ export const createApiClient = (auth: any) => {
       });
 
       if (response.status === 401) {
-        const refreshResponse = await fetch(`${import.meta.env.VITE_API_URL}/auth/refresh`, {
+        const refreshResponse = await fetch(`${API_BASE_URL}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',

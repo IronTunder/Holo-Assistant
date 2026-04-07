@@ -29,6 +29,8 @@ Avvia il frontend in sviluppo:
 npm run dev -- --host 0.0.0.0
 ```
 
+In sviluppo Vite usa HTTPS se trova `../../certs/ditto.crt` e `../../certs/ditto.key`, cioe i certificati generati dagli script di root. Se questi file mancano, il dev server torna al comportamento standard di Vite.
+
 Crea la build:
 ```bash
 npm run build
@@ -39,7 +41,7 @@ npm run build
 Il frontend legge:
 
 ```ini
-VITE_API_URL=http://{server-ip}:8000
+VITE_API_URL=https://{server-ip}:8000
 VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
@@ -50,6 +52,8 @@ Comportamento attuale di `src/shared/api/config.ts`:
 - in produzione usa `VITE_API_URL` oppure fallback relativo a `${window.location.origin}/api`.
 
 `VITE_VOSK_MODEL_URL` configura il modello Vosk per la wake-word. Se la variabile manca, `OperatorInterface.tsx` usa il fallback `/models/vosk-model-small-it-0.22.tar.gz`.
+
+Con gli script attuali `VITE_API_URL` viene scritto come `https://{server-ip}:8000`; per evitare blocchi del refresh cookie, il backend viene allineato a `ALLOWED_ORIGINS=https://localhost:5173,https://{server-ip}:5173`, `REFRESH_TOKEN_COOKIE_SECURE=true` e `REFRESH_TOKEN_COOKIE_SAMESITE=lax`.
 
 ## Struttura principale
 
@@ -132,6 +136,7 @@ Per la voce:
 
 - Il frontend assume che backend e auth siano raggiungibili all'host risolto da `VITE_API_URL`.
 - In ambiente locale gli script di root e `scripts/windows/start.bat` aggiornano automaticamente `.env`; lo `start` puo lasciare solo `VITE_API_URL`, perche il modello Vosk ha un fallback applicativo.
+- Se browser o mobile bloccano le chiamate API in HTTPS, apri `https://{server-ip}:8000/health` e accetta anche il certificato del backend.
 - Se il backend cambia host o porta, verifica prima `frontend/my-app/.env` e poi `src/shared/api/config.ts`.
 - Il modello Vosk locale si prepara con `scripts/windows/prepare_vosk_model.ps1` oppure `bash scripts/unix/prepare_vosk_model.sh`.
 

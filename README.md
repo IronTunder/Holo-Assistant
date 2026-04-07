@@ -51,7 +51,9 @@ Nel flusso Windows documentato come source of truth, lo script di setup:
 - esegue `docker compose down` e poi `docker compose up -d`;
 - aspetta PostgreSQL;
 - prepara il modello `qwen3.5:9b` in Ollama;
+- genera `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano;
 - crea `backend/.env` e `frontend/my-app/.env`;
+- configura backend e frontend per HTTPS in LAN;
 - installa dipendenze backend e frontend;
 - esegue `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py`;
 - su Windows prepara anche il modello wake-word Vosk se manca;
@@ -72,10 +74,12 @@ Linux:
 Nel flusso Windows documentato come source of truth, lo script di start:
 - riallinea Docker con `docker compose up -d` senza forzare il reset dei container;
 - aspetta PostgreSQL;
+- verifica o genera il certificato HTTPS locale;
 - legge `OLLAMA_MODEL` e i parametri principali da `backend/.env`;
 - controlla la presenza del modello con `ollama list`;
 - prova il warmup del modello via `POST /api/generate`;
-- aggiorna `frontend/my-app/.env` con `VITE_API_URL`;
+- aggiorna `backend/.env` con origini CORS HTTPS e cookie refresh secure;
+- aggiorna `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000`;
 - su Windows riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py`;
 - avvia backend e frontend.
 
@@ -134,13 +138,27 @@ Configurazioni GPU consigliate:
 
 ## URL utili
 
-- Frontend locale: `http://localhost:5173`
-- Frontend rete: `http://{server-ip}:5173`
-- Backend API: `http://{server-ip}:8000`
-- Swagger: `http://{server-ip}:8000/docs`
-- Admin login: `http://localhost:5173/admin-login`
+- Frontend locale: `https://localhost:5173`
+- Frontend rete: `https://{server-ip}:5173`
+- Backend API: `https://{server-ip}:8000`
+- Swagger: `https://{server-ip}:8000/docs`
+- Admin login: `https://localhost:5173/admin-login`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
+
+## HTTPS in rete locale
+
+Backend e frontend vengono avviati in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve includere l'IP statico con cui i dispositivi aprono Ditto; quello attuale include `192.168.1.119`, `127.0.0.1`, `localhost` e `ditto.lan`.
+
+Su Windows, `setup.bat` e `start.bat` provano a generare automaticamente questi file se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, poi genera il certificato. Se dopo l'installazione `mkcert` non e ancora nel `PATH`, riapri il terminale e rilancia lo script.
+
+Su Unix, gli script non installano `mkcert` automaticamente: `setup.sh` e `start.sh` controllano che `certs/ditto.crt` e `certs/ditto.key` esistano e si fermano se mancano. Generali prima dell'avvio con un comando equivalente a quello indicato sotto.
+
+`*.crt` e `*.key` sono ignorati da Git: in `certs/` resta versionabile solo il placeholder `.gitkeep`, mentre i certificati reali sono locali alla macchina.
+
+Senza installare una CA attendibile sui dispositivi, browser desktop e mobile possono mostrare un avviso di certificato non attendibile: la connessione e comunque cifrata, ma va accettata manualmente. Se il frontend si apre ma le API falliscono, apri anche `https://{server-ip}:8000/health` sul dispositivo e accetta il certificato del backend.
+
+Se l'IP statico cambia, rigenera il certificato includendo il nuovo IP, ad esempio con `mkcert -cert-file certs/ditto.crt -key-file certs/ditto.key {server-ip} localhost 127.0.0.1 ditto.lan`, poi riavvia backend e frontend.
 
 ## Flussi applicativi
 
@@ -262,7 +280,9 @@ ADMIN_TOKEN_EXPIRE_MINUTES=120
 OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
 ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 
-ALLOWED_ORIGINS=http://localhost:5173,http://{server-ip}:5173
+ALLOWED_ORIGINS=https://localhost:5173,https://{server-ip}:5173
+REFRESH_TOKEN_COOKIE_SECURE=true
+REFRESH_TOKEN_COOKIE_SAMESITE=lax
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3.5:9b
@@ -288,7 +308,7 @@ TTS_ENABLED=true
 ### `frontend/my-app/.env`
 
 ```ini
-VITE_API_URL=http://{server-ip}:8000
+VITE_API_URL=https://{server-ip}:8000
 VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 

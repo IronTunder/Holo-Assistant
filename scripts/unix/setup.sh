@@ -42,6 +42,8 @@ PIPER_BASE_DIR="$HOME/.local/share/piper"
 PIPER_VOICES_DIR="$PIPER_BASE_DIR/voices"
 PIPER_MODEL_PATH="$PIPER_VOICES_DIR/it_IT-paola-medium.onnx"
 PIPER_CONFIG_PATH="$PIPER_VOICES_DIR/it_IT-paola-medium.onnx.json"
+HTTPS_CERT_PATH="$ROOT_DIR/certs/ditto.crt"
+HTTPS_KEY_PATH="$ROOT_DIR/certs/ditto.key"
 
 # Crea directory log
 mkdir -p "$LOG_DIR"
@@ -118,6 +120,14 @@ check_directory_structure() {
     
     if [ ! -f "$ROOT_DIR/frontend/my-app/package.json" ]; then
         error_exit "package.json non trovato in frontend/my-app"
+    fi
+
+    if [ ! -f "$HTTPS_CERT_PATH" ]; then
+        error_exit "Certificato HTTPS non trovato: $HTTPS_CERT_PATH"
+    fi
+
+    if [ ! -f "$HTTPS_KEY_PATH" ]; then
+        error_exit "Chiave HTTPS non trovata: $HTTPS_KEY_PATH"
     fi
     
     log "SUCCESS" "Struttura directory verificata"
@@ -659,7 +669,9 @@ ADMIN_TOKEN_EXPIRE_MINUTES=120
 OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
 ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 ALGORITHM=HS256
-ALLOWED_ORIGINS=http://localhost:5173,http://$IP:5173
+ALLOWED_ORIGINS=https://localhost:5173,https://$IP:5173
+REFRESH_TOKEN_COOKIE_SECURE=true
+REFRESH_TOKEN_COOKIE_SAMESITE=lax
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=$OLLAMA_MODEL
 OLLAMA_TIMEOUT_SECONDS=120
@@ -735,7 +747,7 @@ setup_frontend() {
     [ -z "$IP" ] && IP="localhost"
     
     # Crea .env
-    echo "VITE_API_URL=http://$IP:8000" > .env
+    echo "VITE_API_URL=https://$IP:8000" > .env
     log "SUCCESS" "File .env creato"
     
     # Installa dipendenze
@@ -764,7 +776,7 @@ start_services() {
 #!/bin/bash
 cd "$(dirname "$0")/../../backend"
 source venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ../certs/ditto.crt --ssl-keyfile ../certs/ditto.key
 EOF
     chmod +x "$ROOT_DIR/scripts/unix/start_backend.sh"
     
@@ -819,10 +831,10 @@ show_summary() {
     echo ""
     echo -e "${CYAN}${BOLD}🌐 URL di accesso:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "  • Frontend:            ${GREEN}http://localhost:5173${NC}"
-    echo -e "  • Frontend (rete):     ${GREEN}http://$IP:5173${NC}"
-    echo -e "  • Backend API:         ${GREEN}http://localhost:8000${NC}"
-    echo -e "  • Documentazione API:  ${GREEN}http://localhost:8000/docs${NC}"
+    echo -e "  • Frontend:            ${GREEN}https://localhost:5173${NC}"
+    echo -e "  • Frontend (rete):     ${GREEN}https://$IP:5173${NC}"
+    echo -e "  • Backend API:         ${GREEN}https://localhost:8000${NC}"
+    echo -e "  • Documentazione API:  ${GREEN}https://localhost:8000/docs${NC}"
     echo -e "  • Ollama API:          ${GREEN}http://localhost:11434${NC}"
     echo ""
     echo -e "${CYAN}${BOLD}🔐 Credenziali:${NC}"

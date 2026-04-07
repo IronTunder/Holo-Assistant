@@ -16,6 +16,8 @@ set OLLAMA_ACCELERATOR=auto
 set OLLAMA_COMPOSE_ARGS=-f docker-compose.yml
 set OLLAMA_USE_NATIVE=false
 set OLLAMA_NATIVE_VULKAN=1
+set CERT_FILE=%ROOT_DIR%\certs\ditto.crt
+set KEY_FILE=%ROOT_DIR%\certs\ditto.key
 set VOSK_MODEL_PUBLIC_URL=/models/vosk-model-small-it-0.22.tar.gz
 set VOSK_MODEL_ARCHIVE=%ROOT_DIR%\frontend\my-app\public\models\vosk-model-small-it-0.22.tar.gz
 
@@ -27,6 +29,9 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find "IPv4"') do (
 :ip_found
 set IP=%IP: =%
 echo [INFO] IP del server: %IP%
+call :ensure_https_certificate
+if errorlevel 1 exit /b 1
+echo [INFO] HTTPS attivo con certificato: %CERT_FILE%
 echo.
 
 :: 1. Avvia Docker
@@ -126,7 +131,9 @@ echo ADMIN_TOKEN_EXPIRE_MINUTES=120
 echo OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
 echo ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 echo ALGORITHM=HS256
-echo ALLOWED_ORIGINS=http://localhost:5173,http://%IP%:5173
+echo ALLOWED_ORIGINS=https://localhost:5173,https://%IP%:5173
+echo REFRESH_TOKEN_COOKIE_SECURE=true
+echo REFRESH_TOKEN_COOKIE_SAMESITE=lax
 echo OLLAMA_BASE_URL=http://127.0.0.1:11434
 echo OLLAMA_MODEL=qwen3.5:9b
 echo OLLAMA_RUNTIME=%OLLAMA_RUNTIME%
@@ -207,8 +214,8 @@ echo.
 
 :: 4. Avvia backend
 echo [4/5] Avvio backend FastAPI...
-start "DITTO Backend" cmd /k "cd /d %ROOT_DIR%\backend && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-use-colors"
-echo [OK] Backend avviato su http://%IP%:8000
+start "DITTO Backend" cmd /k "cd /d %ROOT_DIR%\backend && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ..\certs\ditto.crt --ssl-keyfile ..\certs\ditto.key --no-use-colors"
+echo [OK] Backend avviato su https://%IP%:8000
 echo.
 
 :: Attendi che il backend sia pronto
@@ -238,7 +245,7 @@ if not exist "%VOSK_MODEL_ARCHIVE%" (
 
 :: Crea .env per frontend
 (
-echo VITE_API_URL=http://%IP%:8000
+echo VITE_API_URL=https://%IP%:8000
 echo VITE_VOSK_MODEL_URL=%VOSK_MODEL_PUBLIC_URL%
 ) > .env
 
@@ -254,7 +261,7 @@ if not exist node_modules\ (
 echo Avvio frontend...
 start "DITTO Frontend" cmd /k "cd /d %ROOT_DIR%\frontend\my-app && npm run dev -- --host 0.0.0.0"
 
-echo [OK] Frontend avviato su http://%IP%:5173
+echo [OK] Frontend avviato su https://%IP%:5173
 echo.
 
 :: Torna alla directory root
@@ -266,14 +273,18 @@ echo    [OK] SISTEMA AVVIATO CON SUCCESSO!
 echo ========================================
 echo.
 echo Accesso dal computer locale:
-echo    - Frontend: http://localhost:5173
-echo    - Backend API: http://localhost:8000
-echo    - Documentazione API: http://localhost:8000/docs
+echo    - Frontend: https://localhost:5173
+echo    - Backend API: https://localhost:8000
+echo    - Documentazione API: https://localhost:8000/docs
 echo    - Adminer DB: http://localhost:8080
 echo.
 echo Accesso da altri dispositivi (stessa rete):
-echo    - Frontend: http://%IP%:5173
-echo    - Backend API: http://%IP%:8000
+echo    - Frontend: https://%IP%:5173
+echo    - Backend API: https://%IP%:8000
+echo.
+echo Nota HTTPS:
+echo    - Su mobile potrebbe comparire un avviso certificato.
+echo    - Se le API non rispondono, apri anche https://%IP%:8000/health e accetta il certificato.
 echo.
 echo Credenziali di test:
 echo    - Username: Mario Rossi / Luigi Verdi / Anna Bianchi / Marco Neri
@@ -286,6 +297,51 @@ echo ========================================
 echo.
 
 pause
+goto :eof
+
+:ensure_https_certificate
+if exist "%CERT_FILE%" if exist "%KEY_FILE%" goto :eof
+
+echo [INFO] Certificato HTTPS non trovato o incompleto. Provo a generarlo per IP %IP%...
+where mkcert >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] mkcert non trovato. Provo a installarlo con winget...
+    winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements
+    if errorlevel 1 (
+        echo [ERRORE] Installazione mkcert con winget fallita.
+        echo [INFO] Puoi riprovare manualmente con:
+        echo        winget install -e --id FiloSottile.mkcert
+        pause
+        exit /b 1
+    )
+    where mkcert >nul 2>&1
+    if errorlevel 1 (
+        echo [ERRORE] mkcert installato, ma non ancora disponibile nel PATH di questa finestra.
+        echo [INFO] Riapri il terminale e rilancia setup.bat.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "%ROOT_DIR%\certs" mkdir "%ROOT_DIR%\certs"
+mkcert -cert-file "%CERT_FILE%" -key-file "%KEY_FILE%" %IP% localhost 127.0.0.1 ditto.lan
+if errorlevel 1 (
+    echo [ERRORE] Generazione certificato HTTPS fallita.
+    pause
+    exit /b 1
+)
+
+if not exist "%CERT_FILE%" (
+    echo [ERRORE] Certificato HTTPS non creato: %CERT_FILE%
+    pause
+    exit /b 1
+)
+if not exist "%KEY_FILE%" (
+    echo [ERRORE] Chiave HTTPS non creata: %KEY_FILE%
+    pause
+    exit /b 1
+)
+echo [OK] Certificato HTTPS generato per %IP%, localhost, 127.0.0.1 e ditto.lan
 goto :eof
 
 :ensure_native_ollama
