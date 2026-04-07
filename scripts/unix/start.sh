@@ -87,6 +87,11 @@ if [ ! -f docker-compose.yml ]; then
     exit 1
 fi
 
+if [ -f "$ROOT_DIR/backend/.env" ]; then
+    DATABASE_PASSWORD="$(grep '^DATABASE_PASSWORD=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    export DATABASE_PASSWORD
+fi
+
 if docker compose up -d; then
     echo "[OK] Docker avviato correttamente"
 else
@@ -149,6 +154,7 @@ if [ -f "$ROOT_DIR/backend/.env" ]; then
 fi
 
 upsert_env_value "$ROOT_DIR/backend/.env" "ALLOWED_ORIGINS" "https://localhost:$FRONTEND_PORT,https://$IP:$FRONTEND_PORT"
+upsert_env_value "$ROOT_DIR/backend/.env" "DATABASE_HOST" "127.0.0.1"
 upsert_env_value "$ROOT_DIR/backend/.env" "REFRESH_TOKEN_COOKIE_SECURE" "true"
 upsert_env_value "$ROOT_DIR/backend/.env" "REFRESH_TOKEN_COOKIE_SAMESITE" "lax"
 echo "[OK] Impostazioni HTTPS backend aggiornate"

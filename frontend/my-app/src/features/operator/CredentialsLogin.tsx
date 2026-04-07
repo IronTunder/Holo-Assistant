@@ -84,11 +84,6 @@ export function CredentialsLogin({ onLogin, onCancel }: CredentialsLoginProps) {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-blue-400/30 bg-blue-500/10 p-3 text-xs text-slate-200">
-                <p className="mb-1 font-semibold text-blue-300">Credenziali di test</p>
-                <p>Username: Mario Rossi / Luigi Verdi / Anna Bianchi / Marco Neri</p>
-                <p>Password: password123</p>
-              </div>
             </div>
           </ScrollArea>
 

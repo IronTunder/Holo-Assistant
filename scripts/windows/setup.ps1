@@ -50,6 +50,12 @@ try {
         exit 0
     }
 
+    New-DittoBackendEnv -Path $backendEnvPath -Ip $ip -OllamaConfig $ollamaConfig
+    $databasePasswordLine = Select-String -Path $backendEnvPath -Pattern "^DATABASE_PASSWORD=" | Select-Object -First 1
+    if ($databasePasswordLine) {
+        $env:DATABASE_PASSWORD = $databasePasswordLine.Line.Split("=", 2)[1]
+    }
+
     Write-DittoStep "[2/5] Avvio PostgreSQL e Ollama..."
     Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "down") -WorkingDirectory $dockerDir -FailureMessage "docker compose down fallito."
     if ($ollamaRuntime.UseNative) {
@@ -62,8 +68,11 @@ try {
     Ensure-DittoOllamaModel -Config $ollamaConfig -Runtime $ollamaRuntime
 
     Write-DittoStep "[3/5] Configurazione backend e database..."
-    New-DittoBackendEnv -Path $backendEnvPath -Ip $ip -OllamaConfig $ollamaConfig
     Write-DittoOk "backend\.env creato."
+    $adminPasswordLine = Select-String -Path $backendEnvPath -Pattern "^ADMIN_PASSWORD=" | Select-Object -First 1
+    if ($adminPasswordLine) {
+        Write-DittoInfo "Credenziali admin iniziali: admin / $($adminPasswordLine.Line.Split("=", 2)[1])"
+    }
 
     Ensure-DittoBackendDependencies -BackendDir $backendDir -Python $python
     $venvPython = Join-Path $backendDir "venv\Scripts\python.exe"
@@ -76,8 +85,18 @@ try {
     }
 
     if (Test-Path (Join-Path $backendDir "scripts\populate.py")) {
-        Write-DittoInfo "Popolo database con dati di test..."
-        Invoke-DittoToolChecked -FilePath $venvPython -Arguments @("scripts\populate.py") -WorkingDirectory $backendDir -FailureMessage "populate.py fallito."
+        Write-DittoInfo "Popolo database con dati dimostrativi per verifica setup..."
+        $previousDemoSeed = $env:DITTO_ALLOW_DEMO_SEED
+        $env:DITTO_ALLOW_DEMO_SEED = "true"
+        try {
+            Invoke-DittoToolChecked -FilePath $venvPython -Arguments @("scripts\populate.py") -WorkingDirectory $backendDir -FailureMessage "populate.py fallito."
+        } finally {
+            if ($null -eq $previousDemoSeed) {
+                Remove-Item Env:\DITTO_ALLOW_DEMO_SEED -ErrorAction SilentlyContinue
+            } else {
+                $env:DITTO_ALLOW_DEMO_SEED = $previousDemoSeed
+            }
+        }
     } else {
         Write-DittoWarn "scripts\populate.py non trovato."
     }

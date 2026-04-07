@@ -53,6 +53,15 @@ try {
         exit 0
     }
 
+    if (-not (Test-Path $backendEnvPath)) {
+        Write-DittoWarn "backend\.env non trovato: creo configurazione minima come setup."
+        New-DittoBackendEnv -Path $backendEnvPath -Ip $ip -OllamaConfig $ollamaConfig
+    }
+    $databasePasswordLine = Select-String -Path $backendEnvPath -Pattern "^DATABASE_PASSWORD=" | Select-Object -First 1
+    if ($databasePasswordLine) {
+        $env:DATABASE_PASSWORD = $databasePasswordLine.Line.Split("=", 2)[1]
+    }
+
     if ($ollamaRuntime.UseNative) {
         Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "stop", "ollama") -WorkingDirectory $dockerDir -FailureMessage "Stop container Ollama fallito." -AllowFailure | Out-Null
         Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "up", "-d", "postgres", "adminer") -WorkingDirectory $dockerDir -FailureMessage "Avvio PostgreSQL/Adminer fallito."
@@ -62,11 +71,8 @@ try {
     Start-Sleep -Seconds 8
     Wait-DittoPostgres -MaxAttempts 20 | Out-Null
 
-    if (-not (Test-Path $backendEnvPath)) {
-        Write-DittoWarn "backend\.env non trovato: creo configurazione minima come setup."
-        New-DittoBackendEnv -Path $backendEnvPath -Ip $ip -OllamaConfig $ollamaConfig
-    }
     Set-DittoEnvValues -Path $backendEnvPath -Values @{
+        "DATABASE_HOST" = "127.0.0.1"
         "ALLOWED_ORIGINS" = "https://localhost:$DittoDefaultFrontendPort,https://$ip`:$DittoDefaultFrontendPort"
         "REFRESH_TOKEN_COOKIE_SECURE" = "true"
         "REFRESH_TOKEN_COOKIE_SAMESITE" = "lax"

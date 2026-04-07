@@ -34,7 +34,36 @@ pwd_context = CryptContext(
 )
 
 # Configurazione JWT
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+INSECURE_SECRET_PLACEHOLDERS = {
+    "",
+    "your-secret-key-change-this-in-production",
+    "your-super-secret-key-change-this-in-production",
+    "dev-secret-key",
+}
+
+
+def _allow_insecure_defaults() -> bool:
+    return os.getenv("DITTO_ALLOW_INSECURE_DEFAULTS", "false").lower() == "true"
+
+
+def _require_secret_key() -> str:
+    secret_key = os.getenv("SECRET_KEY", "")
+    is_placeholder = (
+        secret_key in INSECURE_SECRET_PLACEHOLDERS
+        or secret_key.startswith("dev-secret-key")
+        or len(secret_key) < 32
+    )
+    if secret_key and not is_placeholder:
+        return secret_key
+    if _allow_insecure_defaults():
+        return secret_key or "test-secret-key-for-isolated-tests-only"
+    raise RuntimeError(
+        "SECRET_KEY must be set to a strong non-placeholder value. "
+        "Set DITTO_ALLOW_INSECURE_DEFAULTS=true only for isolated tests or demos."
+    )
+
+
+SECRET_KEY = _require_secret_key()
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))  # 8 hours
 ADMIN_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", "120"))
@@ -840,32 +869,31 @@ async def refresh_token(
 async def logout(
     request: LogoutRequest,
     response: Response,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     refresh_token_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE_NAME),
 ):
-    """Endpoint per fare logout - libera la macchina e revoca il refresh token."""
+    """Endpoint per fare logout - libera solo la sessione dell'utente autenticato."""
     
     # Libera la macchina
     machine = None
-    if request.machine_id is not None and request.user_id is not None:
+    if request.machine_id is not None:
         machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
 
-    if machine and machine.operatore_attuale_id == request.user_id:
+    if machine and machine.operatore_attuale_id == current_user.id:
         machine.in_uso = False
         machine.operatore_attuale_id = None
         db.commit()
-        await publish_machine_session_event(machine, request.user_id, db=db)
+        await publish_machine_session_event(machine, current_user.id, db=db)
     
-    # Revoca il refresh token se fornito
-    if request.user_id is not None:
-        cleanup_refresh_tokens(db, user_id=request.user_id)
+    cleanup_refresh_tokens(db, user_id=current_user.id)
 
     refresh_token_value = refresh_token_cookie or request.refresh_token
     if refresh_token_value:
         refresh_token_db = db.query(RefreshToken).filter(
             RefreshToken.token == refresh_token_value
         ).first()
-        if refresh_token_db:
+        if refresh_token_db and refresh_token_db.user_id == current_user.id:
             delete_refresh_token(db, refresh_token_db)
 
     clear_refresh_token_cookie(response)

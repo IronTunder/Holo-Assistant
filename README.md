@@ -287,17 +287,17 @@ Gli script scaricano `vosk-model-small-it-0.22` dal catalogo Vosk ufficiale e cr
 ### `backend/.env`
 
 ```ini
-DATABASE_HOST={server-ip}
+DATABASE_HOST=127.0.0.1
 DATABASE_PORT=5432
 DATABASE_USER=postgres
-DATABASE_PASSWORD=postgres
+DATABASE_PASSWORD=<genera-un-valore-casuale-lungo>
 DATABASE_NAME=ditto_db
 
-SECRET_KEY=your-super-secret-key-change-this-in-production
+SECRET_KEY=<genera-almeno-32-caratteri-casuali>
 ALGORITHM=HS256
 
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=tuapasswordsicura
+ADMIN_PASSWORD=&IZE07$r&W7wO!2w?j2S
 
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 ADMIN_TOKEN_EXPIRE_MINUTES=120

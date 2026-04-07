@@ -127,6 +127,8 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.db.add_all([department, machine, user, technician, admin, manutenzione, sicurezza, *items])
         self.db.flush()
+        machine.in_uso = True
+        machine.operatore_attuale_id = user.id
         self.db.add_all(
             [
                 MachineKnowledgeItem(machine_id=machine.id, knowledge_item_id=item.id, is_enabled=True)
@@ -229,6 +231,22 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.reason_code, "matched")
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
         self.assertGreater(response.confidence, 0.7)
+
+    async def test_ask_question_rejects_unassigned_machine(self) -> None:
+        request = AskQuestionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            question="Come faccio il cambio olio della pressa?",
+        )
+        machine = self.db.query(Machine).filter(Machine.id == self.machine_id).first()
+        machine.in_uso = False
+        machine.operatore_attuale_id = None
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await ask_question(request, db=self.db)
+
+        self.assertEqual(context.exception.status_code, 403)
 
     async def test_ask_question_uses_retrieval_cache_but_still_logs_each_request(self) -> None:
         request = AskQuestionRequest(
@@ -367,16 +385,33 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 403)
 
-    async def test_resolve_interaction_accepts_technician_badge_and_records_resolution(self) -> None:
+    async def test_resolve_interaction_rejects_technician_badge_only(self) -> None:
         interaction = self._create_unresolved_interaction()
         current_user = self.db.query(User).filter(User.id == self.user_id).first()
 
-        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+        with self.assertRaises(Exception):
+            InteractionResolutionRequest(
+                resolution_note="Sostituito sensore",
+                technician_badge_id="TECH-001",
+            )
+
+        self.db.refresh(interaction)
+        self.assertNotEqual(interaction.feedback_status, "resolved")
+
+    async def test_resolve_interaction_accepts_technician_credentials_and_records_resolution(self) -> None:
+        interaction = self._create_unresolved_interaction()
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with (
+            patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()),
+            patch("app.api.interactions.verify_password", return_value=True),
+        ):
             response = await resolve_interaction(
                 interaction.id,
                 InteractionResolutionRequest(
                     resolution_note="Sostituito sensore",
-                    technician_badge_id="TECH-001",
+                    technician_username="Tecnico Manutentore",
+                    technician_password="password-tecnico",
                 ),
                 current_user=current_user,
                 db=self.db,

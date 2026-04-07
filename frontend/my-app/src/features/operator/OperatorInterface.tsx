@@ -610,7 +610,7 @@ export function OperatorInterface() {
   const submitInteractionResolution = async (
     interactionId: number,
     token: string,
-    technicianAuth: { technician_badge_id?: string; technician_username?: string; technician_password?: string }
+    technicianAuth: { technician_username?: string; technician_password?: string }
   ): Promise<InteractionResolutionResponse> => {
     const response = await fetch(API_ENDPOINTS.INTERACTION_RESOLVE(interactionId), {
       method: 'POST',
@@ -693,7 +693,6 @@ export function OperatorInterface() {
         },
         body: JSON.stringify({
           machine_id: machine.id,
-          user_id: user.id,
           question: userQuestion,
           selected_knowledge_item_id: selectedKnowledgeItemId,
         }),
@@ -959,33 +958,6 @@ export function OperatorInterface() {
       alert(error instanceof Error ? error.message : 'Errore nel salvataggio del feedback');
     } finally {
       setIsSubmittingFeedback(false);
-    }
-  };
-
-  const handleTechnicianBadgeResolution = async () => {
-    if (!pendingResolution || !accessToken || isResolvingInteraction) {
-      return;
-    }
-
-    setIsResolvingInteraction(true);
-    try {
-      const data = await submitInteractionResolution(
-        pendingResolution.interactionId,
-        accessToken,
-        { technician_badge_id: 'NFT-001' }
-      );
-      setPendingResolution({
-        interactionId: data.interaction_id,
-        message: 'Intervento confermato e problema segnato come risolto.',
-        resolvedByName: data.resolved_by_user_name,
-        resolutionTimestamp: data.resolution_timestamp,
-      });
-      setResolutionNote('');
-    } catch (error) {
-      console.error('Errore conferma risoluzione con badge:', error);
-      alert(error instanceof Error ? error.message : 'Errore nella conferma della risoluzione');
-    } finally {
-      setIsResolvingInteraction(false);
     }
   };
 
@@ -1413,14 +1385,6 @@ export function OperatorInterface() {
                                   </button>
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => void handleTechnicianBadgeResolution()}
-                                  disabled={isResolvingInteraction}
-                                  className="rounded-xl border border-amber-300/50 bg-amber-300/10 px-4 py-3 text-sm font-semibold text-amber-50 transition-colors hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {isResolvingInteraction ? 'Conferma in corso...' : 'Simula badge manutentore'}
-                                </button>
                               </>
                             )}
                           </div>

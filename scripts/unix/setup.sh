@@ -556,6 +556,10 @@ setup_database() {
     log "STEP" "Configurazione database PostgreSQL"
     
     cd "$ROOT_DIR/docker" || error_exit "Directory docker non trovata"
+    if [ -f "$ROOT_DIR/backend/.env" ]; then
+        DATABASE_PASSWORD="$(grep '^DATABASE_PASSWORD=' "$ROOT_DIR/backend/.env" | cut -d'=' -f2- || true)"
+    fi
+    export DATABASE_PASSWORD="${DATABASE_PASSWORD:-$(openssl rand -hex 32 2>/dev/null || uuidgen | tr -d '-' || date +%s%N)}"
     
     # Ferma container esistenti
     docker compose down 2>/dev/null || true
@@ -654,16 +658,20 @@ setup_backend() {
     IP=$(hostname -I | awk '{print $1}')
     [ -z "$IP" ] && IP="localhost"
     
+    DB_PASSWORD="${DATABASE_PASSWORD:-$(openssl rand -hex 32 2>/dev/null || uuidgen | tr -d '-' || date +%s%N)}"
+    SECRET_KEY="$(openssl rand -hex 32 2>/dev/null || uuidgen | tr -d '-' || date +%s%N)"
+    ADMIN_PASSWORD="$(python3 -c 'import secrets; chars="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!#$%&?"; print("".join(secrets.choice(chars) for _ in range(20)))' 2>/dev/null || openssl rand -base64 24 | tr -dc 'A-Za-z0-9!#$%&?' | cut -c 1-20)"
+
     # Crea .env con percorsi Piper
     cat > .env << EOF
-DATABASE_HOST=$IP
+DATABASE_HOST=127.0.0.1
 DATABASE_PORT=5432
 DATABASE_USER=postgres
-DATABASE_PASSWORD=postgres
+DATABASE_PASSWORD=$DB_PASSWORD
 DATABASE_NAME=ditto_db
-SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || echo "dev-secret-key-$(date +%s)")
+SECRET_KEY=$SECRET_KEY
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=tuapasswordsicura
+ADMIN_PASSWORD=$ADMIN_PASSWORD
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 ADMIN_TOKEN_EXPIRE_MINUTES=120
 OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480
@@ -718,10 +726,10 @@ EOF
         python scripts/init_db.py 2>/dev/null || log "WARNING" "scripts/init_db.py potrebbe aver fallito"
     fi
     
-    # Popola database
+    # Popola database demo durante setup per consentire la verifica funzionale iniziale
     if [ -f "scripts/populate.py" ]; then
-        log "INFO" "Popolamento database..."
-        python scripts/populate.py 2>/dev/null || log "WARNING" "scripts/populate.py potrebbe aver fallito"
+        log "INFO" "Popolamento database demo..."
+        DITTO_ALLOW_DEMO_SEED=true python scripts/populate.py 2>/dev/null || log "WARNING" "scripts/populate.py potrebbe aver fallito"
     fi
     
     # Seed categorie se esiste
@@ -778,6 +786,7 @@ cd "$(dirname "$0")/../../backend"
 source venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ../certs/ditto.crt --ssl-keyfile ../certs/ditto.key
 EOF
+    log "INFO" "Credenziali admin iniziali: admin / $ADMIN_PASSWORD"
     chmod +x "$ROOT_DIR/scripts/unix/start_backend.sh"
     
     # Script avvio frontend

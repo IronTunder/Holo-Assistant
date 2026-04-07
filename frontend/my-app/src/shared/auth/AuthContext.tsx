@@ -85,7 +85,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsLoggedIn(true);
     setIsAdmin(false);
 
-    localStorage.setItem('accessToken', nextAccessToken);
+    localStorage.removeItem('accessToken');
     localStorage.setItem('user', JSON.stringify(nextUser));
     localStorage.setItem('machine', JSON.stringify(nextMachine));
     localStorage.setItem('expiresIn', nextExpiresIn.toString());
@@ -119,7 +119,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoggedIn(true);
       setIsAdmin(Boolean(data.is_admin));
 
-      localStorage.setItem('accessToken', data.access_token);
+      localStorage.removeItem('accessToken');
       localStorage.setItem('user', JSON.stringify(data.user));
       localStorage.removeItem('machine');
       localStorage.setItem('expiresIn', data.expires_in.toString());
@@ -152,7 +152,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const data = await response.json();
       setAccessToken(data.access_token);
       setExpiresIn(data.expires_in);
-      localStorage.setItem('accessToken', data.access_token);
+      localStorage.removeItem('accessToken');
       localStorage.setItem('expiresIn', data.expires_in.toString());
       localStorage.setItem('loginTimestamp', Date.now().toString());
 
@@ -218,51 +218,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const setTokensFromRefresh = useCallback((newAccessToken: string, newExpiresIn: number) => {
     setAccessToken(newAccessToken);
     setExpiresIn(newExpiresIn);
-    localStorage.setItem('accessToken', newAccessToken);
+    localStorage.removeItem('accessToken');
     localStorage.setItem('expiresIn', newExpiresIn.toString());
     localStorage.setItem('loginTimestamp', Date.now().toString());
   }, []);
 
   const logout = useCallback(async () => {
-    if (!isAdmin && user && machine) {
+    if (user) {
       try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
         await fetch(API_ENDPOINTS.LOGOUT, {
           method: 'POST',
           credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify({
-            user_id: user.id,
-            machine_id: machine.id,
+            machine_id: !isAdmin && machine ? machine.id : undefined,
           }),
         });
       } catch (error) {
         console.error('Errore durante logout:', error);
       }
-    } else if (isAdmin && user) {
-      try {
-        await fetch(API_ENDPOINTS.LOGOUT, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            user_id: user.id,
-          }),
-        });
-      } catch (error) {
-        console.error('Errore durante admin logout:', error);
-      }
     }
 
     clearSession();
-  }, [clearSession, isAdmin, machine, user]);
+  }, [accessToken, clearSession, isAdmin, machine, user]);
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (!['accessToken', 'user', 'machine', 'isAdmin'].includes(e.key || '')) {
+      if (!['user', 'machine', 'isAdmin'].includes(e.key || '')) {
         return;
       }
 
@@ -271,14 +259,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return;
       }
 
-      const storedAccessToken = localStorage.getItem('accessToken');
       const storedUser = localStorage.getItem('user');
       const storedMachine = localStorage.getItem('machine');
       const storedIsAdmin = localStorage.getItem('isAdmin') === 'true';
       const storedExpiresIn = parseInt(localStorage.getItem('expiresIn') || '0', 10);
 
-      if (storedAccessToken && storedUser) {
-        setAccessToken(storedAccessToken);
+      if (storedUser) {
         setUser(JSON.parse(storedUser));
         setMachine(storedMachine ? JSON.parse(storedMachine) : null);
         setExpiresIn(storedExpiresIn || null);

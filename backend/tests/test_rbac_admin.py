@@ -1,7 +1,9 @@
 import unittest
+from datetime import timedelta
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy import create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -16,11 +18,12 @@ from app.api.admin import (
     update_role,
 )
 from app.api.auth.auth import user_has_permission
+from app.api.auth.auth import LogoutRequest, create_refresh_token, logout
 from app.database import Base
 from app.models.department import Department
 from app.models.machine import Machine
 from app.models.role import ADMIN_ROLE_CODE, ALL_PERMISSIONS, MAINTENANCE_TECH_ROLE_CODE, Role
-from app.models.user import LivelloEsperienza, Ruolo, Turno, User
+from app.models.user import LivelloEsperienza, RefreshToken, Ruolo, Turno, User
 from app.services.cache import admin_metadata_cache
 
 
@@ -204,6 +207,40 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(admin_metadata_cache.stats().entries, 0)
+
+    async def test_logout_does_not_revoke_other_users_refresh_tokens(self) -> None:
+        machine = Machine(
+            nome="Pressa",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-1",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+        self.db.refresh(machine)
+        admin_refresh_token = create_refresh_token(self.admin.id, self.db, expires_delta=timedelta(minutes=30))
+
+        await logout(
+            LogoutRequest(user_id=self.admin.id, machine_id=machine.id, refresh_token=admin_refresh_token),
+            Response(),
+            current_user=self.operator,
+            db=self.db,
+            refresh_token_cookie=None,
+        )
+
+        self.db.refresh(machine)
+        self.assertFalse(machine.in_uso)
+        self.assertIsNone(machine.operatore_attuale_id)
+        self.assertIsNotNone(
+            self.db.execute(
+                select(RefreshToken).where(
+                    RefreshToken.token == admin_refresh_token
+                )
+            ).scalar_one_or_none()
+        )
 
 
 if __name__ == "__main__":

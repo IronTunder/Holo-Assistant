@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from app.api.auth import auth as auth_module
 from app.api.auth.auth import user_has_permission, verify_permission
 from app.models.role import ALL_PERMISSIONS, Role
 from app.models.user import User
@@ -31,6 +32,24 @@ class AdminSettingsTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(user_has_permission(user, "settings.view"))
         self.assertTrue(user_has_permission(user, "settings.edit"))
+
+    def test_secret_key_placeholder_is_rejected_without_test_override(self) -> None:
+        previous_secret = auth_module.os.environ.get("SECRET_KEY")
+        previous_override = auth_module.os.environ.get("DITTO_ALLOW_INSECURE_DEFAULTS")
+        try:
+            auth_module.os.environ["SECRET_KEY"] = "your-super-secret-key-change-this-in-production"
+            auth_module.os.environ["DITTO_ALLOW_INSECURE_DEFAULTS"] = "false"
+            with self.assertRaises(RuntimeError):
+                auth_module._require_secret_key()
+        finally:
+            if previous_secret is None:
+                auth_module.os.environ.pop("SECRET_KEY", None)
+            else:
+                auth_module.os.environ["SECRET_KEY"] = previous_secret
+            if previous_override is None:
+                auth_module.os.environ.pop("DITTO_ALLOW_INSECURE_DEFAULTS", None)
+            else:
+                auth_module.os.environ["DITTO_ALLOW_INSECURE_DEFAULTS"] = previous_override
 
     async def test_settings_view_does_not_allow_edit(self) -> None:
         role = Role(name="Settings Viewer", code="settings-viewer", is_active=True)

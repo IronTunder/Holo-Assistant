@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 FeedbackStatus = Literal["resolved", "unresolved", "not_applicable"]
 InteractionActionType = Literal["question", "maintenance", "emergency"]
@@ -40,7 +40,7 @@ class PresetResponseResponse(PresetResponseBase):
 
 class AskQuestionRequest(BaseModel):
     machine_id: int
-    user_id: int
+    user_id: Optional[int] = None
     question: str
     selected_knowledge_item_id: Optional[int] = None
 
@@ -81,8 +81,9 @@ class InteractionFeedbackResponse(BaseModel):
 
 
 class InteractionResolutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     resolution_note: Optional[str] = None
-    technician_badge_id: Optional[str] = None
     technician_username: Optional[str] = None
     technician_password: Optional[str] = None
 

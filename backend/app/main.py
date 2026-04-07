@@ -79,39 +79,26 @@ def is_local_network(origin: str) -> bool:
     except:
         return False
 
-# Rileva il prefisso di rete e crea il pattern CORS
-network_prefix = get_local_network_prefix()
-if network_prefix:
-    logger.info(f"[CORS] Detected local network prefix: {network_prefix}, allowing origins matching: http/https://{network_prefix}.*:5173")
-    cors_regex = rf"https?://{network_prefix}\..*:5173"
-else:
-    logger.warning("[CORS] Could not detect local network, using fallback pattern")
-    cors_regex = r"https?://192\.168\..*\..*:5173"
-
-# Configura CORS dinamico
+# Configura CORS solo da origini esplicite
 configured_origins = [
     origin.strip()
     for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-base_origins = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://localhost:5173",
-    "https://127.0.0.1:5173",
-]
-allowed_origins = list(dict.fromkeys(base_origins + configured_origins))
+if not configured_origins and os.getenv("DITTO_ALLOW_INSECURE_DEFAULTS", "false").lower() != "true":
+    raise RuntimeError("ALLOWED_ORIGINS must be configured with explicit trusted origins.")
+
+allowed_origins = list(dict.fromkeys(configured_origins))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,  # Base + backend/.env ALLOWED_ORIGINS
-    allow_origin_regex=cors_regex,  # Regex dinamico per la rete locale
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Browser-Language"],
 )
 
-logger.info(f"[CORS] Initialized with regex: {cors_regex}")
+logger.info("[CORS] Initialized with explicit origins: %s", allowed_origins)
 
 # Includi i router
 app.include_router(auth_router, prefix="/auth", tags=["auth"])

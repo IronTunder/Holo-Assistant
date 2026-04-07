@@ -234,23 +234,24 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
               <TableRow className="bg-slate-50">
                 <TableHead>Data</TableHead>
                 <TableHead>Contesto</TableHead>
+                <TableHead>Tipo</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Domanda</TableHead>
                 <TableHead>Risposta</TableHead>
                 <TableHead>Esito</TableHead>
-                <TableHead>Azione</TableHead>
+                <TableHead>Operazioni</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={8} className="py-10 text-center text-slate-500">
                     Caricamento log...
                   </TableCell>
                 </TableRow>
               ) : filteredLogs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={8} className="py-10 text-center text-slate-500">
                     Nessun log trovato con i filtri correnti
                   </TableCell>
                 </TableRow>
@@ -268,19 +269,23 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                       </div>
                     </TableCell>
                     <TableCell>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge
+                          variant="outline"
+                          className={actionBadgeClassNames[log.action_type]}
+                        >
+                          {actionLabels[log.action_type]}
+                        </Badge>
+                        {log.priority === 'critical' ? (
+                          <Badge variant="outline" className="border-red-300 bg-red-600 text-white">
+                            {priorityLabels[log.priority]}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       <div className="space-y-2">
                         <div className="flex flex-wrap gap-2">
-                          <Badge
-                            variant="outline"
-                            className={actionBadgeClassNames[log.action_type]}
-                          >
-                            {actionLabels[log.action_type]}
-                          </Badge>
-                          {log.priority === 'critical' ? (
-                            <Badge variant="outline" className="border-red-300 bg-red-600 text-white">
-                              {priorityLabels[log.priority]}
-                            </Badge>
-                          ) : null}
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
                         </div>
                         {log.knowledge_item_title ? (
@@ -335,7 +340,7 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                           Conferma risoluzione
                         </Button>
                       ) : (
-                        <span className="text-xs text-slate-400">-</span>
+                        <span className="text-xs text-slate-400">Nessuna operazione</span>
                       )}
                     </TableCell>
                   </TableRow>

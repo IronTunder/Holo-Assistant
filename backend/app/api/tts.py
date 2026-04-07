@@ -1,9 +1,11 @@
 import base64
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.api.auth.auth import get_current_user
+from app.models.user import User
 from app.services.piper_tts import tts_service
 
 
@@ -35,9 +37,12 @@ async def tts_health():
 
 @router.post("/synthesize", response_model=TTSResponse)
 async def synthesize_speech(
-    request: TTSRequest, x_browser_language: Optional[str] = Header(default=None)
+    request: TTSRequest,
+    x_browser_language: Optional[str] = Header(default=None),
+    current_user: User = Depends(get_current_user),
 ):
     """Restituisce audio TTS con metadati per il lip-sync."""
+    del current_user
     try:
         synthesis = tts_service.synthesize_with_lipsync(
             request.text,

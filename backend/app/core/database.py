@@ -11,9 +11,26 @@ load_dotenv()
 DATABASE_HOST = os.getenv("DATABASE_HOST", "localhost")
 DATABASE_PORT = os.getenv("DATABASE_PORT", "5432")
 DATABASE_USER = os.getenv("DATABASE_USER", "postgres")
-DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "postgres")
+DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "ditto_db")
 
+
+def _allow_insecure_defaults() -> bool:
+    return os.getenv("DITTO_ALLOW_INSECURE_DEFAULTS", "false").lower() == "true"
+
+
+def _require_database_password() -> str:
+    if DATABASE_PASSWORD and DATABASE_PASSWORD not in {"postgres", "password", "changeme"}:
+        return DATABASE_PASSWORD
+    if _allow_insecure_defaults():
+        return DATABASE_PASSWORD or "postgres"
+    raise RuntimeError(
+        "DATABASE_PASSWORD must be set to a non-default value. "
+        "Set DITTO_ALLOW_INSECURE_DEFAULTS=true only for isolated tests or demos."
+    )
+
+
+DATABASE_PASSWORD = _require_database_password()
 DATABASE_URL = f"postgresql://{DATABASE_USER}:{DATABASE_PASSWORD}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)

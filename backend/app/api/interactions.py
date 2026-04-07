@@ -107,9 +107,7 @@ def _resolve_technician_user(
         return current_user
 
     technician: User | None = None
-    if request.technician_badge_id:
-        technician = db.query(User).filter(User.badge_id == request.technician_badge_id.strip()).first()
-    elif request.technician_username and request.technician_password:
+    if request.technician_username and request.technician_password:
         technician = db.query(User).filter(User.nome == request.technician_username.strip()).first()
         if technician is None or not technician.password_hash or not verify_password(
             request.technician_password,
@@ -129,14 +127,24 @@ def _resolve_technician_user(
 @router.post("/ask", response_model=AskQuestionResponse)
 async def ask_question(
     request: AskQuestionRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     overall_start = perf_counter()
     try:
+        if not isinstance(current_user, User):
+            if request.user_id is None:
+                raise HTTPException(status_code=401, detail="Autenticazione richiesta")
+            current_user = db.query(User).filter(User.id == request.user_id).first()
+            if current_user is None:
+                raise HTTPException(status_code=401, detail="Utente non valido")
+
         machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
         if machine is None:
             logger.warning("Machine %s not found", request.machine_id)
             raise HTTPException(status_code=404, detail="Machine not found")
+        if not machine.in_uso or machine.operatore_attuale_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Macchinario non assegnato all'utente corrente")
 
         retrieval_result = await knowledge_retrieval_service.resolve_question(
             db,
@@ -158,7 +166,7 @@ async def ask_question(
             "interaction route=%s machine_id=%s user_id=%s confidence=%.3f latency_ms=%.2f ollama_latency_ms=%s top_candidates=%s",
             retrieval_result.route,
             request.machine_id,
-            request.user_id,
+            current_user.id,
             retrieval_result.confidence,
             total_latency_ms,
             retrieval_result.ollama_latency_ms,
@@ -180,7 +188,7 @@ async def ask_question(
             response_text = FALLBACK_MESSAGE
 
         interaction = InteractionLog(
-            user_id=request.user_id,
+            user_id=current_user.id,
             machine_id=request.machine_id,
             category_id=selected_response.get("category_id") if selected_response else None,
             knowledge_item_id=selected_response.get("knowledge_item_id") if selected_response else None,

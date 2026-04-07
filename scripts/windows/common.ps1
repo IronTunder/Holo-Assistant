@@ -454,15 +454,29 @@ function New-DittoBackendEnv {
         [int]$FrontendPort = $DittoDefaultFrontendPort
     )
 
+    $databasePassword = -join (([guid]::NewGuid().ToString("N")), ([guid]::NewGuid().ToString("N")))
+    $secretKey = -join (([guid]::NewGuid().ToString("N")), ([guid]::NewGuid().ToString("N")))
+    $adminPasswordChars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!#$%&?"
+    $adminPassword = -join (1..20 | ForEach-Object {
+        $adminPasswordChars[(Get-Random -Minimum 0 -Maximum $adminPasswordChars.Length)]
+    })
+
+    if (Test-Path $Path) {
+        $existingDatabasePassword = Select-String -Path $Path -Pattern "^DATABASE_PASSWORD=" | Select-Object -First 1
+        if ($existingDatabasePassword) {
+            $databasePassword = $existingDatabasePassword.Line.Split("=", 2)[1]
+        }
+    }
+
     $lines = @(
-        "DATABASE_HOST=$Ip",
+        "DATABASE_HOST=127.0.0.1",
         "DATABASE_PORT=5432",
         "DATABASE_USER=postgres",
-        "DATABASE_PASSWORD=postgres",
+        "DATABASE_PASSWORD=$databasePassword",
         "DATABASE_NAME=ditto_db",
-        "SECRET_KEY=your-super-secret-key-change-this-in-production",
+        "SECRET_KEY=$secretKey",
         "ADMIN_USERNAME=admin",
-        "ADMIN_PASSWORD=tuapasswordsicura",
+        "ADMIN_PASSWORD=$adminPassword",
         "ACCESS_TOKEN_EXPIRE_MINUTES=480",
         "ADMIN_TOKEN_EXPIRE_MINUTES=120",
         "OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES=480",
