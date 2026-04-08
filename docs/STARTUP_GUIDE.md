@@ -2,7 +2,7 @@
 
 Guida pratica per avviare Ditto con il flusso attuale degli script.
 
-Ultimo aggiornamento: 7 aprile 2026
+Ultimo aggiornamento: 8 aprile 2026
 
 ## Script supportati
 
@@ -134,6 +134,11 @@ VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
 Il frontend usa `VITE_API_URL` come base e, in dev, riallinea l'hostname a quello della pagina corrente. `VITE_VOSK_MODEL_URL` e opzionale: se manca, viene usato il fallback `/models/vosk-model-small-it-0.22.tar.gz`.
+
+Per la build statica:
+- `npm run build` genera prima `public/legacy.css` con `npm run build:legacy-css`;
+- il file viene creato da `frontend/my-app/scripts/build-legacy-css.mjs` usando Tailwind CLI e `lightningcss`;
+- `frontend/my-app/index.html` carica il foglio legacy solo come fallback per browser che non supportano i CSS layers.
 
 ## URL utili
 
@@ -321,6 +326,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ../certs
 - operatori: login via badge o credenziali, sempre associati a una macchina;
 - admin: login dedicato via `POST /auth/admin-login`;
 - l'access token da solo non rappresenta l'intera sessione;
+- il refresh token attivo viene mantenuto nel cookie HTTP-only del backend;
+- il frontend non persiste piu il refresh token in `localStorage`;
+- il logout revoca il refresh token della sessione corrente e libera la macchina associata quando presente;
 - per testare una scadenza completa bisogna ridurre anche i refresh token;
 - il frontend prova il refresh prima di considerare scaduta la sessione.
 

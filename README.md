@@ -1,9 +1,10 @@
 # Progetto Ditto
 
-Ultimo aggiornamento documentazione: 7 aprile 2026
+Ultimo aggiornamento documentazione: 8 aprile 2026
 
 Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
+- fallback CSS legacy generato in build per browser senza supporto ai CSS layers;
 - backend FastAPI;
 - database PostgreSQL;
 - servizi AI locali con retrieval deterministico, chiarimenti guidati e fallback controllati;
@@ -351,9 +352,19 @@ ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES=120
 ```
 
 Note pratiche:
+- il refresh token resta nel cookie HTTP-only configurato dal backend e non viene piu mantenuto in `localStorage`;
 - se scade solo l'access token, il frontend prova il refresh della sessione;
+- il logout prova prima a liberare la sessione autenticata corrente e revoca il refresh token associato;
 - per simulare una vera scadenza completa bisogna ridurre anche i refresh token;
 - il monitoraggio sessione operatore puo forzare il logout se la macchina cambia stato lato admin.
+
+## Compatibilita frontend e build CSS
+
+Per la build frontend attuale:
+- `npm run build` esegue prima `npm run build:legacy-css` e poi `vite build`;
+- `frontend/my-app/scripts/build-legacy-css.mjs` genera `frontend/my-app/public/legacy.css`;
+- `index.html` carica `legacy.css` come fallback iniziale e lo disabilita subito nei browser che supportano i CSS layers;
+- questo mantiene compatibile l'interfaccia anche su browser enterprise o postazioni aggiornate lentamente.
 
 ## Troubleshooting rapido
 
@@ -415,5 +426,5 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 7 aprile 2026
+- ultimo aggiornamento documentazione: 8 aprile 2026
 - source of truth operativa Windows: `scripts/windows/setup.ps1` e `scripts/windows/start.ps1`

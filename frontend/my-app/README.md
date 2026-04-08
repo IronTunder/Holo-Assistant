@@ -1,6 +1,6 @@
 # Frontend Ditto
 
-Ultimo aggiornamento: 7 aprile 2026
+Ultimo aggiornamento: 8 aprile 2026
 
 Frontend React/Vite del progetto Ditto. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
@@ -35,6 +35,12 @@ Crea la build:
 ```bash
 npm run build
 ```
+
+La build frontend ora esegue due passi:
+- `npm run build:legacy-css` genera `public/legacy.css` con Tailwind CLI e `lightningcss`;
+- `vite build` produce gli asset finali.
+
+`index.html` collega sempre `legacy.css` all'avvio, poi lo disabilita subito nei browser che supportano i CSS layers. In questo modo i browser moderni usano gli stili principali, mentre quelli piu vecchi hanno un fallback dedicato.
 
 ## Configurazione ambiente
 
@@ -123,6 +129,14 @@ Per la voce:
 - il frontend prova a sintetizzare il testo;
 - se l'avatar puo gestire il parlato, usa playback sincronizzato;
 - altrimenti usa audio fallback.
+
+## Auth e sessioni
+
+Comportamento attuale:
+- l'access token vive nello stato React ed e usato per le chiamate protette;
+- il refresh token resta nel cookie HTTP-only del backend;
+- `restoreSession()` prova a recuperare la sessione usando `POST /auth/refresh` e poi riallinea i dati utente con `GET /auth/me`;
+- `logout()` prova anche a liberare la macchina corrente e, se serve, ritenta dopo un refresh dell'access token.
 
 ## File utili
 
