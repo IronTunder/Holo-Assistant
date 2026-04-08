@@ -5,6 +5,33 @@
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+      <link id="legacy-css" rel="stylesheet" href="/legacy.css" />
+      <script>
+        function supportsCssLayers() {
+          var testId = "ditto-css-layer-test";
+          var style = document.createElement("style");
+          var testElement = document.createElement("div");
+
+          style.textContent =
+            "@layer " + testId + " { #" + testId + " { color: rgb(1, 2, 3); } }";
+          testElement.id = testId;
+          document.head.appendChild(style);
+          document.documentElement.appendChild(testElement);
+
+          var color = window.getComputedStyle(testElement).color;
+          style.parentNode.removeChild(style);
+          testElement.parentNode.removeChild(testElement);
+
+          return color === "rgb(1, 2, 3)";
+        }
+
+        if (supportsCssLayers()) {
+          var legacyCss = document.getElementById("legacy-css");
+          if (legacyCss) {
+            legacyCss.disabled = true;
+          }
+        }
+      </script>
       <title>DITTO Assistant</title>
     </head>
 
