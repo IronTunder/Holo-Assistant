@@ -114,6 +114,9 @@ function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): str
     case 'command-listening':
       return 'In ascolto domanda';
     case 'error':
+      if (error?.toLowerCase().includes('microfono')) {
+        return 'Microfono non disponibile';
+      }
       return error ? 'Wake word non disponibile' : 'Errore wake word';
     case 'ready':
       return 'Wake word in pausa';
@@ -181,6 +184,7 @@ export function OperatorInterface() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const sseRetryTimeoutRef = useRef<number | null>(null);
   const sseConnectedRef = useRef(false);
+  const sseForbiddenSessionRef = useRef<string | null>(null);
   const logoutMessageTimeoutRef = useRef<number | null>(null);
   const manualLogoutInProgressRef = useRef(false);
   const avatarDisplayRef = useRef<AvatarDisplayHandle | null>(null);
@@ -261,6 +265,8 @@ export function OperatorInterface() {
   }, [pendingResolution?.resolvedByName]);
 
   useEffect(() => {
+    const sessionKey = machine && user ? `${user.id}:${machine.id}` : null;
+
     const clearPollingTimeout = () => {
       if (pollingTimeoutRef.current !== null) {
         window.clearTimeout(pollingTimeoutRef.current);
@@ -349,6 +355,7 @@ export function OperatorInterface() {
         !machine ||
         !user ||
         !accessToken ||
+        (sessionKey !== null && sseForbiddenSessionRef.current === sessionKey) ||
         document.visibilityState !== 'visible'
       ) {
         return;
@@ -444,6 +451,13 @@ export function OperatorInterface() {
           return;
         }
 
+        if (tokenResponse.status === 403) {
+          sseForbiddenSessionRef.current = sessionKey;
+          console.info('SSE non disponibile per questa sessione: uso il polling session-status.');
+          startPollingFallback();
+          return;
+        }
+
         if (!tokenResponse.ok) {
           console.error(`SSE token creation failed with status: ${tokenResponse.status}`);
           startPollingFallback();
@@ -509,6 +523,7 @@ export function OperatorInterface() {
       machine &&
       user &&
       accessToken &&
+      (sessionKey === null || sseForbiddenSessionRef.current !== sessionKey) &&
       document.visibilityState === 'visible'
     ) {
       void startSseConnection();

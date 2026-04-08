@@ -232,21 +232,43 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (accessToken) {
           headers.Authorization = `Bearer ${accessToken}`;
         }
-        await fetch(API_ENDPOINTS.LOGOUT, {
+
+        const logoutBody = JSON.stringify({
+          machine_id: machine?.id,
+        });
+
+        let response = await fetch(API_ENDPOINTS.LOGOUT, {
           method: 'POST',
           credentials: 'include',
           headers,
-          body: JSON.stringify({
-            machine_id: !isAdmin && machine ? machine.id : undefined,
-          }),
+          body: logoutBody,
         });
+
+        if (response.status === 401) {
+          const refreshedToken = await refreshAccessToken();
+          if (refreshedToken) {
+            response = await fetch(API_ENDPOINTS.LOGOUT, {
+              method: 'POST',
+              credentials: 'include',
+              headers: {
+                ...headers,
+                Authorization: `Bearer ${refreshedToken}`,
+              },
+              body: logoutBody,
+            });
+          }
+        }
+
+        if (!response.ok) {
+          console.error(`Logout failed with status: ${response.status}`);
+        }
       } catch (error) {
         console.error('Errore durante logout:', error);
       }
     }
 
     clearSession();
-  }, [accessToken, clearSession, isAdmin, machine, user]);
+  }, [accessToken, clearSession, machine, refreshAccessToken, user]);
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {

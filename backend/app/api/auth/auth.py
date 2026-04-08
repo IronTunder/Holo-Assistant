@@ -513,6 +513,31 @@ async def publish_admin_machine_event(
     )
 
 
+async def release_user_machine_sessions(
+    db: Session,
+    user_id: int,
+    requested_machine_id: Optional[int] = None,
+) -> None:
+    query = db.query(Machine).filter(Machine.operatore_attuale_id == user_id)
+    if requested_machine_id is not None:
+        query = query.filter((Machine.id == requested_machine_id) | (Machine.in_uso.is_(True)))
+    else:
+        query = query.filter(Machine.in_uso.is_(True))
+
+    machines = query.all()
+    if not machines:
+        return
+
+    for machine in machines:
+        machine.in_uso = False
+        machine.operatore_attuale_id = None
+
+    db.commit()
+
+    for machine in machines:
+        await publish_machine_session_event(machine, user_id, db=db)
+
+
 def decode_sse_token(token: str) -> dict:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -681,12 +706,6 @@ async def badge_login(
             detail="Macchinario non trovato"
         )
     
-    if machine.in_uso:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Macchinario già in uso da un altro operatore"
-        )
-    
     # Cerca utente
     user = db.query(User).filter(User.badge_id == request.badge_id).first()
     if not user:
@@ -694,11 +713,24 @@ async def badge_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Badge non riconosciuto"
         )
+
+    if (
+        machine.in_uso
+        and machine.operatore_attuale_id is not None
+        and machine.operatore_attuale_id != user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Macchinario gia in uso da un altro operatore"
+        )
     
     # Prepara risposta
     user_response = build_user_response_model(user)
+
+    await release_user_machine_sessions(db, user.id, request.machine_id)
     
     # Occupa macchinario
+    db.refresh(machine)
     machine.in_uso = True
     machine.operatore_attuale_id = user.id
     db.commit()
@@ -743,12 +775,6 @@ async def credentials_login(
             detail="Macchinario non trovato"
         )
     
-    if machine.in_uso:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Macchinario già in uso da un altro operatore"
-        )
-    
     # Cerca utente per username
     user = db.query(User).filter(User.nome == request.username).first()
     if not user:
@@ -769,11 +795,24 @@ async def credentials_login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Password non valida"
         )
+
+    if (
+        machine.in_uso
+        and machine.operatore_attuale_id is not None
+        and machine.operatore_attuale_id != user.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Macchinario gia in uso da un altro operatore"
+        )
     
     # Prepara risposta
     user_response = build_user_response_model(user)
+
+    await release_user_machine_sessions(db, user.id, request.machine_id)
     
     # Occupa macchinario
+    db.refresh(machine)
     machine.in_uso = True
     machine.operatore_attuale_id = user.id
     db.commit()
@@ -874,21 +913,22 @@ async def logout(
     refresh_token_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_TOKEN_COOKIE_NAME),
 ):
     """Endpoint per fare logout - libera solo la sessione dell'utente autenticato."""
-    
-    # Libera la macchina
-    machine = None
-    if request.machine_id is not None:
-        machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
 
-    if machine and machine.operatore_attuale_id == current_user.id:
-        machine.in_uso = False
-        machine.operatore_attuale_id = None
-        db.commit()
-        await publish_machine_session_event(machine, current_user.id, db=db)
+    refresh_token_value = refresh_token_cookie or request.refresh_token
+    refresh_token_machine_id = None
+    refresh_token_db = None
+    if refresh_token_value:
+        refresh_token_db = db.query(RefreshToken).filter(
+            RefreshToken.token == refresh_token_value
+        ).first()
+        if refresh_token_db and refresh_token_db.user_id == current_user.id:
+            refresh_token_machine_id = refresh_token_db.machine_id
+
+    requested_machine_id = request.machine_id or refresh_token_machine_id
+    await release_user_machine_sessions(db, current_user.id, requested_machine_id)
     
     cleanup_refresh_tokens(db, user_id=current_user.id)
 
-    refresh_token_value = refresh_token_cookie or request.refresh_token
     if refresh_token_value:
         refresh_token_db = db.query(RefreshToken).filter(
             RefreshToken.token == refresh_token_value

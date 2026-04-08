@@ -18,7 +18,7 @@ from app.api.admin import (
     update_role,
 )
 from app.api.auth.auth import user_has_permission
-from app.api.auth.auth import LogoutRequest, create_refresh_token, logout
+from app.api.auth.auth import BadgeLoginRequest, LogoutRequest, badge_login, create_refresh_token, logout
 from app.database import Base
 from app.models.department import Department
 from app.models.machine import Machine
@@ -241,6 +241,69 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
                 )
             ).scalar_one_or_none()
         )
+
+    async def test_logout_releases_current_user_machine_without_machine_id(self) -> None:
+        machine = Machine(
+            nome="Tornio",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-2",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+        self.db.refresh(machine)
+
+        await logout(
+            LogoutRequest(user_id=self.operator.id, machine_id=None),
+            Response(),
+            current_user=self.operator,
+            db=self.db,
+            refresh_token_cookie=None,
+        )
+
+        self.db.refresh(machine)
+        self.assertFalse(machine.in_uso)
+        self.assertIsNone(machine.operatore_attuale_id)
+
+    async def test_badge_login_releases_stale_machine_for_same_user(self) -> None:
+        stale_machine = Machine(
+            nome="Fresa",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-3",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        target_machine = Machine(
+            nome="Trapano",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-4",
+            startup_checklist=[],
+            in_uso=False,
+            operatore_attuale_id=None,
+        )
+        self.db.add_all([stale_machine, target_machine])
+        self.db.commit()
+        self.db.refresh(stale_machine)
+        self.db.refresh(target_machine)
+
+        await badge_login(
+            BadgeLoginRequest(badge_id=self.operator.badge_id, machine_id=target_machine.id),
+            Response(),
+            db=self.db,
+        )
+
+        self.db.refresh(stale_machine)
+        self.db.refresh(target_machine)
+        self.assertFalse(stale_machine.in_uso)
+        self.assertIsNone(stale_machine.operatore_attuale_id)
+        self.assertTrue(target_machine.in_uso)
+        self.assertEqual(target_machine.operatore_attuale_id, self.operator.id)
 
 
 if __name__ == "__main__":

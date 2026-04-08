@@ -155,6 +155,33 @@ function stripWakePhrase(text: string, wakeVariants: string[]): string {
 }
 
 function createVoskError(error: unknown, fallbackMessage: string): Error {
+  const errorName = error instanceof DOMException ? error.name : error instanceof Error ? error.name : '';
+
+  switch (errorName) {
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return new Error(
+        'Microfono non trovato sul dispositivo: Vosk non puo avviarsi senza un microfono disponibile. Controlla input audio, dispositivo predefinito e permessi del browser.',
+      );
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return new Error(
+        'Permesso microfono negato: Vosk non puo avviarsi senza accesso al microfono. Consenti il microfono nel browser.',
+      );
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return new Error(
+        'Microfono non accessibile o gia in uso: Vosk non puo avviarsi finche il dispositivo audio non e disponibile.',
+      );
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return new Error(
+        'Microfono non compatibile con i requisiti audio richiesti: Vosk non puo avviarsi con questo input.',
+      );
+    default:
+      break;
+  }
+
   if (error instanceof Error) {
     return error;
   }

@@ -86,6 +86,24 @@ async function decodeSpeechAudio(buffer: ArrayBuffer): Promise<AudioBuffer> {
   }
 }
 
+function disposeTalkingHeadSafely(head: TalkingHead | null): void {
+  if (!head) {
+    return;
+  }
+
+  try {
+    head.stopSpeaking();
+  } catch (error) {
+    console.warn('TalkingHead stopSpeaking failed during cleanup:', error);
+  }
+
+  try {
+    head.dispose();
+  } catch (error) {
+    console.warn('TalkingHead dispose failed during cleanup:', error);
+  }
+}
+
 export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>(
   function AvatarDisplay({ state }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -161,7 +179,7 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
           });
 
           if (cancelled) {
-            head.dispose();
+            disposeTalkingHeadSafely(head);
             return;
           }
 
@@ -186,8 +204,7 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
           window.clearTimeout(speakingTimeoutRef.current);
           speakingTimeoutRef.current = null;
         }
-        headRef.current?.stopSpeaking();
-        headRef.current?.dispose();
+        disposeTalkingHeadSafely(headRef.current);
         headRef.current = null;
       };
     }, [isActivated]);
