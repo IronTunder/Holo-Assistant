@@ -52,14 +52,13 @@ VITE_VOSK_MODEL_URL=/models/vosk-model-small-it-0.22.tar.gz
 ```
 
 Comportamento attuale di `src/shared/api/config.ts`:
-- in sviluppo usa `VITE_API_URL` se presente;
-- mantiene porta e path configurati;
-- riallinea l'hostname a `window.location.hostname` per mantenere coerenti host e cookie auth quando il frontend viene aperto da altri dispositivi o dopo i reload;
+- in sviluppo usa sempre la stessa origin del frontend e lascia a Vite il proxy delle route API;
+- `VITE_API_URL` resta il target del proxy dev verso il backend;
 - in produzione usa `VITE_API_URL` oppure fallback relativo a `${window.location.origin}/api`.
 
 `VITE_VOSK_MODEL_URL` configura il modello Vosk per la wake-word. Se la variabile manca, `OperatorInterface.tsx` usa il fallback `/models/vosk-model-small-it-0.22.tar.gz`.
 
-Con gli script attuali `VITE_API_URL` viene scritto come `https://{server-ip}:8000`; per evitare blocchi del refresh cookie, il backend viene allineato a `ALLOWED_ORIGINS=https://localhost:5173,https://{server-ip}:5173`, `REFRESH_TOKEN_COOKIE_SECURE=true` e `REFRESH_TOKEN_COOKIE_SAMESITE=lax`.
+Con gli script attuali `VITE_API_URL` viene scritto come `https://{server-ip}:8000`; in sviluppo il browser continua comunque a chiamare `https://{frontend-host}:5173/...`, mentre Vite inoltra al backend in proxy. Questo evita blocchi dovuti al certificato HTTPS del backend sui client LAN. Il backend resta comunque allineato a `ALLOWED_ORIGINS=https://localhost:5173,https://{server-ip}:5173`, `REFRESH_TOKEN_COOKIE_SECURE=true` e `REFRESH_TOKEN_COOKIE_SAMESITE=lax`.
 
 ## Struttura principale
 
@@ -150,7 +149,7 @@ Comportamento attuale:
 
 - Il frontend assume che backend e auth siano raggiungibili all'host risolto da `VITE_API_URL`.
 - In ambiente locale gli script di root e `scripts/windows/start.bat` aggiornano automaticamente `.env`; lo `start` puo lasciare solo `VITE_API_URL`, perche il modello Vosk ha un fallback applicativo.
-- Se browser o mobile bloccano le chiamate API in HTTPS, apri `https://{server-ip}:8000/health` e accetta anche il certificato del backend.
+- Se il problema nasce dal backend HTTPS non trusted sul client, in sviluppo ora le chiamate API passano dal proxy Vite e in genere basta accettare il certificato del frontend.
 - Se il backend cambia host o porta, verifica prima `frontend/my-app/.env` e poi `src/shared/api/config.ts`.
 - Il modello Vosk locale si prepara con `scripts/windows/prepare_vosk_model.ps1` oppure `bash scripts/unix/prepare_vosk_model.sh`.
 

@@ -15,6 +15,22 @@ const HTTPS_CONFIG = existsSync(HTTPS_CERT_PATH) && existsSync(HTTPS_KEY_PATH)
     }
   : undefined
 
+const DEFAULT_BACKEND_TARGET = 'https://127.0.0.1:8000'
+
+function resolveBackendTarget(): string {
+  const configuredUrl = process.env.VITE_API_URL?.trim()
+
+  if (!configuredUrl) {
+    return DEFAULT_BACKEND_TARGET
+  }
+
+  try {
+    return new URL(configuredUrl).origin
+  } catch {
+    return configuredUrl
+  }
+}
+
 function voskBrowserVendorPlugin(): Plugin {
   return {
     name: 'ditto-vosk-browser-vendor',
@@ -93,6 +109,38 @@ export default defineConfig({
 
   server: {
     https: HTTPS_CONFIG,
+    proxy: {
+      '/auth': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
+      '/machines': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
+      '/admin/': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
+      '/tts': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
+      '/health': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.

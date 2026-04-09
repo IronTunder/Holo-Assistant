@@ -1,6 +1,6 @@
 # Progetto Ditto
 
-Ultimo aggiornamento documentazione: 8 aprile 2026
+Ultimo aggiornamento documentazione: 9 aprile 2026
 
 Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
@@ -32,9 +32,7 @@ Ditto e un sistema di supporto per postazioni e macchinari industriali composto 
 
 ## Quick Start
 
-Il percorso Windows e attualmente la source of truth operativa: i wrapper in root (`setup.bat` e `start.bat`) chiamano i wrapper in `scripts/windows`, che a loro volta avviano `scripts/windows/setup.ps1` e `scripts/windows/start.ps1`. La logica Windows vive in PowerShell per gestire meglio prerequisiti, retry e riparazioni automatiche.
-
-I wrapper Unix (`setup.sh` e `start.sh`) sono disponibili, ma il loro flusso non e ancora perfettamente allineato a quello Windows: usano Ollama in Docker come percorso principale, hanno default legacy per il modello AI se `backend/.env` non e presente e non preparano automaticamente il modello Vosk nel normale `start`.
+I wrapper pubblici restano `setup.bat`/`start.bat` su Windows e `./setup.sh`/`./start.sh` su Unix. I flussi sono ora allineati nelle funzionalita principali: bootstrap completo con `setup`, avvio quotidiano riparativo con `start`, supporto `--check-only` su Unix e gestione coerente di Docker, HTTPS, Ollama, Vosk, backend e frontend.
 
 ### Primo setup
 
@@ -48,19 +46,19 @@ Linux:
 ./setup.sh
 ```
 
-Nel flusso Windows documentato come source of truth, lo script di setup:
-- controlla Docker, Python, Node.js/npm, mkcert e Ollama nativo quando serve;
-- se manca un prerequisito prova a installarlo con `winget` e aggiorna il `PATH` della sessione;
-- se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
+Lo script di setup:
+- controlla Docker, Python, Node.js/npm, certificati HTTPS e Ollama nativo quando serve;
+- su Windows, se manca un prerequisito prova a installarlo con `winget` e aggiorna il `PATH` della sessione;
+- su Windows, se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
 - esegue `docker compose down` e poi `docker compose up -d`;
 - aspetta PostgreSQL;
 - prepara il modello `qwen3.5:9b` in Ollama;
-- genera `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano;
+- genera `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano quando `mkcert` e disponibile;
 - crea `backend/.env` e `frontend/my-app/.env`;
 - configura backend e frontend per HTTPS in LAN;
 - installa dipendenze backend e frontend;
 - esegue `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py`;
-- su Windows prepara anche il modello wake-word Vosk se manca;
+- prepara il modello wake-word Vosk se manca;
 - avvia backend e frontend.
 
 ### Avvio successivo
@@ -75,9 +73,15 @@ Linux:
 ./start.sh
 ```
 
-Nel flusso Windows documentato come source of truth, lo script di start:
-- controlla e prova a riparare prerequisiti mancanti con `winget` quando possibile;
-- se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
+Controllo non distruttivo Unix:
+```bash
+./setup.sh --check-only
+./start.sh --check-only
+```
+
+Lo script di start:
+- controlla prerequisiti e prova la riparazione minima dei componenti mancanti;
+- su Windows, se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
 - riallinea Docker con `docker compose up -d` senza forzare il reset dei container;
 - aspetta PostgreSQL;
 - verifica o genera il certificato HTTPS locale;
@@ -85,10 +89,11 @@ Nel flusso Windows documentato come source of truth, lo script di start:
 - controlla la presenza del modello con `ollama list` e, se manca, prova a scaricarlo;
 - prova il warmup del modello via `POST /api/generate`;
 - aggiorna `backend/.env` con origini CORS HTTPS e cookie refresh secure;
-- aggiorna `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000`;
+- aggiorna `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000` e `VITE_VOSK_MODEL_URL`;
+- in sviluppo, il frontend usa Vite come proxy verso il backend, cosi i browser LAN parlano alla stessa origin del frontend invece di aprire una seconda connessione diretta al backend;
 - ricrea il virtualenv backend o reinstalla le dipendenze frontend se mancano;
 - prepara il modello Vosk se l'archivio locale manca;
-- su Windows riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py`;
+- riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py` in modalita best-effort;
 - avvia backend e frontend.
 
 ## Prerequisiti software
@@ -97,7 +102,7 @@ Nel flusso Windows documentato come source of truth, lo script di start:
 - Python 3 con `venv`
 - Node.js e `npm`
 
-Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente questi prerequisiti con `winget` quando possibile. Se `winget` non e disponibile, lo script non usa percorsi fragili: stampa un errore guidato per installare App Installer/winget o il prerequisito mancante.
+Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente questi prerequisiti con `winget` quando possibile. Su Unix, `setup.sh` e `start.sh` provano a installarli automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Su Ubuntu/Debian, Docker viene installato seguendo il repository ufficiale Docker: rimozione dei pacchetti in conflitto, chiave GPG, `docker.sources` e installazione di `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`. Se l'installazione automatica non riesce, stampano un comando guidato da eseguire manualmente.
 
 Versioni consigliate per evitare incompatibilita:
 - Python 3.10 o superiore
@@ -177,11 +182,11 @@ Backend e frontend vengono avviati in HTTPS usando `certs/ditto.crt` e `certs/di
 
 Su Windows, `setup.bat` e `start.bat` provano a generare automaticamente questi file se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, aggiorna il `PATH` della sessione e poi genera il certificato. Se `winget` non e disponibile o `mkcert` non entra nel `PATH`, lo script mostra un errore guidato e chiede di riaprire il terminale o installare il prerequisito manualmente.
 
-Su Unix, gli script non installano `mkcert` automaticamente: `setup.sh` e `start.sh` controllano che `certs/ditto.crt` e `certs/ditto.key` esistano e si fermano se mancano. Generali prima dell'avvio con un comando equivalente a quello indicato sotto.
+Su Unix, gli script provano anche a installare automaticamente `mkcert` con il package manager della distro. Se `mkcert` viene installato o e gia disponibile, generano `certs/ditto.crt` e `certs/ditto.key` quando mancano. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato e puoi generare i file manualmente con un comando equivalente a quello indicato sotto.
 
 `*.crt` e `*.key` sono ignorati da Git: in `certs/` resta versionabile solo il placeholder `.gitkeep`, mentre i certificati reali sono locali alla macchina.
 
-Senza installare una CA attendibile sui dispositivi, browser desktop e mobile possono mostrare un avviso di certificato non attendibile: la connessione e comunque cifrata, ma va accettata manualmente. Se il frontend si apre ma le API falliscono, apri anche `https://{server-ip}:8000/health` sul dispositivo e accetta il certificato del backend.
+Senza installare una CA attendibile sui dispositivi, browser desktop e mobile possono mostrare un avviso di certificato non attendibile: la connessione e comunque cifrata, ma va accettata manualmente. Nel flusso di sviluppo attuale le API passano dal proxy HTTPS di Vite, quindi di norma basta accettare il certificato del frontend. Se continui a chiamare il backend direttamente oppure usi strumenti esterni al browser, apri anche `https://{server-ip}:8000/health` sul dispositivo e accetta il certificato del backend.
 
 Se l'IP statico cambia, rigenera il certificato includendo il nuovo IP, ad esempio con `mkcert -cert-file certs/ditto.crt -key-file certs/ditto.key {server-ip} localhost 127.0.0.1 ditto.lan`, poi riavvia backend e frontend.
 
@@ -261,6 +266,18 @@ TTS_ENABLED=true
 ```
 
 Il frontend chiama `POST /tts/synthesize` e prova a far parlare l'avatar; se la riproduzione avatar non e disponibile, usa playback audio diretto.
+
+Voce Piper predefinita:
+```ini
+PIPER_DEFAULT_VOICE=it_IT-paola-medium
+```
+
+Il modello non e versionato nel repository. Preparalo localmente con:
+```bash
+bash scripts/unix/prepare_piper_model.sh
+```
+
+Lo script scarica il modello e il file di configurazione della voce `it_IT-paola-medium` nella cartella `backend/app/services/voice_models/`, percorso letto dal backend TTS.
 
 ### STT e wake-word Vosk
 
@@ -426,5 +443,6 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 8 aprile 2026
-- source of truth operativa Windows: `scripts/windows/setup.ps1` e `scripts/windows/start.ps1`
+- ultimo aggiornamento documentazione: 9 aprile 2026
+- script pubblici supportati: `setup.bat`, `start.bat`, `./setup.sh`, `./start.sh`
+- controlli non distruttivi Unix: `./setup.sh --check-only`, `./start.sh --check-only`

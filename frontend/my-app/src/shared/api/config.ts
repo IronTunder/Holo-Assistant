@@ -8,22 +8,9 @@
 const getApiBaseUrl = (): string => {
   // Development environment
   if (import.meta.env.DEV) {
-    const configuredUrl = import.meta.env.VITE_API_URL;
-
-    if (!configuredUrl) {
-      return `${window.location.protocol}//${window.location.hostname}:8000`;
-    }
-
-    try {
-      const parsedUrl = new URL(configuredUrl);
-
-      // In dev we keep the backend port/path from env, but align the hostname
-      // with the current page so auth cookies stay on the same host during reloads.
-      parsedUrl.hostname = window.location.hostname;
-      return parsedUrl.toString().replace(/\/$/, '');
-    } catch {
-      return configuredUrl;
-    }
+    // In dev we keep the browser on the frontend origin and let Vite proxy API
+    // requests to the backend. This avoids separate certificate/CORS prompts on LAN.
+    return window.location.origin;
   }
 
   // Production environment
