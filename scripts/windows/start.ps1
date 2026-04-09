@@ -11,6 +11,8 @@ $dockerDir = Join-Path $rootDir "docker"
 $backendEnvPath = Join-Path $backendDir ".env"
 $frontendEnvPath = Join-Path $frontendDir ".env"
 $voskArchive = Join-Path $frontendDir "public\models\$DittoVoskModelArchiveName"
+$piperVoiceModel = Join-Path $backendDir "app\services\voice_models\$DittoPiperDefaultVoiceModelFilename"
+$piperVoiceConfig = Join-Path $backendDir "app\services\voice_models\$DittoPiperDefaultVoiceConfigFilename"
 
 Write-Host "========================================"
 Write-Host "   DITTO - Start Windows"
@@ -18,6 +20,13 @@ Write-Host "========================================"
 Write-Host ""
 if ($CheckOnly) {
     Write-DittoInfo "Modalita CheckOnly: nessun container, download, installazione o server verra' avviato."
+}
+
+if (Test-DittoNeedsWindowsAdminForDockerBootstrap -CheckOnly:$CheckOnly) {
+    Write-DittoWarn "Per completare la preparazione Docker via WSL servono privilegi amministrativi."
+    Write-DittoInfo "Richiedo i permessi ora, poi lo start continua solo nella finestra elevata."
+    Start-DittoScriptElevated -ScriptPath $PSCommandPath
+    exit 0
 }
 
 try {
@@ -36,6 +45,8 @@ try {
 
     Write-DittoStep "[1/3] Verifica prerequisiti e avvio servizi Docker..."
     Ensure-DittoDocker -CheckOnly:$CheckOnly
+    $databaseHost = Get-DittoDatabaseHost
+    Write-DittoInfo "Host database iniziale in configurazione: $databaseHost"
     $python = Get-DittoPythonCommand -CheckOnly:$CheckOnly
     Write-DittoOk "Python disponibile: $($python.Exe) $($python.Args -join ' ')"
     Ensure-DittoCommand -CommandName "node" -DisplayName "Node.js" -PackageId "OpenJS.NodeJS.LTS" -CheckOnly:$CheckOnly | Out-Null
@@ -44,9 +55,16 @@ try {
 
     $ollamaConfig = Get-DittoOllamaConfig -BackendEnvPath $backendEnvPath
     $ollamaRuntime = Get-DittoOllamaRuntime -Config $ollamaConfig -CheckOnly:$CheckOnly
+    $wslStatus = Get-DittoWslStatus
+    $dockerMode = if ($env:DITTO_DOCKER_MODE) { $env:DITTO_DOCKER_MODE } else { "non pronto" }
 
     if ($CheckOnly) {
         Write-DittoInfo "CheckOnly: runtime Ollama previsto: $(if ($ollamaRuntime.UseNative) { 'native' } else { 'docker' })"
+        Write-DittoInfo "CheckOnly: stato WSL2: $($wslStatus.Summary)"
+        Write-DittoInfo "CheckOnly: Docker effettivo: $dockerMode"
+        Write-DittoInfo "CheckOnly: Ollama nativo disponibile: $([bool](Test-DittoCommand 'ollama'))"
+        Write-DittoInfo "CheckOnly: Piper presente: $([bool]((Test-Path $piperVoiceModel) -and (Test-Path $piperVoiceConfig)))"
+        Write-DittoInfo "CheckOnly: Vosk presente: $([bool](Test-Path $voskArchive))"
         Write-DittoInfo "CheckOnly: venv presente: $([bool](Test-Path (Join-Path $backendDir "venv")))"
         Write-DittoInfo "CheckOnly: node_modules presente: $([bool](Test-Path (Join-Path $frontendDir "node_modules")))"
         Write-DittoInfo "CheckOnly completato: start.ps1 e configurazione base sono leggibili."
@@ -55,24 +73,28 @@ try {
 
     if (-not (Test-Path $backendEnvPath)) {
         Write-DittoWarn "backend\.env non trovato: creo configurazione minima come setup."
-        New-DittoBackendEnv -Path $backendEnvPath -Ip $ip -OllamaConfig $ollamaConfig
+        New-DittoBackendEnv -Path $backendEnvPath -Ip $ip -OllamaConfig $ollamaConfig -DatabaseHost $databaseHost
     }
     $databasePasswordLine = Select-String -Path $backendEnvPath -Pattern "^DATABASE_PASSWORD=" | Select-Object -First 1
     if ($databasePasswordLine) {
         $env:DATABASE_PASSWORD = $databasePasswordLine.Line.Split("=", 2)[1]
     }
 
-    if ($ollamaRuntime.UseNative) {
-        Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "stop", "ollama") -WorkingDirectory $dockerDir -FailureMessage "Stop container Ollama fallito." -AllowFailure | Out-Null
-        Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "up", "-d", "postgres", "adminer") -WorkingDirectory $dockerDir -FailureMessage "Avvio PostgreSQL/Adminer fallito."
-    } else {
-        Invoke-DittoDocker -Arguments (@("compose") + $ollamaRuntime.ComposeArgs + @("up", "-d")) -WorkingDirectory $dockerDir -FailureMessage "Avvio stack Docker fallito."
-    }
+    Write-DittoInfo "Rimuovo eventuale container Ollama legacy se presente..."
+    Invoke-DittoDocker -Arguments @("rm", "-f", "ditto_ollama") -FailureMessage "Rimozione container Ollama residuo fallita." -AllowFailure | Out-Null
+    Write-DittoInfo "Avvio o riallineo i servizi Docker richiesti: postgres e adminer..."
+    Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "up", "-d", "postgres", "adminer") -WorkingDirectory $dockerDir -FailureMessage "Avvio PostgreSQL/Adminer fallito."
+    Write-DittoInfo "Attendo l'inizializzazione dei container..."
     Start-Sleep -Seconds 8
-    Wait-DittoPostgres -MaxAttempts 20 | Out-Null
+    if (-not (Wait-DittoPostgres -MaxAttempts 20)) {
+        Show-DittoPostgresDiagnostics -DockerDir $dockerDir
+        throw "PostgreSQL non e pronto nel container."
+    }
+    $databaseHost = Resolve-DittoReachableDatabaseHost -Port 5432
+    Write-DittoInfo "Host database effettivo selezionato: $databaseHost"
 
     Set-DittoEnvValues -Path $backendEnvPath -Values @{
-        "DATABASE_HOST" = "127.0.0.1"
+        "DATABASE_HOST" = $databaseHost
         "ALLOWED_ORIGINS" = "https://localhost:$DittoDefaultFrontendPort,https://$ip`:$DittoDefaultFrontendPort"
         "REFRESH_TOKEN_COOKIE_SECURE" = "true"
         "REFRESH_TOKEN_COOKIE_SAMESITE" = "lax"
@@ -91,6 +113,8 @@ try {
         Write-DittoOk "Ambiente virtuale backend presente."
     }
 
+    Ensure-DittoPiperVoiceModel -RootDir $rootDir -BackendDir $backendDir
+
     $venvPython = Join-Path $backendDir "venv\Scripts\python.exe"
     if (Test-Path (Join-Path $backendDir "scripts\seed_categories.py")) {
         Write-DittoInfo "Riallineamento knowledge base tecnica..."
@@ -103,9 +127,11 @@ try {
     }
 
     $backendCommand = "cd /d `"$backendDir`" && call venv\Scripts\activate.bat && uvicorn app.main:app --reload --host 0.0.0.0 --port $DittoDefaultBackendPort --ssl-certfile `"$($cert.CertFile)`" --ssl-keyfile `"$($cert.KeyFile)`" --no-use-colors"
+    Write-DittoInfo "Apro una nuova finestra per il backend FastAPI..."
     Start-DittoCmdWindow -Title "DITTO Backend" -Command $backendCommand
     Write-DittoOk "Backend avviato su https://$ip`:$DittoDefaultBackendPort"
 
+    Write-DittoInfo "Attendo qualche secondo prima di aprire il frontend..."
     Start-Sleep -Seconds 5
 
     Write-DittoStep "[3/3] Riparazione minima e avvio frontend..."
@@ -135,6 +161,7 @@ try {
     }
 
     $frontendCommand = "cd /d `"$frontendDir`" && npm run dev -- --host 0.0.0.0"
+    Write-DittoInfo "Apro una nuova finestra per il frontend Vite..."
     Start-DittoCmdWindow -Title "DITTO Frontend" -Command $frontendCommand
     Write-DittoOk "Frontend avviato su https://$ip`:$DittoDefaultFrontendPort"
 

@@ -1,6 +1,6 @@
 # Progetto Ditto
 
-Ultimo aggiornamento documentazione: 9 aprile 2026
+Ultimo aggiornamento documentazione: 10 aprile 2026
 
 Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
@@ -18,17 +18,15 @@ Ditto e un sistema di supporto per postazioni e macchinari industriali composto 
 - `frontend/my-app/src/shared` raccoglie API client, auth e componenti UI condivisi.
 - `backend/app` contiene API, modelli, servizi AI e logica applicativa.
 - `backend/scripts` contiene bootstrap database e utility operative.
-- `docker` contiene i servizi locali PostgreSQL, Adminer e Ollama.
+- `docker` contiene i servizi locali PostgreSQL e Adminer.
 - `scripts/windows` e `scripts/unix` contengono gli script reali di setup e avvio; i file in root sono wrapper.
 
 ## Runtime Ollama e GPU
 
-- Su Windows, gli script preferiscono automaticamente `Ollama` nativo se presente nel `PATH`.
-- Questa scelta e voluta: su Windows e il percorso piu affidabile per usare la GPU sia con NVIDIA sia con AMD.
-- In modalita Docker, il progetto mantiene PostgreSQL/Adminer e puo usare override Compose dedicati per accelerazione GPU.
-- `docker/docker-compose.nvidia.yml` abilita la riserva GPU NVIDIA nel container Ollama.
-- `docker/docker-compose.amd.yml` prepara il container `ollama/ollama:rocm` per host Linux/WSL con device ROCm (`/dev/kfd`, `/dev/dri`).
-- Su Windows con GPU AMD, Docker Desktop non offre un percorso ROCm trasparente come su Linux; per questo e consigliato il runtime nativo.
+- Su Windows, il runtime AI supportato e solo `Ollama` nativo.
+- Su Windows, Docker serve al progetto solo per PostgreSQL e Adminer.
+- Se `docker` non e pronto lato Windows, gli script Windows chiedono i permessi amministrativi all'inizio se devono installare WSL oppure se la distro WSL esistente non e accessibile nella sessione corrente, poi riusano la prima distro WSL esistente oppure creano `ditto_wsl` e installano Docker Engine dentro quella distro, senza richiedere Docker Desktop come prerequisito del progetto.
+- I file `docker/docker-compose.nvidia.yml` e `docker/docker-compose.amd.yml` restano come override legacy e non fanno parte del flusso Windows corrente.
 
 ## Quick Start
 
@@ -47,10 +45,10 @@ Linux:
 ```
 
 Lo script di setup:
-- controlla Docker, Python, Node.js/npm, certificati HTTPS e Ollama nativo quando serve;
+- controlla Docker, Python, Node.js/npm, certificati HTTPS e Ollama nativo;
 - su Windows, se manca un prerequisito prova a installarlo con `winget` e aggiorna il `PATH` della sessione;
-- su Windows, se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
-- esegue `docker compose down` e poi `docker compose up -d`;
+- su Windows, se `docker` non e' pronto, chiede i permessi amministrativi se deve installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi prepara Docker via WSL usando la prima distro esistente oppure `ditto_wsl`;
+- esegue `docker compose down` e poi `docker compose up -d` per `postgres` e `adminer`;
 - aspetta PostgreSQL;
 - prepara il modello `qwen3.5:9b` in Ollama;
 - genera `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano quando `mkcert` e disponibile;
@@ -58,6 +56,7 @@ Lo script di setup:
 - configura backend e frontend per HTTPS in LAN;
 - installa dipendenze backend e frontend;
 - esegue `backend/scripts/init_db.py`, `backend/scripts/populate.py` e `backend/scripts/seed_categories.py`;
+- prepara la voce Piper predefinita se manca;
 - prepara il modello wake-word Vosk se manca;
 - avvia backend e frontend.
 
@@ -81,8 +80,8 @@ Controllo non distruttivo Unix:
 
 Lo script di start:
 - controlla prerequisiti e prova la riparazione minima dei componenti mancanti;
-- su Windows, se Docker Desktop e' installato ma spento prova ad avviarlo e aspetta che il daemon risponda;
-- riallinea Docker con `docker compose up -d` senza forzare il reset dei container;
+- su Windows, se `docker` non e' pronto, chiede i permessi amministrativi se deve installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi prepara Docker via WSL usando la prima distro esistente oppure `ditto_wsl`;
+- riallinea Docker con `docker compose up -d` senza forzare il reset dei container, lasciando attivi solo `postgres` e `adminer`;
 - aspetta PostgreSQL;
 - verifica o genera il certificato HTTPS locale;
 - legge `OLLAMA_MODEL` e i parametri principali da `backend/.env`;
@@ -92,17 +91,18 @@ Lo script di start:
 - aggiorna `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000` e `VITE_VOSK_MODEL_URL`;
 - in sviluppo, il frontend usa Vite come proxy verso il backend, cosi i browser LAN parlano alla stessa origin del frontend invece di aprire una seconda connessione diretta al backend;
 - ricrea il virtualenv backend o reinstalla le dipendenze frontend se mancano;
+- prepara la voce Piper predefinita se manca;
 - prepara il modello Vosk se l'archivio locale manca;
 - riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py` in modalita best-effort;
 - avvia backend e frontend.
 
 ## Prerequisiti software
 
-- Docker Desktop o Docker Engine con Compose
+- Docker con Compose
 - Python 3 con `venv`
 - Node.js e `npm`
 
-Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente questi prerequisiti con `winget` quando possibile. Su Unix, `setup.sh` e `start.sh` provano a installarli automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Su Ubuntu/Debian, Docker viene installato seguendo il repository ufficiale Docker: rimozione dei pacchetti in conflitto, chiave GPG, `docker.sources` e installazione di `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`. Se l'installazione automatica non riesce, stampano un comando guidato da eseguire manualmente.
+Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente Python, Node.js, mkcert e Ollama quando possibile. Per Docker, se un runtime Windows non e gia disponibile, il flusso Windows chiede i permessi amministrativi all'inizio quando deve installare WSL oppure quando WSL e presente ma non accessibile nella sessione corrente, poi riusa la prima distro WSL esistente oppure crea `ditto_wsl`, mette in pausa il setup dopo la creazione dell'utente Linux e installa Docker Engine dal repository ufficiale Docker dentro la distro scelta. Su Unix, `setup.sh` e `start.sh` provano a installare i prerequisiti automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato.
 
 Versioni consigliate per evitare incompatibilita:
 - Python 3.10 o superiore
@@ -140,16 +140,16 @@ Questa configurazione e adatta soprattutto a test, sviluppo o piccole demo. Con 
 - Storage libero: 60-80 GB SSD
 
 Configurazioni GPU consigliate:
-- NVIDIA con almeno 8 GB di VRAM se si vuole usare Ollama in Docker con override NVIDIA
-- AMD con almeno 8 GB di VRAM su Windows: meglio Ollama nativo
-- AMD con almeno 8 GB di VRAM su Linux/WSL: possibile usare l'override ROCm dedicato
+- NVIDIA con almeno 8 GB di VRAM o AMD con almeno 8 GB di VRAM per usare bene Ollama nativo
+- su Windows il percorso supportato resta Ollama nativo
+- su Linux/WSL gli override Docker legacy per Ollama restano opzionali e fuori dal flusso Windows
 
 ### Note pratiche di hosting
 
 - Il flusso attuale del repository e ottimizzato per self-hosting in rete locale, non per deployment cloud completamente automatizzato.
 - Gli script di root avviano backend e frontend in modalita sviluppo (`uvicorn --reload` e `vite dev`).
 - Per un host sempre acceso conviene sostituire il frontend Vite dev server con una build statica servita da web server e il backend con un process manager o servizio dedicato.
-- PostgreSQL e Ollama restano gia pronti per un uso self-hosted tramite Docker Compose.
+- PostgreSQL resta pronto tramite Docker Compose; Ollama su Windows gira nativamente.
 
 ## URL utili
 
@@ -169,12 +169,12 @@ cd docker
 docker compose down
 ```
 
-Per chiudere completamente Docker Desktop, usa l'icona nella barra delle applicazioni vicino all'orologio e scegli `Quit Docker Desktop`. Solo dopo aver chiuso Docker, se vuoi spegnere anche il backend WSL, esegui:
+Se stai usando Docker dentro WSL e vuoi spegnere anche il backend Linux, esegui:
 ```bat
 wsl --shutdown
 ```
 
-Nota: `wsl --shutdown` spegne tutte le distro WSL attive, non solo Docker Desktop.
+Nota: `wsl --shutdown` spegne tutte le distro WSL attive.
 
 ## HTTPS in rete locale
 
@@ -234,7 +234,7 @@ Configurazione attuale:
 ```ini
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3.5:9b
-OLLAMA_RUNTIME=auto
+OLLAMA_RUNTIME=native
 OLLAMA_ACCELERATOR=auto
 OLLAMA_NATIVE_VULKAN=1
 OLLAMA_TIMEOUT_SECONDS=120
@@ -305,7 +305,7 @@ Gli script scaricano `vosk-model-small-it-0.22` dal catalogo Vosk ufficiale e cr
 ### `backend/.env`
 
 ```ini
-DATABASE_HOST=127.0.0.1
+DATABASE_HOST=<ip-raggiungibile-dal-backend>
 DATABASE_PORT=5432
 DATABASE_USER=postgres
 DATABASE_PASSWORD=<genera-un-valore-casuale-lungo>
@@ -328,7 +328,7 @@ REFRESH_TOKEN_COOKIE_SAMESITE=lax
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3.5:9b
-OLLAMA_RUNTIME=auto
+OLLAMA_RUNTIME=native
 OLLAMA_ACCELERATOR=auto
 OLLAMA_NATIVE_VULKAN=1
 OLLAMA_TIMEOUT_SECONDS=120
@@ -346,6 +346,13 @@ OLLAMA_NUM_THREAD=4
 
 TTS_ENABLED=true
 ```
+
+Su Windows il valore canonico di `DATABASE_HOST` e' `127.0.0.1`:
+
+- Docker in WSL: secondo la guida Microsoft per il networking WSL, da Windows verso un servizio esposto in WSL si usa normalmente `localhost`; gli script provano quindi prima `127.0.0.1`/`localhost` e tengono l'IP della distro WSL solo come fallback diagnostico.
+- Docker nativo lato Windows: `DATABASE_HOST=127.0.0.1`.
+
+Nota: l'IP della distro WSL puo' cambiare dopo `wsl --shutdown`, riavvii o restart del networking. Per questo `setup.bat` e `start.bat` lo ricalcolano a ogni esecuzione.
 
 ### `frontend/my-app/.env`
 
@@ -389,22 +396,17 @@ Per la build frontend attuale:
 
 Controlla:
 ```bash
-docker exec ditto_ollama ollama list
-docker compose logs -f ollama
+ollama list
+ollama ps
 ```
 
 Verifica che:
-- `OLLAMA_MODEL` in `backend/.env` esista davvero nel runtime Ollama usato, nativo o container;
+- `OLLAMA_MODEL` in `backend/.env` esista davvero nel runtime Ollama nativo;
 - non ci sia mismatch tra nome configurato e modello scaricato;
 - il cold start non stia superando il timeout.
-- se sei su Windows con GPU AMD, verifica di stare usando Ollama nativo e non il container CPU-only.
+- su Windows verifica che `ollama serve` sia attivo e che il modello sia presente.
 
 Download manuale:
-```bash
-docker exec ditto_ollama ollama pull qwen3.5:9b
-```
-
-Se stai usando Ollama nativo:
 ```bash
 ollama pull qwen3.5:9b
 ollama list

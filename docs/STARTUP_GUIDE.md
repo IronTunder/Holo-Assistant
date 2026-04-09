@@ -2,7 +2,7 @@
 
 Guida pratica per avviare Ditto con il flusso attuale degli script.
 
-Ultimo aggiornamento: 9 aprile 2026
+Ultimo aggiornamento: 10 aprile 2026
 
 ## Script supportati
 
@@ -26,12 +26,11 @@ Gli script Windows e Unix sono allineati nelle funzionalita principali: `setup` 
 - Python 3 e supporto `venv`
 - Node.js con `npm`
 
-Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente prerequisiti mancanti con `winget`: Docker Desktop, Python, Node.js LTS, mkcert e Ollama quando e' richiesto il runtime nativo. Su Unix, `setup.sh` e `start.sh` provano a installarli automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Su Ubuntu/Debian, Docker viene installato con il repository ufficiale Docker, inclusa la rimozione dei pacchetti in conflitto e l'installazione di `docker-ce`. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato.
+Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente prerequisiti mancanti con `winget`: Python, Node.js LTS, mkcert e Ollama. Per Docker, se un runtime Windows gia funzionante non e' disponibile, il flusso Windows chiede i permessi amministrativi all'inizio quando deve installare WSL oppure quando WSL e presente ma non accessibile nella sessione corrente, poi riusa la prima distro WSL esistente oppure crea `ditto_wsl`, mette in pausa il setup dopo la creazione dell'utente Linux e installa Docker Engine dal repository ufficiale Docker dentro la distro scelta. Su Unix, `setup.sh` e `start.sh` provano a installarli automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Su Ubuntu/Debian, Docker viene installato con il repository ufficiale Docker, inclusa la rimozione dei pacchetti in conflitto e l'installazione di `docker-ce`. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato.
 
 Servizi Docker previsti da `docker/docker-compose.yml`:
 - `ditto_postgres`
 - `ditto_adminer`
-- `ditto_ollama`
 
 ## Cosa fa `setup`
 
@@ -40,9 +39,9 @@ Servizi Docker previsti da `docker/docker-compose.yml`:
 Passi principali:
 - controllano Docker, Python, Node.js/npm, certificati HTTPS e Ollama nativo quando serve;
 - su Windows provano a installare automaticamente i prerequisiti mancanti con `winget`;
-- su Windows provano ad avviare Docker Desktop se e' installato ma il daemon non risponde;
+- su Windows, se `docker` non e' pronto, chiedono i permessi amministrativi se devono installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi preparano Docker via WSL usando la prima distro esistente oppure `ditto_wsl`;
 - eseguono `docker compose down`;
-- eseguono `docker compose up -d`;
+- eseguono `docker compose up -d postgres adminer`;
 - aspettano che PostgreSQL sia pronto con `pg_isready`;
 - preparano il modello `qwen3.5:9b` in Ollama;
 - generano `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano quando `mkcert` e disponibile;
@@ -54,6 +53,7 @@ Passi principali:
 - eseguono `backend/scripts/init_db.py`;
 - eseguono `backend/scripts/populate.py`;
 - eseguono `backend/scripts/seed_categories.py`;
+- preparano la voce Piper predefinita se manca;
 - installano le dipendenze frontend se `node_modules` non e presente;
 - avviano backend e frontend.
 
@@ -63,8 +63,8 @@ Passi principali:
 
 Passi principali:
 - controllano prerequisiti e provano a riparare il minimo indispensabile;
-- su Windows provano ad avviare Docker Desktop se e' installato ma il daemon non risponde;
-- eseguono `docker compose up -d`;
+- su Windows, se `docker` non e' pronto, chiedono i permessi amministrativi se devono installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi preparano Docker via WSL usando la prima distro esistente oppure `ditto_wsl`;
+- eseguono `docker compose up -d postgres adminer`;
 - aspettano che PostgreSQL sia pronto;
 - verificano la presenza del certificato HTTPS locale e lo generano se manca quando `mkcert` e disponibile;
 - leggono `OLLAMA_MODEL`, `OLLAMA_BASE_URL` e gli altri parametri AI da `backend/.env` se presente;
@@ -74,6 +74,7 @@ Passi principali:
 - aggiornano `frontend/my-app/.env` con `VITE_API_URL=https://{server-ip}:8000` e `VITE_VOSK_MODEL_URL`;
 - in sviluppo, il frontend inoltra le route API al backend tramite proxy Vite, cosi browser desktop e mobile restano sulla stessa origin del frontend;
 - ricreano il virtualenv backend o reinstallano le dipendenze frontend se mancano;
+- preparano la voce Piper predefinita se manca;
 - preparano il modello Vosk se l'archivio locale manca;
 - riallineano la knowledge base tecnica con `backend/scripts/seed_categories.py` in best-effort;
 - avviano backend FastAPI in HTTPS in una finestra dedicata;
@@ -84,7 +85,7 @@ Passi principali:
 ### Backend
 
 ```ini
-DATABASE_HOST={server-ip}
+DATABASE_HOST=<ip-raggiungibile-dal-backend>
 DATABASE_PORT=5432
 DATABASE_USER=postgres
 DATABASE_PASSWORD=postgres
@@ -107,7 +108,7 @@ REFRESH_TOKEN_COOKIE_SAMESITE=lax
 
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3.5:9b
-OLLAMA_RUNTIME=auto
+OLLAMA_RUNTIME=native
 OLLAMA_ACCELERATOR=auto
 OLLAMA_NATIVE_VULKAN=1
 OLLAMA_TIMEOUT_SECONDS=120
@@ -125,6 +126,13 @@ OLLAMA_NUM_THREAD=4
 
 TTS_ENABLED=true
 ```
+
+Su Windows il valore canonico di `DATABASE_HOST` e' `127.0.0.1`:
+
+- Docker in WSL: la guida Microsoft sul networking WSL indica `localhost` come percorso normale da Windows verso un servizio in WSL; per questo `setup.bat` e `start.bat` provano prima `127.0.0.1`/`localhost` e usano l'IP corrente della distro WSL solo come fallback.
+- Docker nativo lato Windows: gli script mantengono `DATABASE_HOST=127.0.0.1`.
+
+L'IP della distro WSL puo' cambiare dopo `wsl --shutdown`, reboot o restart del networking, quindi gli script lo rigenerano a ogni setup/start.
 
 ### Frontend
 
@@ -172,10 +180,10 @@ Per ospitare l'intero stack sulla stessa macchina:
 - porte da considerare: `5173`, `8000`, `8080`, `5432`, `11434`
 
 Note operative:
-- su Windows, se e disponibile `ollama` nel `PATH`, gli script preferiscono il runtime nativo
-- su Windows, se `OLLAMA_RUNTIME=native` ma `ollama` manca, lo script prova a installarlo con `winget install -e --id Ollama.Ollama`
-- per GPU NVIDIA in Docker usa `docker/docker-compose.nvidia.yml`
-- per GPU AMD in Docker il percorso piu realistico resta Linux/WSL con ROCm; su Windows e consigliato Ollama nativo
+- su Windows il runtime AI supportato e solo Ollama nativo
+- se `ollama` manca, lo script Windows prova a installarlo con `irm https://ollama.com/install.ps1 | iex`
+- su Windows Docker serve al progetto solo per `ditto_postgres` e `ditto_adminer`
+- gli override `docker/docker-compose.nvidia.yml` e `docker/docker-compose.amd.yml` non fanno parte del flusso Windows corrente
 - gli script attuali avviano frontend e backend in modalita sviluppo, quindi per un host permanente conviene prevedere un servizio dedicato per FastAPI e una build statica del frontend
 
 ## Flusso consigliato
@@ -226,12 +234,12 @@ cd docker
 docker compose down
 ```
 
-Se vuoi chiudere completamente Docker Desktop, non basta chiudere le finestre terminale: apri la barra delle applicazioni vicino all'orologio, clic destro sull'icona Docker Desktop e scegli `Quit Docker Desktop`. Dopo che Docker e' chiuso, puoi spegnere anche il backend WSL con:
+Se stai usando Docker dentro WSL, dopo aver fermato i container puoi spegnere anche il backend WSL con:
 ```bat
 wsl --shutdown
 ```
 
-Nota: `wsl --shutdown` spegne tutte le distro WSL attive, non solo Docker Desktop. Usalo quando non ti servono altre sessioni WSL aperte.
+Nota: `wsl --shutdown` spegne tutte le distro WSL attive. Usalo quando non ti servono altre sessioni WSL aperte.
 
 ## Sessioni operatore in tempo reale
 
@@ -253,22 +261,17 @@ Questo copre i casi in cui un amministratore libera la macchina, la assegna a un
 ### `GET /api/tags` funziona ma warmup o richieste AI falliscono
 
 Cause tipiche:
-- modello non presente nel container;
+- modello non presente nel runtime Ollama nativo;
 - timeout durante il cold start;
 - mismatch tra `OLLAMA_MODEL` configurato e modello realmente scaricato.
 
 Controlli:
 ```bash
-docker exec ditto_ollama ollama list
-docker compose logs -f ollama
+ollama list
+ollama ps
 ```
 
 Download manuale:
-```bash
-docker exec ditto_ollama ollama pull qwen3.5:9b
-```
-
-Se stai usando Ollama nativo:
 ```bash
 ollama pull qwen3.5:9b
 ollama list
@@ -346,7 +349,7 @@ Dopo `setup` o `start` controlla:
 - `frontend/my-app/.env` aggiornato con `VITE_API_URL=https://{server-ip}:8000`;
 - `certs/ditto.crt` e `certs/ditto.key` presenti localmente;
 - modello wake-word presente in `frontend/my-app/public/models` oppure URL alternativo configurato con `VITE_VOSK_MODEL_URL`;
-- `docker compose ps` con `ditto_postgres`, `ditto_ollama`, `ditto_adminer`;
+- `docker compose ps` con `ditto_postgres` e `ditto_adminer`;
 - backend raggiungibile su `https://{server-ip}:8000`;
 - frontend raggiungibile su `https://{server-ip}:5173`;
 - accesso admin disponibile su `/admin-login`;

@@ -6,6 +6,11 @@ $DittoDefaultOllamaModel = "qwen3.5:9b"
 $DittoDefaultOllamaBaseUrl = "http://127.0.0.1:11434"
 $DittoVoskModelPublicUrl = "/models/vosk-model-small-it-0.22.tar.gz"
 $DittoVoskModelArchiveName = "vosk-model-small-it-0.22.tar.gz"
+$DittoPiperDefaultVoiceKey = "it_IT-paola-medium"
+$DittoPiperDefaultVoiceModelFilename = "$DittoPiperDefaultVoiceKey.onnx"
+$DittoPiperDefaultVoiceConfigFilename = "$DittoPiperDefaultVoiceModelFilename.json"
+$DittoWslInstallBaseDistro = "Ubuntu-24.04"
+$DittoWslDedicatedDistro = "ditto_wsl"
 $DittoWindowsScriptDir = $PSScriptRoot
 
 function Write-DittoInfo {
@@ -49,6 +54,76 @@ function Update-DittoPath {
     $env:Path = @($machinePath, $userPath, $env:Path) -join ";"
 }
 
+function Convert-DittoConsoleText {
+    param([AllowNull()][string]$Text)
+
+    if ($null -eq $Text) {
+        return ""
+    }
+
+    $clean = $Text -replace "`0", ""
+    $clean = $clean -replace "[\x00-\x08\x0B\x0C\x0E-\x1F]", ""
+    $clean = $clean.Replace(([string][char]211), "a")
+    $clean = $clean.Replace(([string][char]222), "e")
+    $clean = $clean.Replace(([string][char]168), "u")
+    $clean = $clean.Replace(([string][char]172), "i")
+
+    return $clean
+}
+
+function Get-DittoShellQuotedValue {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) {
+        return "''"
+    }
+
+    return "'" + ($Value -replace "'", "'\''") + "'"
+}
+
+function Convert-DittoWindowsPathToWsl {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    $resolved = (Resolve-Path $Path).Path
+    $normalized = $resolved -replace "\\", "/"
+    if ($normalized -match "^([A-Za-z]):/(.*)$") {
+        return "/mnt/$($Matches[1].ToLower())/$($Matches[2])"
+    }
+
+    throw "Percorso non convertibile per WSL: $Path"
+}
+
+function Test-DittoIsAdmin {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Start-DittoElevatedPowerShell {
+    param(
+        [Parameter(Mandatory=$true)][string]$ScriptPath,
+        [string[]]$ScriptArguments = @()
+    )
+
+    $argumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ScriptPath`"")
+    foreach ($arg in $ScriptArguments) {
+        $argumentList += "`"$arg`""
+    }
+
+    Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList ($argumentList -join " ")
+}
+
+function Set-DittoWslDistributionName {
+    param([AllowNull()][string]$Name)
+
+    if ($Name) {
+        $env:DITTO_WSL_DISTRO = $Name
+        return
+    }
+
+    Remove-Item Env:\DITTO_WSL_DISTRO -ErrorAction SilentlyContinue
+}
+
 function Invoke-DittoTool {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
@@ -63,7 +138,7 @@ function Invoke-DittoTool {
             Set-Location $WorkingDirectory
         }
         $ErrorActionPreference = "Continue"
-        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { Convert-DittoConsoleText $_.ToString() })
         $exitCode = $LASTEXITCODE
         if ($output) {
             $output | ForEach-Object { Write-Host $_ }
@@ -80,13 +155,325 @@ function Invoke-DittoToolChecked {
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
         [string]$WorkingDirectory = "",
-        [string]$FailureMessage = "Comando fallito."
+        [string]$FailureMessage = "Comando fallito.",
+        [switch]$AllowFailure  # Aggiunto parametro AllowFailure
     )
 
     $exitCode = Invoke-DittoTool -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
-    if ($exitCode -ne 0) {
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "$FailureMessage Exit code: $exitCode"
     }
+    return $exitCode
+}
+
+function Get-DittoWslDistributionName {
+    if ($env:DITTO_WSL_DISTRO) {
+        return $env:DITTO_WSL_DISTRO
+    }
+
+    $existingDistros = Get-DittoWslDistributions
+    if ($existingDistros.Count -gt 0) {
+        $selectedDistro = $existingDistros[0]
+        Set-DittoWslDistributionName -Name $selectedDistro
+        return $selectedDistro
+    }
+
+    return $DittoWslDedicatedDistro
+}
+
+function Get-DittoWslStatus {
+    $selectedDistro = Get-DittoWslDistributionName
+    $status = @{
+        IsInstalled = $false
+        IsAccessible = $false
+        DefaultVersion2 = $false
+        DistroName = $selectedDistro
+        DistroInstalled = $false
+        ExistingDistros = @()
+        VirtualizationEnabled = $null
+        WindowsSupported = $false
+        RebootRequired = $false
+        Summary = ""
+    }
+
+    try {
+        $os = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        $build = [int]$os.CurrentBuildNumber
+        $ubr = [int]$os.UBR
+        $isWin11 = $build -ge 22000
+        $isSupportedWin10 = $build -gt 19044 -or ($build -eq 19044 -and $ubr -ge 1049) -or ($build -eq 19043 -and $ubr -ge 1049) -or ($build -eq 19042 -and $ubr -ge 1049) -or ($build -eq 19041 -and $ubr -ge 1049) -or ($build -eq 18362 -and $ubr -ge 1049)
+        $status.WindowsSupported = $isWin11 -or $isSupportedWin10
+    } catch {
+        $status.WindowsSupported = $false
+    }
+
+    # Controllo WSL installato PRIMA di verificare la virtualizzazione
+    if (Test-DittoCommand "wsl") {
+        $status.IsInstalled = $true
+        $wslStatus = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--status")
+        $text = ($wslStatus.Output -join "`n")
+        if ($wslStatus.ExitCode -eq 0) {
+            $status.IsAccessible = $true
+            $status.DefaultVersion2 = $text -match "2"
+        } elseif ($text -match "reboot" -or $text -match "riavv") {
+            $status.RebootRequired = $true
+        }
+
+        $distroResult = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--quiet")
+        if ($distroResult.ExitCode -eq 0) {
+            $status.IsAccessible = $true
+            $status.ExistingDistros = @($distroResult.Output | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($status.ExistingDistros.Count -gt 0 -and -not $env:DITTO_WSL_DISTRO) {
+                $status.DistroName = $status.ExistingDistros[0]
+                Set-DittoWslDistributionName -Name $status.DistroName
+            }
+            $status.DistroInstalled = ($status.ExistingDistros | Where-Object { $_ -eq $status.DistroName }).Count -gt 0
+        } elseif (($distroResult.Output -join "`n") -match "E_ACCESSDENIED") {
+            $status.Summary = "WSL presente ma non accessibile in questa sessione."
+        }
+        
+        # Solo se WSL e installato ma non funziona correttamente, controlliamo la virtualizzazione
+        if ($status.DefaultVersion2 -eq $false -and $status.DistroInstalled -eq $false) {
+            # Se WSL non funziona, potrebbe essere disabilitata la virtualizzazione
+            try {
+                $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+                $status.VirtualizationEnabled = [bool]$cpu.VirtualizationFirmwareEnabled
+            } catch {
+                $status.VirtualizationEnabled = $null
+            }
+        } else {
+            # WSL funziona, quindi la virtualizzazione e abilitata
+            $status.VirtualizationEnabled = $true
+        }
+    } else {
+        # WSL non installato, controllo virtualizzazione per capire se possiamo installarlo
+        try {
+            $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+            $status.VirtualizationEnabled = [bool]$cpu.VirtualizationFirmwareEnabled
+        } catch {
+            $status.VirtualizationEnabled = $null
+        }
+    }
+
+    if (-not $status.Summary) {
+        $parts = @()
+        $parts += "Windows supportato: $($status.WindowsSupported)"
+        if ($status.IsInstalled) {
+            $parts += "WSL installato: True"
+            $parts += "WSL accessibile: $($status.IsAccessible)"
+            $parts += "distro selezionata: $($status.DistroName)"
+            $parts += "distro disponibile: $($status.DistroInstalled)"
+            $parts += "WSL default v2: $($status.DefaultVersion2)"
+        } else {
+            $parts += "WSL installato: False"
+            $parts += "virtualizzazione: $(if ($null -eq $status.VirtualizationEnabled) { 'sconosciuta' } else { $status.VirtualizationEnabled })"
+        }
+        if ($status.RebootRequired) {
+            $parts += "riavvio richiesto: True"
+        }
+        $status.Summary = $parts -join ", "
+    }
+
+    return $status
+}
+
+function Invoke-DittoWsl {
+    param(
+        [Parameter(Mandatory=$true)][string]$Command,
+        [switch]$AllowFailure,
+        [string]$Activity = ""
+    )
+
+    if ($Activity) {
+        Write-DittoInfo $Activity
+    }
+    $distroName = Get-DittoWslDistributionName
+    if (-not $distroName) {
+        throw "Nessuna distribuzione WSL selezionata per eseguire il comando richiesto."
+    }
+    $args = @("-d", $distroName, "--", "bash", "-lc", $Command)
+    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments $args
+    if ($result.Output) {
+        $result.Output | ForEach-Object { Write-Host $_ }
+    }
+    if ($result.ExitCode -ne 0 -and -not $AllowFailure) {
+        throw "Comando WSL fallito. Exit code: $($result.ExitCode)"
+    }
+    return $result
+}
+
+function Invoke-DittoOllamaInstallScript {
+    param([switch]$CheckOnly)
+
+    if ($CheckOnly) {
+        Write-DittoWarn "Ollama nativo non e' disponibile. CheckOnly: salto installazione automatica."
+        return $false
+    }
+
+    Write-DittoInfo "Installo Ollama nativo con lo script ufficiale..."
+    $command = "irm https://ollama.com/install.ps1 | iex"
+    $result = Invoke-DittoCapturedTool -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command)
+    if ($result.Output) {
+        $result.Output | ForEach-Object { Write-Host $_ }
+    }
+    Update-DittoPath
+    return $result.ExitCode -eq 0
+}
+
+function Test-DittoDockerDirectReady {
+    Use-DittoWritableDockerConfig
+    if (-not (Test-DittoCommand "docker")) {
+        return @{ Ready = $false; Compose = $false; Output = @("docker non trovato") }
+    }
+
+    $info = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("info")
+    if ($info.ExitCode -ne 0) {
+        return @{ Ready = $false; Compose = $false; Output = $info.Output }
+    }
+
+    $compose = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("compose", "version")
+    return @{ Ready = $compose.ExitCode -eq 0; Compose = $compose.ExitCode -eq 0; Output = @($info.Output + $compose.Output) }
+}
+
+function Test-DittoDockerInWslReady {
+    if (-not (Test-DittoCommand "wsl")) {
+        return @{ Ready = $false; Output = @("WSL non disponibile") }
+    }
+
+    $distroName = Get-DittoWslDistributionName
+    if (-not $distroName) {
+        return @{ Ready = $false; Output = @("Nessuna distribuzione WSL selezionata") }
+    }
+
+    $dockerReadyCommand = "(docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1) || (sudo docker info >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1)"
+    $check = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $dockerReadyCommand)
+    return @{ Ready = $check.ExitCode -eq 0; Output = $check.Output; DistroName = $distroName }
+}
+
+function Ensure-DittoWindowsSupport {
+    param([switch]$AllowVirtualizationCheck)
+    
+    $status = Get-DittoWslStatus
+    
+    # Controllo base: Windows deve supportare WSL
+    if (-not $status.WindowsSupported) {
+        throw "Windows non supportato per il setup automatico WSL2. Serve Windows 10 build 18362.1049+ oppure Windows 11."
+    }
+    
+    # Se WSL e gia installato, saltiamo il controllo della virtualizzazione
+    if ($status.IsInstalled) {
+        Write-DittoInfo "WSL gia installato, proseguo con la configurazione..."
+        return $status
+    }
+    
+    # Solo se WSL NON e installato, controlliamo la virtualizzazione
+    if ($status.VirtualizationEnabled -eq $false) {
+        throw "La virtualizzazione non risulta abilitata. Attivala nel BIOS/UEFI e rilancia lo script."
+    }
+    
+    return $status
+}
+
+function Ensure-DittoWslDocker {
+    param(
+        [switch]$CheckOnly
+    )
+
+    $status = Ensure-DittoWindowsSupport
+    Write-DittoInfo "Stato WSL: $($status.Summary)"
+
+    if ($CheckOnly) {
+        $distro = Ensure-DittoWslDistroForDocker -CheckOnly
+        Write-DittoInfo "CheckOnly: distribuzione WSL selezionata: $distro"
+        return $distro
+    }
+
+    # Se WSL non e installato, dobbiamo procedere con l'installazione (richiede admin)
+    if (-not $status.IsInstalled) {
+        Write-DittoInfo "WSL non installato. Procedo con l'installazione..."
+        
+        if (-not (Test-DittoIsAdmin)) {
+            throw "Per installare WSL serve rilanciare lo script come amministratore."
+            Write-Host ""
+            Write-Host "Verra aperta una nuova finestra PowerShell come amministratore."
+            Write-Host "La configurazione continuera automaticamente in quella finestra."
+            Write-Host ""
+            Read-Host "Premi INVIO per continuare"
+
+            $scriptPath = $CurrentScriptPath
+            if (-not $scriptPath) {
+                $scriptPath = $MyInvocation.MyCommand.Path
+            }
+            
+            Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList @(
+                "-NoProfile", 
+                "-ExecutionPolicy", 
+                "Bypass", 
+                "-File", 
+                "`"$scriptPath`"",
+                "-WaitSetup"
+            ) -Wait
+            
+            # Verifica dopo l'installazione
+            $direct = Test-DittoDockerDirectReady
+            if ($direct.Ready) {
+                $env:DITTO_DOCKER_MODE = "windows"
+                Write-DittoOk "Docker disponibile dopo configurazione."
+                return
+            }
+        }
+        
+        # Siamo admin, installa WSL
+        Write-DittoInfo "Installazione WSL..."
+        Invoke-DittoToolChecked -FilePath "wsl.exe" -Arguments @("--install", "--web-download") -FailureMessage "Installazione WSL fallita."
+        Write-DittoInfo "WSL installato. Potrebbe essere necessario riavviare Windows."
+        
+        # Aggiorna lo stato
+        $status = Get-DittoWslStatus
+        if (-not $status.IsInstalled) {
+            throw "WSL non rilevabile dopo l'installazione. Riavvia Windows e rilancia lo script."
+        }
+    }
+
+    # A questo punto WSL e installato, continuiamo
+    Write-DittoInfo "Configurazione WSL2 come backend Docker del progetto..."
+    
+    # Imposta WSL2 come default (non bloccante se fallisce)
+    Write-DittoInfo "Imposto WSL2 come versione predefinita..."
+    $setDefaultExit = Invoke-DittoToolChecked -FilePath "wsl.exe" -Arguments @("--set-default-version", "2") -FailureMessage "Impostazione WSL2 come default fallita." -AllowFailure
+    if ($setDefaultExit -ne 0) {
+        Write-DittoWarn "Impostazione WSL2 come default non riuscita (potrebbe essere gia configurata)."
+    }
+    
+    # Aggiorna kernel WSL (opzionale, non bloccante)
+    Write-DittoInfo "Aggiorno il kernel WSL..."
+    $updateExit = Invoke-DittoToolChecked -FilePath "wsl.exe" -Arguments @("--update", "--web-download") -FailureMessage "Aggiornamento kernel WSL fallito." -AllowFailure
+    if ($updateExit -ne 0) {
+        Write-DittoWarn "Aggiornamento kernel WSL non riuscito (potrebbe non essere necessario)."
+    }
+
+    # Seleziona o crea distribuzione (questa funzione gestisce anche la pausa post-creazione utente)
+    $distroName = Ensure-DittoWslDistroForDocker -CheckOnly:$false
+    Write-DittoInfo "Uso la distribuzione WSL '$distroName' per Docker del progetto."
+    
+    # Verifica che la distribuzione sia registrata
+    $distros = Get-DittoWslDistributions
+    if ($distros -notcontains $distroName) {
+        throw "Distribuzione $distroName non trovata."
+    }
+
+    # Installa Docker nella distribuzione
+    $dockerInstalled = Ensure-DittoDockerInWsl -DistroName $distroName
+    
+    if (-not $dockerInstalled) {
+        throw "Installazione Docker in $distroName fallita."
+    }
+
+    $env:DITTO_DOCKER_MODE = "wsl"
+    Set-DittoWslDistributionName -Name $distroName
+    Write-DittoOk "Docker disponibile tramite WSL ($distroName)."
+    
+    return $distroName
 }
 
 function Invoke-DittoDocker {
@@ -96,6 +483,37 @@ function Invoke-DittoDocker {
         [string]$FailureMessage = "Comando Docker fallito.",
         [switch]$AllowFailure
     )
+
+    if ($env:DITTO_DOCKER_MODE -eq "wsl") {
+        $commandParts = @()
+        if ($WorkingDirectory) {
+            $wslDir = Convert-DittoWindowsPathToWsl -Path $WorkingDirectory
+            $commandParts += "cd $(Get-DittoShellQuotedValue $wslDir)"
+        }
+        if ($env:DATABASE_PASSWORD) {
+            $commandParts += "export DATABASE_PASSWORD=$(Get-DittoShellQuotedValue $env:DATABASE_PASSWORD)"
+        }
+        $commandParts += "export DITTO_POSTGRES_PORT_MAPPING='5432:5432'"
+        $commandParts += "export DITTO_ADMINER_PORT_MAPPING='8080:8080'"
+        $joinedArgs = ($Arguments | ForEach-Object { Get-DittoShellQuotedValue $_ }) -join " "
+        $commandParts += "docker $joinedArgs"
+        $command = $commandParts -join "; "
+        $distroName = Get-DittoWslDistributionName
+        if (-not $distroName) {
+            throw "Nessuna distribuzione WSL selezionata per eseguire Docker."
+        }
+        $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $command)
+        if ($result.Output) {
+            $result.Output | ForEach-Object { Write-Host $_ }
+        }
+        if ($AllowFailure) {
+            return $result.ExitCode
+        }
+        if ($result.ExitCode -ne 0) {
+            throw "$(Get-DittoDockerFailureMessage -FailureMessage $FailureMessage -Output $result.Output) Exit code: $($result.ExitCode)"
+        }
+        return
+    }
 
     Use-DittoWritableDockerConfig
     $result = Invoke-DittoCapturedTool -FilePath "docker" -Arguments $Arguments -WorkingDirectory $WorkingDirectory
@@ -107,23 +525,6 @@ function Invoke-DittoDocker {
             return 0
         }
         return
-    }
-
-    if (Test-DittoDockerEngineError -Output $result.Output) {
-        Write-DittoWarn "Docker Desktop non ha ancora esposto il motore Linux."
-        Start-DittoDockerDesktop | Out-Null
-        if (Wait-DittoDocker -TimeoutSeconds 300) {
-            $result = Invoke-DittoCapturedTool -FilePath "docker" -Arguments $Arguments -WorkingDirectory $WorkingDirectory
-            if ($result.ExitCode -eq 0) {
-                if ($result.Output) {
-                    $result.Output | ForEach-Object { Write-Host $_ }
-                }
-                if ($AllowFailure) {
-                    return 0
-                }
-                return
-            }
-        }
     }
 
     if ($AllowFailure) {
@@ -147,7 +548,7 @@ function Invoke-DittoCapturedTool {
             Set-Location $WorkingDirectory
         }
         $ErrorActionPreference = "Continue"
-        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
+        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { Convert-DittoConsoleText $_.ToString() })
         return @{ ExitCode = $LASTEXITCODE; Output = $output }
     } finally {
         $ErrorActionPreference = $oldErrorActionPreference
@@ -174,7 +575,7 @@ function Get-DittoDockerFailureMessage {
     )
 
     if (Test-DittoDockerEngineError -Output $Output) {
-        return "$FailureMessage Docker Desktop non risponde: il motore Linux non e' raggiungibile. Lo script ha gia' provato ad avviare servizio/app e a usare un DOCKER_CONFIG temporaneo se i context utente erano bloccati. Apri Docker Desktop, attendi che dica 'Docker Desktop is running', poi rilancia lo script. Se resta bloccato, verifica WSL 2 dalle impostazioni di Docker Desktop."
+        return "$FailureMessage Docker non risponde dal lato Windows. Lo script puo' usare Docker nativo se gia' pronto, altrimenti prepara WSL2 e Docker Engine nella distro selezionata."
     }
 
     if ($Output) {
@@ -446,13 +847,225 @@ function Set-DittoEnvValues {
     Set-Content -Path $Path -Value $lines -Encoding ascii
 }
 
+function Get-DittoWslDistributions {
+    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--quiet")
+    if ($result.ExitCode -ne 0) {
+        return @()
+    }
+    $distros = @($result.Output | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() })
+    return ,$distros
+}
+
+function Get-DittoWslRunningDistributions {
+    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--running", "--quiet")
+    if ($result.ExitCode -ne 0) {
+        return @()
+    }
+    $distros = @($result.Output | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() })
+    return ,$distros
+}
+
+function Get-DittoWslPrimaryIp {
+    param([string]$DistroName = "")
+
+    if (-not $DistroName) {
+        $DistroName = Get-DittoWslDistributionName
+    }
+    if (-not $DistroName) {
+        return ""
+    }
+
+    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", "hostname -I | cut -d' ' -f1")
+    if ($result.ExitCode -ne 0) {
+        return ""
+    }
+
+    return (($result.Output | Select-Object -First 1).Trim())
+}
+
+function Get-DittoDatabaseHost {
+    return "127.0.0.1"
+}
+
+function Get-DittoDatabaseHostCandidates {
+    $candidates = @("127.0.0.1", "localhost")
+
+    if ($env:DITTO_DOCKER_MODE -eq "wsl") {
+        $distroName = Get-DittoWslDistributionName
+        if (-not $distroName) {
+            throw "Docker e configurato in modalita WSL ma non risulta selezionata alcuna distribuzione WSL."
+        }
+
+        $wslIp = Get-DittoWslPrimaryIp -DistroName $distroName
+        if (-not $wslIp) {
+            Write-DittoWarn "Docker e in modalita WSL ma non riesco a determinare l'IP della distro '$distroName'. Provero' solo loopback Windows."
+            return ,$candidates
+        }
+
+        if ($candidates -notcontains $wslIp) {
+            $candidates += $wslIp
+        }
+    }
+
+    return ,$candidates
+}
+
+function Resolve-DittoReachableDatabaseHost {
+    param(
+        [int]$Port = 5432,
+        [int]$MaxAttemptsPerCandidate = 4
+    )
+
+    $candidates = Get-DittoDatabaseHostCandidates
+    Write-DittoInfo "Host database candidati dal lato Windows (preferenza: localhost/127.0.0.1): $($candidates -join ', ')"
+
+    foreach ($candidate in $candidates) {
+        if (Wait-DittoTcpPort -TargetHost $candidate -Port $Port -MaxAttempts $MaxAttemptsPerCandidate) {
+            return $candidate
+        }
+    }
+
+    throw "PostgreSQL non e raggiungibile da Windows su nessuno degli host candidati: $($candidates -join ', ')."
+}
+
+function Ensure-DittoWslDistroForDocker {
+    param(
+        [string]$PreferredDistro = $DittoWslInstallBaseDistro,
+        [string]$CustomDistroName = $DittoWslDedicatedDistro,
+        [switch]$CheckOnly
+    )
+
+    $existingDistros = Get-DittoWslDistributions
+
+    if ($existingDistros.Count -gt 0) {
+        $selectedDistro = $existingDistros[0]
+        Set-DittoWslDistributionName -Name $selectedDistro
+        Write-DittoInfo "Trovata una distro WSL esistente. Uso la prima disponibile: $selectedDistro"
+        return $selectedDistro
+    }
+
+    if ($CheckOnly) {
+        Write-DittoInfo "CheckOnly: nessuna distribuzione WSL trovata"
+        return $null
+    }
+    
+    # Crea nuova distribuzione dedicata
+    Write-DittoInfo "Creazione nuova distribuzione WSL dedicata: $CustomDistroName"
+    Write-Host ""
+    Write-Host "========================================"
+    Write-Host "   CONFIGURAZIONE NUOVA DISTRIBUZIONE WSL"
+    Write-Host "========================================"
+    Write-Host ""
+    Write-Host "Verra creata una nuova distribuzione Linux chiamata '$CustomDistroName'."
+    Write-Host "Completa la configurazione quando richiesto:"
+    Write-Host "  1. Inserisci un username (es. ditto-user)"
+    Write-Host "  2. Inserisci una password"
+    Write-Host "  3. Conferma la password"
+    Write-Host "Dopo la conferma della password tornerai automaticamente al setup."
+    $installArgs = @("--install", "--web-download", "--no-launch", "--distribution", $PreferredDistro, "--name", $CustomDistroName)
+    $process = Start-Process -FilePath "wsl.exe" -ArgumentList $installArgs -NoNewWindow -Wait -PassThru
+    
+    if ($process.ExitCode -ne 0) {
+        throw "Installazione distribuzione WSL fallita."
+    }
+
+    Write-DittoInfo "Avvio iniziale di $CustomDistroName per completare la creazione dell'utente Linux..."
+    $firstLaunch = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $CustomDistroName, "--", "sh", "-lc", "exit 0") -NoNewWindow -Wait -PassThru
+    if ($firstLaunch.ExitCode -ne 0) {
+        throw "Inizializzazione della distribuzione $CustomDistroName fallita."
+    }
+
+    Write-Host ""
+    Read-Host "Configurazione Linux completata. Premi INVIO per continuare con l'installazione di Docker"
+
+    $newDistros = Get-DittoWslDistributions
+    if ($newDistros -notcontains $CustomDistroName) {
+        throw "Distribuzione $CustomDistroName non trovata dopo l'installazione."
+    }
+
+    Set-DittoWslDistributionName -Name $CustomDistroName
+    return $CustomDistroName
+}
+
+function Ensure-DittoDockerInWsl {
+    param(
+        [Parameter(Mandatory=$true)][string]$DistroName,
+        [switch]$CheckOnly
+    )
+
+    if ($CheckOnly) {
+        $checkCommand = "command -v docker >/dev/null 2>&1 && (docker compose version >/dev/null 2>&1 || sudo docker compose version >/dev/null 2>&1)"
+        $check = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", $checkCommand)
+        return $check.ExitCode -eq 0
+    }
+
+$dockerInstallScript = @'
+set -e
+export DEBIAN_FRONTEND=noninteractive
+echo "[WSL] Installazione Docker: potrebbe essere richiesta la password dell'utente Linux per sudo."
+echo "[WSL] Se il setup sembra fermo, inserisci la password Linux e premi INVIO."
+echo "[WSL] La password non verra mostrata mentre scrivi: e normale."
+sudo -p "[WSL] Password Linux richiesta per sudo: " -v
+if ! command -v docker >/dev/null 2>&1; then
+    echo "[WSL] Aggiorno gli indici apt..."
+    sudo apt-get update
+    echo "[WSL] Installo dipendenze base..."
+    sudo apt-get install -y ca-certificates curl
+    echo "[WSL] Preparo repository ufficiale Docker..."
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    sudo rm -f /etc/apt/sources.list.d/docker.list
+    . /etc/os-release
+    arch=$(dpkg --print-architecture)
+    printf '%s\n' "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo "[WSL] Aggiorno gli indici apt con il repository Docker..."
+    sudo apt-get update
+    echo "[WSL] Installo Docker Engine e Compose plugin..."
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    echo "[WSL] Aggiungo l'utente corrente al gruppo docker..."
+    sudo usermod -aG docker $USER || true
+else
+    echo "[WSL] Docker e gia installato, salto l'installazione dei pacchetti."
+fi
+echo "[WSL] Avvio il servizio Docker..."
+sudo service docker start || sudo systemctl start docker || true
+echo "[WSL] Verifico che Docker risponda..."
+(docker info >/dev/null 2>&1 || sudo docker info >/dev/null 2>&1)
+(docker compose version >/dev/null 2>&1 || sudo docker compose version >/dev/null 2>&1)
+echo "[WSL] Docker pronto nella distro."
+'@
+
+    Write-DittoInfo "Installazione Docker in $DistroName (potrebbe richiedere alcuni minuti)..."
+    Write-DittoInfo "Se dopo questa riga sembra fermo, molto probabilmente WSL sta aspettando la password Linux per sudo."
+    $dockerInstallScriptBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($dockerInstallScript))
+    $bootstrapCommand = "printf '%s' $dockerInstallScriptBase64 | base64 -d | bash"
+    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", $bootstrapCommand)
+    
+    if ($result.ExitCode -ne 0) {
+        Write-DittoError "Installazione Docker fallita."
+        if ($result.Output) {
+            $result.Output | ForEach-Object { Write-Host $_ }
+        }
+        return $false
+    }
+    
+    Write-DittoOk "Docker installato in $DistroName"
+    return $true
+}
+
 function New-DittoBackendEnv {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][string]$Ip,
         [Parameter(Mandatory=$true)][hashtable]$OllamaConfig,
+        [string]$DatabaseHost = "",
         [int]$FrontendPort = $DittoDefaultFrontendPort
     )
+
+    if (-not $DatabaseHost) {
+        $DatabaseHost = Get-DittoDatabaseHost
+    }
 
     $databasePassword = -join (([guid]::NewGuid().ToString("N")), ([guid]::NewGuid().ToString("N")))
     $secretKey = -join (([guid]::NewGuid().ToString("N")), ([guid]::NewGuid().ToString("N")))
@@ -469,7 +1082,7 @@ function New-DittoBackendEnv {
     }
 
     $lines = @(
-        "DATABASE_HOST=127.0.0.1",
+        "DATABASE_HOST=$DatabaseHost",
         "DATABASE_PORT=5432",
         "DATABASE_USER=postgres",
         "DATABASE_PASSWORD=$databasePassword",
@@ -513,8 +1126,8 @@ function Get-DittoOllamaConfig {
     $envValues = Read-DittoEnvFile -Path $BackendEnvPath
     return @{
         Model = $(if ($envValues["OLLAMA_MODEL"]) { $envValues["OLLAMA_MODEL"] } else { $DittoDefaultOllamaModel })
-        BaseUrl = $(if ($envValues["OLLAMA_BASE_URL"]) { $envValues["OLLAMA_BASE_URL"] } else { $DittoDefaultOllamaBaseUrl })
-        Runtime = $(if ($envValues["OLLAMA_RUNTIME"]) { $envValues["OLLAMA_RUNTIME"] } else { "auto" })
+        BaseUrl = $DittoDefaultOllamaBaseUrl
+        Runtime = "native"
         Accelerator = $(if ($envValues["OLLAMA_ACCELERATOR"]) { $envValues["OLLAMA_ACCELERATOR"] } else { "auto" })
         NativeVulkan = $(if ($envValues["OLLAMA_NATIVE_VULKAN"]) { $envValues["OLLAMA_NATIVE_VULKAN"] } elseif ($envValues["OLLAMA_VULKAN"]) { $envValues["OLLAMA_VULKAN"] } else { "1" })
         KeepAlive = $(if ($envValues["OLLAMA_KEEP_ALIVE"]) { $envValues["OLLAMA_KEEP_ALIVE"] } else { "30m" })
@@ -531,123 +1144,96 @@ function Get-DittoOllamaRuntime {
         [switch]$CheckOnly
     )
 
-    if ($Config.Runtime -ieq "native") {
-        Ensure-DittoCommand -CommandName "ollama" -DisplayName "Ollama nativo" -PackageId "Ollama.Ollama" -CheckOnly:$CheckOnly | Out-Null
+    if (Test-DittoCommand "ollama") {
+        Write-DittoInfo "Runtime Ollama Windows: nativo."
         return @{ UseNative = $true; ComposeArgs = @("-f", "docker-compose.yml") }
     }
 
-    if ($Config.Runtime -ieq "auto" -and (Test-DittoCommand "ollama")) {
-        Write-DittoInfo "Runtime Ollama auto: uso Ollama nativo su Windows."
-        return @{ UseNative = $true; ComposeArgs = @("-f", "docker-compose.yml") }
+    if (-not (Invoke-DittoOllamaInstallScript -CheckOnly:$CheckOnly)) {
+        throw "Ollama nativo non disponibile."
+    }
+    Update-DittoPath
+    if (-not (Test-DittoCommand "ollama")) {
+        throw "Ollama risulta installato ma non e' ancora disponibile nel PATH di questa finestra."
     }
 
-    $composeArgs = @("-f", "docker-compose.yml")
-    if ($Config.Accelerator -ieq "nvidia") {
-        Write-DittoInfo "Accelerazione Ollama Docker: NVIDIA."
-        $composeArgs = @("-f", "docker-compose.yml", "-f", "docker-compose.nvidia.yml")
-    } elseif ($Config.Accelerator -ieq "amd") {
-        Write-DittoWarn "GPU AMD in Docker e' supportata soprattutto su host Linux/WSL con ROCm."
-        Write-DittoWarn "Su Windows e' consigliato Ollama nativo per usare la GPU AMD."
-        $composeArgs = @("-f", "docker-compose.yml", "-f", "docker-compose.amd.yml")
-    } else {
-        Write-DittoInfo "Runtime Ollama: Docker CPU/default."
-    }
-
-    return @{ UseNative = $false; ComposeArgs = $composeArgs }
-}
-
-function Start-DittoDockerDesktop {
-    Start-DittoDockerService | Out-Null
-
-    $candidates = @(
-        (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
-        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"),
-        (Join-Path $env:LocalAppData "Docker\Docker Desktop.exe")
-    )
-
-    foreach ($candidate in $candidates) {
-        if ($candidate -and (Test-Path $candidate)) {
-            Write-DittoInfo "Avvio Docker Desktop..."
-            Start-Process -FilePath $candidate | Out-Null
-            return $true
-        }
-    }
-
-    Write-DittoWarn "Docker Desktop non sembra installato in un percorso noto."
-    return $false
-}
-
-function Start-DittoDockerService {
-    $service = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue
-    if (-not $service) {
-        return $false
-    }
-
-    if ($service.Status -eq "Running") {
-        return $true
-    }
-
-    try {
-        Write-DittoInfo "Avvio servizio Docker Desktop..."
-        Start-Service -Name "com.docker.service"
-        return $true
-    } catch {
-        Write-DittoWarn "Non riesco ad avviare il servizio Docker Desktop automaticamente: $($_.Exception.Message)"
-        Write-DittoInfo "Se Docker Desktop mostra una richiesta di permessi, accettala e lascia aperta l'app."
-        return $false
-    }
-}
-
-function Wait-DittoDocker {
-    param([int]$TimeoutSeconds = 120)
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $nextNotice = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $deadline) {
-        $result = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("info")
-        if ($result.ExitCode -eq 0) {
-            Write-DittoOk "Docker e' pronto."
-            return $true
-        }
-        if ((Get-Date) -ge $nextNotice) {
-            Write-DittoInfo "Sto ancora aspettando Docker Desktop..."
-            $nextNotice = (Get-Date).AddSeconds(15)
-        }
-        Start-Sleep -Seconds 3
-    }
-    return $false
+    return @{ UseNative = $true; ComposeArgs = @("-f", "docker-compose.yml") }
 }
 
 function Ensure-DittoDocker {
-    param([switch]$CheckOnly)
+    param(
+        [switch]$CheckOnly
+    )
 
-    Ensure-DittoCommand -CommandName "docker" -DisplayName "Docker Desktop" -PackageId "Docker.DockerDesktop" -CheckOnly:$CheckOnly | Out-Null
-    if (-not (Test-DittoCommand "docker")) {
-        throw "Docker non disponibile."
-    }
-
-    if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: non invoco Docker Compose e non controllo il daemon."
+    $env:DITTO_DOCKER_MODE = ""
+    $direct = Test-DittoDockerDirectReady
+    if ($direct.Ready) {
+        $env:DITTO_DOCKER_MODE = "windows"
+        Write-DittoOk "Docker disponibile nel runtime Windows corrente."
         return
     }
 
-    Use-DittoWritableDockerConfig
+    $wslStatus = Get-DittoWslStatus
+    Write-DittoInfo "Stato WSL: $($wslStatus.Summary)"
 
-    $info = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("info")
-    if ($info.ExitCode -eq 0) {
-        Write-DittoOk "Docker daemon gia' attivo."
-    } else {
-        Start-DittoDockerDesktop | Out-Null
-        if (-not (Wait-DittoDocker -TimeoutSeconds 300)) {
-            throw "Docker Desktop non risponde: il motore Linux non e' raggiungibile. Lo script ha gia' provato ad avviare servizio/app e a usare un DOCKER_CONFIG temporaneo se i context utente erano bloccati. Apri Docker Desktop, attendi che dica 'Docker Desktop is running', poi rilancia lo script. Se resta bloccato, verifica WSL 2 dalle impostazioni di Docker Desktop."
+    if ($CheckOnly) {
+        $wslDocker = Test-DittoDockerInWslReady
+        Write-DittoInfo "CheckOnly: Docker Windows pronto: $($direct.Ready)"
+        Write-DittoInfo "CheckOnly: Docker via WSL pronto: $($wslDocker.Ready)"
+        if ($wslDocker.DistroName) {
+            Write-DittoInfo "CheckOnly: distribuzione WSL selezionata: $($wslDocker.DistroName)"
         }
+        return
     }
 
-    $compose = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("compose", "version")
-    if ($compose.ExitCode -ne 0) {
-        throw "Docker Compose v2 non disponibile. Aggiorna o reinstalla Docker Desktop."
+    if ($wslStatus.RebootRequired) {
+        throw "WSL richiede un riavvio di Windows prima di completare il setup Docker."
     }
-    Write-DittoOk "Docker Compose disponibile."
+
+    $distro = Ensure-DittoWslDocker
+
+    $wslDocker = Test-DittoDockerInWslReady
+    if (-not $wslDocker.Ready) {
+        throw "Docker in WSL non risponde ancora. Verifica $distro e il daemon Docker, poi rilancia lo script."
+    }
+}
+
+function Test-DittoNeedsWindowsAdminForDockerBootstrap {
+    param([switch]$CheckOnly)
+
+    if ($CheckOnly -or (Test-DittoIsAdmin)) {
+        return $false
+    }
+
+    $direct = Test-DittoDockerDirectReady
+    if ($direct.Ready) {
+        return $false
+    }
+
+    $wslStatus = Get-DittoWslStatus
+    if (-not $wslStatus.IsInstalled) {
+        return $true
+    }
+
+    if (-not $wslStatus.IsAccessible) {
+        return $true
+    }
+
+    return $false
+}
+
+function Start-DittoScriptElevated {
+    param(
+        [Parameter(Mandatory=$true)][string]$ScriptPath,
+        [string[]]$ScriptArguments = @()
+    )
+
+    $argumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ScriptPath`"")
+    foreach ($arg in $ScriptArguments) {
+        $argumentList += "`"$arg`""
+    }
+
+    Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList ($argumentList -join " ")
 }
 
 function Use-DittoWritableDockerConfig {
@@ -718,16 +1304,63 @@ function Ensure-DittoHttpsCertificate {
 function Wait-DittoPostgres {
     param([int]$MaxAttempts = 30)
 
+    Write-DittoInfo "Attendo che PostgreSQL sia pronto..."
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        $result = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("exec", "ditto_postgres", "pg_isready", "-U", "postgres")
-        if ($result.ExitCode -eq 0) {
+        $exitCode = Invoke-DittoDocker -Arguments @("exec", "ditto_postgres", "pg_isready", "-U", "postgres") -AllowFailure
+        if ($exitCode -eq 0) {
             Write-DittoOk "PostgreSQL e' pronto."
             return $true
+        }
+        if ($attempt -eq 1 -or $attempt % 5 -eq 0) {
+            Write-DittoInfo "PostgreSQL non e' ancora pronto, continuo ad aspettare..."
         }
         Start-Sleep -Seconds 2
     }
     Write-DittoWarn "PostgreSQL potrebbe non essere ancora pronto."
     return $false
+}
+
+function Wait-DittoTcpPort {
+    param(
+        [string]$TargetHost = "127.0.0.1",
+        [int]$Port,
+        [int]$MaxAttempts = 30
+    )
+
+    Write-DittoInfo "Attendo che $TargetHost`:$Port sia raggiungibile dal lato Windows..."
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $client = $null
+        try {
+            $client = [System.Net.Sockets.TcpClient]::new()
+            $asyncResult = $client.BeginConnect($TargetHost, $Port, $null, $null)
+            if ($asyncResult.AsyncWaitHandle.WaitOne(1000, $false)) {
+                $client.EndConnect($asyncResult)
+                Write-DittoOk "$TargetHost`:$Port raggiungibile."
+                return $true
+            }
+        } catch {
+        } finally {
+            if ($client) {
+                $client.Dispose()
+            }
+        }
+
+        if ($attempt -eq 1 -or $attempt % 5 -eq 0) {
+            Write-DittoInfo "La porta $TargetHost`:$Port non e ancora raggiungibile, continuo ad aspettare..."
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Write-DittoWarn "La porta $TargetHost`:$Port non risulta raggiungibile."
+    return $false
+}
+
+function Show-DittoPostgresDiagnostics {
+    param([string]$DockerDir = "")
+
+    Write-DittoWarn "Raccolgo diagnostica PostgreSQL..."
+    Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "ps") -WorkingDirectory $DockerDir -FailureMessage "Diagnostica docker compose ps fallita." -AllowFailure | Out-Null
+    Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "logs", "--tail", "120", "postgres") -WorkingDirectory $DockerDir -FailureMessage "Diagnostica log postgres fallita." -AllowFailure | Out-Null
 }
 
 function Test-DittoHttp {
@@ -750,7 +1383,12 @@ function Ensure-DittoNativeOllama {
         [switch]$CheckOnly
     )
 
-    Ensure-DittoCommand -CommandName "ollama" -DisplayName "Ollama nativo" -PackageId "Ollama.Ollama" -CheckOnly:$CheckOnly | Out-Null
+    if (-not (Test-DittoCommand "ollama")) {
+        $installed = Invoke-DittoOllamaInstallScript -CheckOnly:$CheckOnly
+        if ($installed) {
+            Update-DittoPath
+        }
+    }
     if ($CheckOnly) {
         Write-DittoInfo "CheckOnly: non avvio Ollama nativo."
         return
@@ -790,23 +1428,13 @@ function Ensure-DittoOllamaModel {
     }
 
     Write-DittoInfo "Preparazione modello AI: $($Config.Model)"
-    if ($Runtime.UseNative) {
-        Ensure-DittoNativeOllama -Config $Config
-        $models = @(ollama list 2>$null)
-        if (-not ($models | Select-String -SimpleMatch $Config.Model)) {
-            Write-DittoInfo "Modello non trovato in Ollama nativo. Avvio pull..."
-            Invoke-DittoToolChecked -FilePath "ollama" -Arguments @("pull", $Config.Model) -FailureMessage "Pull modello Ollama nativo fallito."
-        }
-        Write-DittoOk "Modello $($Config.Model) pronto su Ollama nativo."
-    } else {
-        $modelResult = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("exec", "ditto_ollama", "ollama", "list")
-        $models = @($modelResult.Output)
-        if (-not ($models | Select-String -SimpleMatch $Config.Model)) {
-            Write-DittoInfo "Modello non trovato nel container Ollama. Avvio pull..."
-            Invoke-DittoDocker -Arguments @("exec", "ditto_ollama", "ollama", "pull", $Config.Model) -FailureMessage "Pull modello Ollama container fallito."
-        }
-        Write-DittoOk "Modello $($Config.Model) pronto nel container."
+    Ensure-DittoNativeOllama -Config $Config
+    $models = @(ollama list 2>$null)
+    if (-not ($models | Select-String -SimpleMatch $Config.Model)) {
+        Write-DittoInfo "Modello non trovato in Ollama nativo. Inizio download con ollama pull..."
+        Invoke-DittoToolChecked -FilePath "ollama" -Arguments @("pull", $Config.Model) -FailureMessage "Pull modello Ollama nativo fallito."
     }
+    Write-DittoOk "Modello $($Config.Model) pronto su Ollama nativo."
 }
 
 function Invoke-DittoOllamaWarmup {
@@ -885,7 +1513,7 @@ function Ensure-DittoBackendDependencies {
     Ensure-DittoPipCurrent -VenvPython $venvPython -BackendDir $BackendDir
 
     if (Test-Path (Join-Path $BackendDir "requirements.txt")) {
-        Write-DittoInfo "Installo dipendenze Python da requirements.txt..."
+        Write-DittoInfo "Installo dipendenze Python del backend da requirements.txt. Questa fase puo' richiedere un po' di tempo..."
         Invoke-DittoToolChecked -FilePath $venvPython -Arguments @("-m", "pip", "install", "-r", "requirements.txt", "--quiet") -WorkingDirectory $BackendDir -FailureMessage "Installazione dipendenze Python fallita."
     } else {
         Write-DittoWarn "requirements.txt non trovato, installo dipendenze base."
@@ -962,11 +1590,40 @@ function Ensure-DittoFrontendDependencies {
     }
 
     if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
-        Write-DittoInfo "Installo dipendenze Node.js..."
+        Write-DittoInfo "Installo dipendenze Node.js del frontend. Questa fase puo' richiedere qualche minuto..."
         Invoke-DittoToolChecked -FilePath "npm" -Arguments @("install") -WorkingDirectory $FrontendDir -FailureMessage "Installazione dipendenze frontend fallita."
     } else {
         Write-DittoOk "Dipendenze Node.js gia' installate."
     }
+}
+
+function Test-DittoPiperVoiceModelPresent {
+    param([Parameter(Mandatory=$true)][string]$BackendDir)
+
+    $modelPath = Join-Path $BackendDir "app\services\voice_models\$DittoPiperDefaultVoiceModelFilename"
+    $configPath = Join-Path $BackendDir "app\services\voice_models\$DittoPiperDefaultVoiceConfigFilename"
+    return (Test-Path $modelPath) -and (Test-Path $configPath)
+}
+
+function Ensure-DittoPiperVoiceModel {
+    param(
+        [Parameter(Mandatory=$true)][string]$RootDir,
+        [Parameter(Mandatory=$true)][string]$BackendDir,
+        [switch]$CheckOnly
+    )
+
+    if (Test-DittoPiperVoiceModelPresent -BackendDir $BackendDir) {
+        Write-DittoOk "Modello Piper gia' presente."
+        return
+    }
+
+    if ($CheckOnly) {
+        Write-DittoInfo "CheckOnly: modello Piper presente: False"
+        return
+    }
+
+    Write-DittoInfo "Preparo voce Piper predefinita..."
+    Invoke-DittoToolChecked -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $RootDir "scripts\windows\prepare_piper_model.ps1")) -FailureMessage "Preparazione modello Piper fallita."
 }
 
 function Start-DittoCmdWindow {

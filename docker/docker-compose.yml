@@ -9,7 +9,7 @@ services:
       TZ: Europe/Rome
       PGTZ: Europe/Rome
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${DITTO_POSTGRES_PORT_MAPPING:-127.0.0.1:5432:5432}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -20,26 +20,12 @@ services:
     image: adminer
     container_name: ditto_adminer
     ports:
-      - "127.0.0.1:8080:8080"
-    networks:
-      - ditto_network
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ditto_ollama
-    ports:
-      - "127.0.0.1:11434:11434"
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-      - TZ=Europe/Rome
-    volumes:
-      - ollama_data:/root/.ollama
+      - "${DITTO_ADMINER_PORT_MAPPING:-127.0.0.1:8080:8080}"
     networks:
       - ditto_network
 
 volumes:
   postgres_data:
-  ollama_data:
 
 networks:
   ditto_network:
