@@ -105,3 +105,15 @@ class QuickActionResponse(BaseModel):
     feedback_status: FeedbackStatus
     message: str
     timestamp: datetime
+
+
+class PendingQuickActionResponse(BaseModel):
+    interaction_id: int
+    action_type: QuickActionType
+    priority: InteractionPriority
+    feedback_status: FeedbackStatus
+    message: str
+    timestamp: datetime
+    resolved_by_user_id: Optional[int] = None
+    resolved_by_user_name: Optional[str] = None
+    resolution_timestamp: Optional[datetime] = None

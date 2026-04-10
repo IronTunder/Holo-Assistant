@@ -3,7 +3,7 @@ import { AlertTriangle, Mic, MicOff, Radio, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { StartupChecklistDialog } from './StartupChecklistDialog';
-import { useAuth, type AuthMachine } from '@/shared/auth/AuthContext';
+import { useAuth } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
 import { API_ENDPOINTS } from '@/shared/api/config';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -50,6 +50,18 @@ type QuickActionApiResponse = {
   feedback_status: InteractionFeedbackStatus;
   message: string;
   timestamp: string;
+};
+
+type PendingQuickActionApiResponse = {
+  interaction_id: number;
+  action_type: QuickActionType;
+  priority: 'normal' | 'critical';
+  feedback_status: InteractionFeedbackStatus;
+  message: string;
+  timestamp: string;
+  resolved_by_user_id?: number | null;
+  resolved_by_user_name?: string | null;
+  resolution_timestamp?: string | null;
 };
 
 type PendingResolution = {
@@ -106,23 +118,23 @@ const quickActionSubtitleStyles: Record<QuickActionType, string> = {
 function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
   switch (status) {
     case 'loading-model':
-      return 'Caricamento wake word';
+      return 'Caricamento';
     case 'requesting-microphone':
       return 'Permesso microfono';
     case 'wake-listening':
-      return 'Wake word attivo';
+      return 'In attesa';
     case 'command-listening':
-      return 'In ascolto domanda';
+      return 'In ascolto';
     case 'error':
       if (error?.toLowerCase().includes('microfono')) {
         return 'Microfono non disponibile';
       }
-      return error ? 'Wake word non disponibile' : 'Errore wake word';
+      return error ? 'Non disponibile' : 'Errore';
     case 'ready':
-      return 'Wake word in pausa';
+      return 'In pausa';
     case 'disabled':
     default:
-      return 'Wake word disattivato';
+      return 'Non disponibile';
   }
 }
 
@@ -132,6 +144,47 @@ function isWakeWordActive(status: VoskWakeWordStatus): boolean {
 
 function shouldAutoMarkAsNotApplicable(response: AskQuestionApiResponse): boolean {
   return response.mode === 'fallback' || response.reason_code === 'out_of_scope' || response.reason_code === 'no_match';
+}
+
+function getApiErrorMessage(errorPayload: unknown, fallbackMessage: string): string {
+  if (
+    errorPayload &&
+    typeof errorPayload === 'object' &&
+    'detail' in errorPayload
+  ) {
+    const detail = (errorPayload as { detail?: unknown }).detail;
+    if (typeof detail === 'string') {
+      return detail;
+    }
+    if (
+      detail &&
+      typeof detail === 'object' &&
+      'message' in detail &&
+      typeof (detail as { message?: unknown }).message === 'string'
+    ) {
+      return (detail as { message: string }).message;
+    }
+  }
+
+  return fallbackMessage;
+}
+
+function buildPendingResolutionState(
+  actionType: QuickActionType,
+  fallbackMessage?: string,
+  resolvedByName?: string | null,
+  resolutionTimestamp?: string | null
+): PendingResolution {
+  return {
+    interactionId: 0,
+    message:
+      fallbackMessage ||
+      (actionType === 'emergency'
+        ? 'Emergenza aperta: attendi il tecnico e conferma la risoluzione dopo l intervento.'
+        : 'Richiesta manutenzione aperta: il tecnico potra confermare la risoluzione da questa postazione.'),
+    resolvedByName,
+    resolutionTimestamp,
+  };
 }
 
 export function OperatorInterface() {
@@ -169,15 +222,10 @@ export function OperatorInterface() {
   const [technicianUsername, setTechnicianUsername] = useState('');
   const [technicianPassword, setTechnicianPassword] = useState('');
   const [isResolvingInteraction, setIsResolvingInteraction] = useState(false);
+  const [isLoadingPendingQuickAction, setIsLoadingPendingQuickAction] = useState(false);
   const activeInteractionIdRef = useRef<number | null>(null);
   const [showStartupChecklist, setShowStartupChecklist] = useState(false);
   const [startupChecklistCompleted, setStartupChecklistCompleted] = useState(false);
-  const [pendingLoginData, setPendingLoginData] = useState<{
-    access_token: string;
-    user: { id: number; nome: string; badge_id: string; livello_esperienza: string; department_id: number | null; department_name: string | null; reparto: string; turno: string; created_at: string };
-    machine: AuthMachine;
-    expires_in: number;
-  } | null>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
   const pollingInFlightRef = useRef(false);
   const mountedAtRef = useRef<number>(Date.now());
@@ -195,6 +243,44 @@ export function OperatorInterface() {
       setShowStartupChecklist(true);
     }
   }, [isLoggedIn, isAdmin, machine, startupChecklistCompleted]);
+
+  useEffect(() => {
+    const fetchPendingQuickAction = async () => {
+      if (!isLoggedIn || isAdmin || !machine || !accessToken) {
+        setPendingResolution(null);
+        return;
+      }
+
+      setIsLoadingPendingQuickAction(true);
+      try {
+        const response = await fetch(API_ENDPOINTS.INTERACTION_PENDING_QUICK_ACTION(machine.id), {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.status === 404 || response.status === 204) {
+          setPendingResolution(null);
+          return;
+        }
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(getApiErrorMessage(error, 'Errore nel recupero della segnalazione aperta'));
+        }
+
+        const data = (await response.json()) as PendingQuickActionApiResponse | null;
+        syncPendingResolution(data);
+      } catch (error) {
+        console.error('Errore caricamento segnalazione aperta:', error);
+      } finally {
+        setIsLoadingPendingQuickAction(false);
+      }
+    };
+
+    void fetchPendingQuickAction();
+  }, [isLoggedIn, isAdmin, machine, accessToken]);
 
   const dismissLogoutMessage = () => {
     if (logoutMessageTimeoutRef.current !== null) {
@@ -220,6 +306,31 @@ export function OperatorInterface() {
     setTechnicianUsername('');
     setTechnicianPassword('');
     setIsResolvingInteraction(false);
+  };
+
+  const assistantBusy =
+    loading ||
+    isTyping ||
+    isSubmittingFeedback ||
+    isResolvingInteraction ||
+    isLoadingPendingQuickAction ||
+    Boolean(quickActionInFlight) ||
+    avatarState === 'thinking' ||
+    avatarState === 'speaking';
+  const hasOpenTechnicianRequest = Boolean(pendingResolution && !pendingResolution.resolvedByName);
+
+  const syncPendingResolution = (pendingQuickAction: PendingQuickActionApiResponse | null) => {
+    if (!pendingQuickAction || pendingQuickAction.feedback_status !== 'unresolved') {
+      setPendingResolution(null);
+      return;
+    }
+
+    setPendingResolution({
+      interactionId: pendingQuickAction.interaction_id,
+      message: pendingQuickAction.message,
+      resolvedByName: pendingQuickAction.resolved_by_user_name ?? null,
+      resolutionTimestamp: pendingQuickAction.resolution_timestamp ?? null,
+    });
   };
 
   useEffect(() => {
@@ -617,8 +728,8 @@ export function OperatorInterface() {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Errore nel salvataggio del feedback');
+      const error = await response.json().catch(() => null);
+      throw new Error(getApiErrorMessage(error, 'Errore nel salvataggio del feedback'));
     }
   };
 
@@ -640,8 +751,8 @@ export function OperatorInterface() {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Errore nella conferma della risoluzione');
+      const error = await response.json().catch(() => null);
+      throw new Error(getApiErrorMessage(error, 'Errore nella conferma della risoluzione'));
     }
 
     return (await response.json()) as InteractionResolutionResponse;
@@ -689,7 +800,7 @@ export function OperatorInterface() {
   };
 
   const submitQuestion = async (userQuestion: string, selectedKnowledgeItemId?: number) => {
-    if (!user || !machine || !accessToken) {
+    if (!user || !machine || !accessToken || assistantBusy || hasOpenTechnicianRequest) {
       return;
     }
 
@@ -714,8 +825,8 @@ export function OperatorInterface() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Errore nel processamento della domanda');
+        const error = await response.json().catch(() => null);
+        throw new Error(getApiErrorMessage(error, 'Errore nel processamento della domanda'));
       }
 
       const data = (await response.json()) as AskQuestionApiResponse;
@@ -807,6 +918,10 @@ export function OperatorInterface() {
   };
 
   const handleQuestionSubmit = async () => {
+    if (assistantBusy) {
+      return;
+    }
+
     if (questionInput.trim() && user && machine) {
       const userQuestion = questionInput.trim();
       setQuestionInput('');
@@ -875,7 +990,7 @@ export function OperatorInterface() {
   };
 
   const submitQuickAction = async (actionType: QuickActionType) => {
-    if (!user || !machine || !accessToken || quickActionInFlight || isTyping || avatarState === 'speaking' || avatarState === 'thinking') {
+    if (!user || !machine || !accessToken || assistantBusy || pendingResolution) {
       return;
     }
 
@@ -898,16 +1013,32 @@ export function OperatorInterface() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Errore durante l invio della segnalazione');
+        const error = await response.json().catch(() => null);
+
+        if (
+          response.status === 409 &&
+          error &&
+          typeof error === 'object' &&
+          'detail' in error &&
+          (error as { detail?: unknown }).detail &&
+          typeof (error as { detail?: unknown }).detail === 'object'
+        ) {
+          const detail = (error as { detail: { interaction_id?: number; action_type?: QuickActionType; message?: string } }).detail;
+          if (detail.interaction_id && detail.action_type) {
+            setPendingResolution({
+              interactionId: detail.interaction_id,
+              message: detail.message || buildPendingResolutionState(detail.action_type).message,
+            });
+          }
+        }
+
+        throw new Error(getApiErrorMessage(error, 'Errore durante l invio della segnalazione'));
       }
 
       const data = (await response.json()) as QuickActionApiResponse;
       setPendingResolution({
         interactionId: data.interaction_id,
-        message: actionType === 'emergency'
-          ? 'Emergenza aperta: attendi il tecnico e conferma la risoluzione dopo l intervento.'
-          : 'Richiesta manutenzione aperta: il tecnico potra confermare la risoluzione da questa postazione.',
+        message: buildPendingResolutionState(actionType).message,
       });
       resetResolutionForm();
       await playAssistantMessage(data.message || quickActionFallbackMessages[actionType]);
@@ -923,7 +1054,7 @@ export function OperatorInterface() {
   };
 
   const handleFollowUpResponse = async (feedbackStatus: InteractionFeedbackStatus) => {
-    if (!activeInteractionId || !accessToken || isSubmittingFeedback) {
+    if (!activeInteractionId || !accessToken || assistantBusy) {
       return;
     }
 
@@ -977,7 +1108,7 @@ export function OperatorInterface() {
   };
 
   const handleTechnicianCredentialsResolution = async () => {
-    if (!pendingResolution || !accessToken || isResolvingInteraction) {
+    if (!pendingResolution || !accessToken || assistantBusy) {
       return;
     }
     if (!technicianUsername.trim() || !technicianPassword) {
@@ -1011,7 +1142,7 @@ export function OperatorInterface() {
   };
 
   const handleClarificationSelection = async (knowledgeItemId: number) => {
-    if (!pendingQuestion) {
+    if (!pendingQuestion || assistantBusy) {
       return;
     }
     await submitQuestion(pendingQuestion, knowledgeItemId);
@@ -1049,17 +1180,16 @@ export function OperatorInterface() {
     });
   };
 
-  const wakeWordAutomaticallyPaused = loading || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+  const wakeWordAutomaticallyPaused = assistantBusy || hasOpenTechnicianRequest;
   const wakeWordPaused = wakeWordMuted || wakeWordAutomaticallyPaused;
   const {
     status: wakeWordStatus,
     partialTranscript: voicePartialTranscript,
-    lastTranscript: voiceLastTranscript,
     error: wakeWordError,
   } = useVoskWakeWord({
     enabled: isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine),
     paused: wakeWordPaused,
-    wakePhrase: 'Holo',
+    wakePhrase: 'ehi holo',
     modelUrl: VOSK_MODEL_URL,
     onWake: () => {
       setAvatarState('listening');
@@ -1084,11 +1214,10 @@ export function OperatorInterface() {
   const wakeWordActive = isWakeWordActive(wakeWordStatus);
   const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
   const canToggleWakeWord = isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine);
-  const voiceDebugTranscript = voicePartialTranscript || voiceLastTranscript;
-  const quickActionsDisabled = Boolean(quickActionInFlight) || isTyping || avatarState === 'thinking' || avatarState === 'speaking';
+  const quickActionsDisabled = assistantBusy || hasOpenTechnicianRequest;
 
   return (
-    <div className="relative min-h-[100dvh] overflow-x-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <div className="relative h-[100dvh] max-h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
       {/* Logout notification */}
       {logoutMessage && (
         <div
@@ -1129,82 +1258,37 @@ export function OperatorInterface() {
         }}></div>
       </div>
 
-      <div className="relative z-10 flex min-h-[100dvh] flex-col">
-        <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
+      <div className="relative z-10 flex h-full min-h-0 flex-col">
+        <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-2 backdrop-blur-sm sm:px-6 sm:py-2.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">
+              <h1 className="text-lg font-bold sm:text-xl">
                 <span className="text-blue-400">Holo-Assistant</span>
               </h1>
-              {machine ? (
-                <p className="mt-1 truncate text-sm text-slate-300">
-                  Postazione: {machine.nome} - {machine.id_postazione}
-                </p>
-              ) : (
-                <p className="mt-1 text-sm text-slate-400">
-                  Seleziona una postazione per iniziare la sessione operatore.
-                </p>
-              )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-3">
-              <div
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${
-                  wakeWordStatus === 'error'
-                    ? 'border-red-400/30 bg-red-500/10 text-red-100'
-                    : wakeWordMuted
-                      ? 'border-slate-400/20 bg-slate-500/10 text-slate-200'
-                    : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
-                }`}
-                title={wakeWordError || 'Il browser chiedera il permesso microfono al primo avvio.'}
-              >
-                <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-500'}`} />
-                <span>{wakeWordMuted ? 'Wake word mutato' : wakeWordLabel}</span>
-              </div>
-
-              {canToggleWakeWord && (
-                <button
-                  type="button"
-                  onClick={() => setWakeWordMuted((current) => !current)}
-                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${
-                    wakeWordMuted
-                      ? 'border-blue-400/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20'
-                      : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'
-                  }`}
-                  aria-pressed={wakeWordMuted}
-                  title={wakeWordMuted ? 'Riattiva ascolto wake word' : 'Metti in pausa la wake word'}
-                >
-                  {wakeWordMuted ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-                  <span>{wakeWordMuted ? 'Riattiva wake word' : 'Muta wake word'}</span>
-                </button>
-              )}
-
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {isLoggedIn && user && (
-                <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                  <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Operatore</p>
-                    <p className="truncate font-semibold text-white">{user.nome}</p>
-                    <p className="truncate text-xs text-slate-400">{user.livello_esperienza} - {user.turno}</p>
-                  </div>
-                  <button
-                    onClick={handleLogout}
-                    disabled={isTyping || avatarState === 'speaking'}
-                    className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${isTyping || avatarState === 'speaking' ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
-                  >
-                    Logout
-                  </button>
-                </div>
+                <button
+                  onClick={handleLogout}
+                  disabled={assistantBusy}
+                  className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${assistantBusy ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
+                >
+                  Logout
+                </button>
               )}
             </div>
           </div>
         </header>
 
-        <main className="flex-1 px-3 py-3 sm:px-6 sm:py-5">
+        <main className="flex-1 min-h-0 overflow-hidden px-3 py-3 sm:px-6 sm:py-5">
           {!isLoggedIn ? (
-            <BadgeReader
-              onBadgeDetected={handleBadgeLogin}
-              onCredentialsLogin={handleCredentialsLogin}
-            />
+            <div className="h-full min-h-0 overflow-hidden">
+              <BadgeReader
+                onBadgeDetected={handleBadgeLogin}
+                onCredentialsLogin={handleCredentialsLogin}
+              />
+            </div>
           ) : loading ? (
             <div className="flex h-full items-center justify-center rounded-[28px] border border-white/10 bg-slate-950/20 backdrop-blur-sm">
               <div className="flex flex-col items-center gap-4">
@@ -1213,59 +1297,89 @@ export function OperatorInterface() {
               </div>
             </div>
           ) : (
-            <div className="grid gap-4 md:min-h-0 md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)]">
-              <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 backdrop-blur-sm sm:min-h-[340px] sm:p-6 md:min-h-0">
-                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 text-center">
-                  <AvatarDisplay ref={avatarDisplayRef} state={avatarState} />
-
-                  <div className="space-y-3">
-                    <div className="inline-flex flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm text-slate-100">
-                  {avatarState === 'idle' && (
-                    <>
-                          <div className="h-3 w-3 rounded-full bg-green-400 animate-pulse"></div>
-                      <span>In attesa - Di' "Holo" per iniziare</span>
-                    </>
-                  )}
-                  {avatarState === 'listening' && (
-                    <>
-                          <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
-                      <span>{voicePartialTranscript || 'In ascolto...'}</span>
-                    </>
-                  )}
-                  {avatarState === 'thinking' && (
-                    <>
-                      <div className="flex gap-1">
-                            <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce"></div>
-                            <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                            <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+            <div className="grid h-full min-h-0 gap-4 overflow-hidden grid-rows-[minmax(14rem,0.8fr)_minmax(0,1.2fr)] md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)] md:grid-rows-1">
+              <section className="flex min-h-0 overflow-hidden">
+                <div className="flex min-h-0 flex-1 items-center justify-center">
+                  <AvatarDisplay
+                    ref={avatarDisplayRef}
+                    state={avatarState}
+                    overlay={
+                      <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-slate-950/68 px-4 py-2 text-center text-sm text-slate-100 backdrop-blur-md">
+                        {avatarState === 'idle' && (
+                          <>
+                            <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-400'}`} />
+                            <span>
+                              {wakeWordMuted ? 'In pausa' : wakeWordLabel}
+                              {!wakeWordMuted && wakeWordStatus === 'wake-listening' ? ' - Di\' "ehi holo" per iniziare' : ''}
+                            </span>
+                            {canToggleWakeWord && (
+                              <button
+                                type="button"
+                                onClick={() => setWakeWordMuted((current) => !current)}
+                                className={`pointer-events-auto inline-flex items-center justify-center rounded-full border p-1 transition-colors ${
+                                  wakeWordMuted
+                                    ? 'border-blue-400/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20'
+                                    : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'
+                                }`}
+                                aria-pressed={wakeWordMuted}
+                                title={wakeWordMuted ? 'Riattiva ascolto wake word' : 'Metti in pausa la wake word'}
+                              >
+                                {wakeWordMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {avatarState === 'listening' && (
+                          <>
+                            <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
+                            <span>{voicePartialTranscript || 'In ascolto...'}</span>
+                          </>
+                        )}
+                        {avatarState === 'thinking' && (
+                          <>
+                            <div className="flex gap-1">
+                              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" />
+                              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.1s' }} />
+                              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.2s' }} />
+                            </div>
+                            <span>Elaborazione in corso...</span>
+                          </>
+                        )}
+                        {avatarState === 'speaking' && (
+                          <>
+                            <div className="h-3 w-3 rounded-full bg-violet-400 animate-pulse" />
+                            <span>Risposta in corso...</span>
+                          </>
+                        )}
                       </div>
-                      <span>Elaborazione in corso...</span>
-                    </>
-                  )}
-                  {avatarState === 'speaking' && (
-                    <>
-                          <div className="h-3 w-3 rounded-full bg-violet-400 animate-pulse"></div>
-                      <span>Risposta in corso...</span>
-                    </>
-                  )}
-                    </div>
-                  </div>
+                    }
+                  />
                 </div>
               </section>
 
-              <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm md:min-h-0">
+              <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
                 <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
-                  <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
-                  <h2 className="mt-1 text-lg font-semibold text-white">Domande, risposte e azioni rapide</h2>
-                  <p className="mt-1 text-sm text-slate-400">
-                      Scrivi o pronuncia le tue domande tecniche. L'assistente fornirà risposte dettagliate, suggerimenti e procedure guidate per aiutarti a risolvere i problemi senza dover consultare manuali o cercare online.
-                  </p>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                    <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
+                    {machine ? (
+                      <p className="truncate text-sm text-slate-300">
+                        Postazione: {machine.nome} - {machine.id_postazione}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-400">Seleziona una postazione per iniziare la sessione operatore.</p>
+                    )}
+                    {user ? (
+                      <p className="truncate text-sm text-slate-300">
+                        Operatore: {user.nome}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
 
-                <div className="flex-1 px-4 py-4 sm:px-5 md:min-h-0">
+                <div className="flex-1 min-h-0 overflow-hidden px-4 py-4 sm:px-5">
                   <ScrollArea className="h-full md:pr-3">
                     <div className="space-y-4">
-                      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex max-h-[min(36dvh,20rem)] min-h-[7.5rem] flex-col rounded-2xl border border-white/10 bg-white/5 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <h3 className="text-sm font-semibold text-slate-200">Risposta assistente</h3>
                           {isTyping && (
@@ -1277,10 +1391,12 @@ export function OperatorInterface() {
 
                         {currentTranscription ? (
                           <>
-                          <div className="mt-3 break-words whitespace-pre-line text-sm leading-6 text-slate-100">
-                              {currentTranscription}
-                              {isTyping && <span className="animate-pulse">|</span>}
-                            </div>
+                            <ScrollArea className="mt-3 min-h-0 flex-1 pr-2">
+                              <div className="break-words whitespace-pre-line text-sm leading-6 text-slate-100">
+                                {currentTranscription}
+                                {isTyping && <span className="animate-pulse">|</span>}
+                              </div>
+                            </ScrollArea>
                             {!isTyping && fallbackReasonCode === 'out_of_scope' && (
                               <p className="mt-3 text-xs text-amber-200">
                                 Richiesta fuori ambito: posso aiutarti solo con macchine, sicurezza e procedure di reparto.
@@ -1308,7 +1424,7 @@ export function OperatorInterface() {
                                 key={option.knowledge_item_id}
                                 type="button"
                                 onClick={() => handleClarificationSelection(option.knowledge_item_id)}
-                                disabled={isTyping}
+                                disabled={assistantBusy}
                                 className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-slate-100 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 {option.label}
@@ -1324,21 +1440,21 @@ export function OperatorInterface() {
                           <div className="mt-4 flex flex-wrap justify-center gap-3">
                             <button
                               onClick={() => void handleFollowUpResponse('resolved')}
-                              disabled={isSubmittingFeedback}
+                              disabled={assistantBusy}
                               className="rounded-xl bg-green-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               Si
                             </button>
                             <button
                               onClick={() => void handleFollowUpResponse('unresolved')}
-                              disabled={isSubmittingFeedback}
+                              disabled={assistantBusy}
                               className="rounded-xl bg-red-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               No
                             </button>
                             <button
                               onClick={() => void handleFollowUpResponse('not_applicable')}
-                              disabled={isSubmittingFeedback}
+                              disabled={assistantBusy}
                               className="rounded-xl bg-slate-500 px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               Non rilevante
@@ -1370,6 +1486,7 @@ export function OperatorInterface() {
                                   value={resolutionNote}
                                   onChange={(event) => setResolutionNote(event.target.value)}
                                   placeholder="Nota tecnica opzionale..."
+                                  disabled={assistantBusy}
                                   className="min-h-24 w-full resize-none rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
                                 />
 
@@ -1380,6 +1497,7 @@ export function OperatorInterface() {
                                       value={technicianUsername}
                                       onChange={(event) => setTechnicianUsername(event.target.value)}
                                       placeholder="Nome tecnico"
+                                      disabled={assistantBusy}
                                       className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
                                     />
                                     <input
@@ -1387,13 +1505,14 @@ export function OperatorInterface() {
                                       value={technicianPassword}
                                       onChange={(event) => setTechnicianPassword(event.target.value)}
                                       placeholder="Password tecnico"
+                                      disabled={assistantBusy}
                                       className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
                                     />
                                   </div>
                                   <button
                                     type="button"
                                     onClick={() => void handleTechnicianCredentialsResolution()}
-                                    disabled={isResolvingInteraction}
+                                    disabled={assistantBusy}
                                     className="rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     Conferma con login
@@ -1427,7 +1546,7 @@ export function OperatorInterface() {
                                 <button
                                   type="button"
                                   onClick={() => setShowEmergencyConfirmation(false)}
-                                  disabled={Boolean(quickActionInFlight)}
+                                  disabled={assistantBusy}
                                   className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   Annulla
@@ -1459,17 +1578,17 @@ export function OperatorInterface() {
                           }
                         }}
                         placeholder="Scrivi la tua domanda..."
-                        disabled={isTyping}
+                        disabled={assistantBusy || Boolean(pendingResolution)}
                         className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !isTyping) {
+                          if (e.key === 'Enter' && !assistantBusy && !pendingResolution) {
                             void handleQuestionSubmit();
                           }
                         }}
                       />
                       <button
                         onClick={handleQuestionSubmit}
-                        disabled={isTyping || !questionInput.trim()}
+                        disabled={assistantBusy || Boolean(pendingResolution) || !questionInput.trim()}
                         className="w-full rounded-xl bg-blue-500 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600 sm:w-auto"
                       >
                         Invia

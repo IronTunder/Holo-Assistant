@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import type { ReactNode } from 'react';
 import { motion } from 'motion/react';
 import type { TalkingHead } from '@met4citizen/talkinghead';
 
@@ -18,6 +19,7 @@ import {
 
 interface AvatarDisplayProps {
   state: AvatarState;
+  overlay?: ReactNode;
 }
 
 export type AvatarDisplayHandle = {
@@ -105,7 +107,7 @@ function disposeTalkingHeadSafely(head: TalkingHead | null): void {
 }
 
 export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>(
-  function AvatarDisplay({ state }, ref) {
+  function AvatarDisplay({ state, overlay }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const headRef = useRef<TalkingHead | null>(null);
     const stateRef = useRef<AvatarState>(state);
@@ -287,68 +289,79 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
         initial={{ scale: 0.82, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.45 }}
-        className="relative"
+        className="relative flex h-full w-full items-center justify-center"
       >
-        <div className={`absolute inset-0 rounded-full blur-3xl transition-all duration-500 ${getGlowClass(state)}`} />
+        <div className={`absolute inset-[30%_20%] blur-3xl transition-all duration-500 ${getGlowClass(state)}`} />
 
-        <div className="relative flex h-80 w-80 items-center justify-center overflow-hidden rounded-full border-4 border-white/20 bg-gradient-to-br from-slate-900/85 via-slate-800/70 to-slate-950/90 backdrop-blur-sm">
-          <div
-            ref={containerRef}
-            className={`h-full w-full transition-opacity duration-500 ${showOverlay ? 'opacity-0' : 'opacity-100'}`}
-          />
+        <div className="relative h-full max-h-full w-full max-w-full">
+          <div className="pointer-events-none absolute inset-x-[30%] top-[40%] h-[22%] rounded-full bg-[radial-gradient(circle_at_50%_50%,rgba(125,211,252,0.07),rgba(14,165,233,0.015)_45%,transparent_72%)]" />
+          <div className="pointer-events-none absolute inset-x-[18%] bottom-[10%] h-[14%] rounded-full bg-[radial-gradient(circle_at_50%_50%,rgba(56,189,248,0.06),rgba(8,47,73,0.02)_58%,transparent_78%)] blur-xl" />
 
-          {showOverlay && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-8 text-center">
-              {!isActivated ? (
-                <>
-                  <div className="flex h-24 w-24 items-center justify-center rounded-full border border-cyan-400/40 bg-cyan-500/10">
-                    <div className="h-12 w-12 rounded-full border-2 border-cyan-300/70" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-cyan-100">Attiva l'ologramma</p>
-                    <p className="mt-1 text-sm text-cyan-100/75">Tocca o premi un tasto per inizializzare audio e avatar</p>
-                  </div>
-                </>
-              ) : errorMessage ? (
-                <>
-                  <div className="flex h-24 w-24 items-center justify-center rounded-full border border-red-400/40 bg-red-500/10">
-                    <div className="h-12 w-12 rounded-full border-2 border-red-300/70" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-red-100">Avatar non disponibile</p>
-                    <p className="mt-1 text-sm text-red-200/80">{errorMessage}</p>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="h-16 w-16 rounded-full border-4 border-blue-300/30 border-t-blue-300 animate-spin" />
-                  <div>
-                    <p className="font-semibold text-white">Caricamento ologramma</p>
-                    <p className="mt-1 text-sm text-slate-300">
-                      {loadProgress > 0 ? `${loadProgress}%` : 'Preparazione scena'}
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
+            <div
+              ref={containerRef}
+              className={`h-full w-full scale-[1.02] translate-y-[1.5%] transition-opacity duration-500 ${showOverlay ? 'opacity-0' : 'opacity-100'}`}
+            />
 
-          {state === 'speaking' && !showOverlay && (
-            <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-1">
-              {[...Array(5)].map((_, index) => (
-                <motion.div
-                  key={index}
-                  className="w-1 rounded-full bg-white/80"
-                  animate={{ height: [8, 22, 8] }}
-                  transition={{
-                    duration: 0.5,
-                    repeat: Infinity,
-                    delay: index * 0.08,
-                  }}
-                />
-              ))}
-            </div>
-          )}
+            {showOverlay && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-8 text-center">
+                {!isActivated ? (
+                  <>
+                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-cyan-400/30 bg-cyan-500/10">
+                      <div className="h-12 w-12 rounded-full border-2 border-cyan-300/70" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-cyan-100">Attiva l'ologramma</p>
+                      <p className="mt-1 text-sm text-cyan-100/75">Tocca o premi un tasto per inizializzare audio e avatar</p>
+                    </div>
+                  </>
+                ) : errorMessage ? (
+                  <>
+                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-red-400/40 bg-red-500/10">
+                      <div className="h-12 w-12 rounded-full border-2 border-red-300/70" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-red-100">Avatar non disponibile</p>
+                      <p className="mt-1 text-sm text-red-200/80">{errorMessage}</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-16 w-16 rounded-full border-4 border-blue-300/30 border-t-blue-300 animate-spin" />
+                    <div>
+                      <p className="font-semibold text-white">Caricamento ologramma</p>
+                      <p className="mt-1 text-sm text-slate-300">
+                        {loadProgress > 0 ? `${loadProgress}%` : 'Preparazione scena'}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {state === 'speaking' && !showOverlay && (
+              <div className="pointer-events-none absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-1">
+                {[...Array(5)].map((_, index) => (
+                  <motion.div
+                    key={index}
+                    className="w-1 rounded-full bg-white/80"
+                    animate={{ height: [8, 22, 8] }}
+                    transition={{
+                      duration: 0.5,
+                      repeat: Infinity,
+                      delay: index * 0.08,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {overlay ? (
+              <div className="pointer-events-none absolute inset-x-4 bottom-[6%] z-10 flex justify-center">
+                {overlay}
+              </div>
+            ) : null}
+          </div>
         </div>
       </motion.div>
     );

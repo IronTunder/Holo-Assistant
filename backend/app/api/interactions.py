@@ -19,6 +19,7 @@ from app.schemas.interaction import (
     InteractionFeedbackResponse,
     InteractionResolutionRequest,
     InteractionResolutionResponse,
+    PendingQuickActionResponse,
     QuickActionRequest,
     QuickActionResponse,
 )
@@ -96,6 +97,51 @@ def _build_interaction_event_payload(interaction: InteractionLog) -> dict:
 
 def _is_technician(user: User) -> bool:
     return user_has_permission(user, "interactions.resolve")
+
+
+def _get_open_quick_action(
+    db: Session,
+    user_id: int,
+    machine_id: int,
+) -> InteractionLog | None:
+    return (
+        db.query(InteractionLog)
+        .options(
+            joinedload(InteractionLog.user),
+            joinedload(InteractionLog.machine),
+            joinedload(InteractionLog.category),
+            joinedload(InteractionLog.knowledge_item),
+            joinedload(InteractionLog.resolved_by_user),
+        )
+        .filter(
+            InteractionLog.user_id == user_id,
+            InteractionLog.machine_id == machine_id,
+            InteractionLog.action_type.in_(("maintenance", "emergency")),
+            InteractionLog.feedback_status == "unresolved",
+        )
+        .order_by(InteractionLog.timestamp.desc(), InteractionLog.id.desc())
+        .first()
+    )
+
+
+def _build_pending_quick_action_response(interaction: InteractionLog) -> PendingQuickActionResponse:
+    default_message = QUICK_ACTION_COPY[interaction.action_type]["message"]
+    message = (
+        "Emergenza aperta: attendi il tecnico e conferma la risoluzione dopo l intervento."
+        if interaction.action_type == "emergency"
+        else "Richiesta manutenzione aperta: il tecnico potra confermare la risoluzione da questa postazione."
+    )
+    return PendingQuickActionResponse(
+        interaction_id=interaction.id,
+        action_type=interaction.action_type,
+        priority=interaction.priority,
+        feedback_status=interaction.feedback_status,
+        message=message if interaction.feedback_status == "unresolved" else default_message,
+        timestamp=interaction.timestamp,
+        resolved_by_user_id=interaction.resolved_by_user_id,
+        resolved_by_user_name=interaction.resolved_by_user.nome if interaction.resolved_by_user else None,
+        resolution_timestamp=interaction.resolution_timestamp,
+    )
 
 
 def _resolve_technician_user(
@@ -268,6 +314,18 @@ async def submit_quick_action(
         if user is None:
             raise HTTPException(status_code=404, detail="Utente non trovato")
 
+        existing_open_quick_action = _get_open_quick_action(db, request.user_id, request.machine_id)
+        if existing_open_quick_action is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Esiste gia una segnalazione aperta per questa postazione",
+                    "interaction_id": existing_open_quick_action.id,
+                    "action_type": existing_open_quick_action.action_type,
+                    "feedback_status": existing_open_quick_action.feedback_status,
+                },
+            )
+
         quick_action = QUICK_ACTION_COPY[request.action_type]
         interaction = InteractionLog(
             user_id=request.user_id,
@@ -327,6 +385,18 @@ async def submit_quick_action(
         raise HTTPException(status_code=500, detail="Errore creando la segnalazione") from exc
 
 
+@router.get("/pending-quick-action", response_model=PendingQuickActionResponse | None)
+async def get_pending_quick_action(
+    machine_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    interaction = _get_open_quick_action(db, current_user.id, machine_id)
+    if interaction is None:
+        return None
+    return _build_pending_quick_action_response(interaction)
+
+
 @router.post("/{interaction_id}/feedback", response_model=InteractionFeedbackResponse)
 async def submit_interaction_feedback(
     interaction_id: int,
@@ -351,6 +421,8 @@ async def submit_interaction_feedback(
             raise HTTPException(status_code=404, detail="Interazione non trovata")
         if not user_has_permission(current_user, "backoffice.access") and interaction.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Non puoi aggiornare questa interazione")
+        if interaction.feedback_status == "resolved":
+            raise HTTPException(status_code=409, detail="Interazione gia chiusa")
 
         interaction.feedback_status = request.feedback_status
         interaction.feedback_timestamp = datetime.now(timezone.utc)
@@ -402,6 +474,12 @@ async def resolve_interaction(
         )
         if interaction is None:
             raise HTTPException(status_code=404, detail="Interazione non trovata")
+        if interaction.feedback_status == "resolved":
+            raise HTTPException(status_code=409, detail="Interazione gia chiusa")
+        if interaction.feedback_status != "unresolved":
+            raise HTTPException(status_code=409, detail="Interazione non risolvibile")
+        if interaction.action_type not in {"question", "maintenance", "emergency"}:
+            raise HTTPException(status_code=400, detail="Tipo interazione non risolvibile")
 
         technician = _resolve_technician_user(request, current_user, db)
         now = datetime.now(timezone.utc)

@@ -35,7 +35,19 @@ const COMMAND_SILENCE_TIMEOUT_MS = 2200;
 const MIN_MODEL_BYTES = 10 * 1024 * 1024;
 const MODEL_LOAD_TIMEOUT_MS = 120_000;
 const VOSK_AUDIO_WORKLET_URL = '/assets/speech-audio-processor.js';
-const WAKE_VARIANTS = ['holo'];
+const WAKE_VARIANTS = [
+  'ehi holo',
+  'ei holo',
+  'e i holo',
+  'ehi holo',
+  'ehy holo',
+  'ehi olo',
+  'ei olo',
+  'e i olo',
+  'ehiolo',
+  'eiolo',
+  'e iolo',
+];
 const DEBUG_VOSK_WAKE_WORD =
   new URLSearchParams(window.location.search).has('debugVosk') ||
   localStorage.getItem('holo-assistant.debugVosk') === '1';

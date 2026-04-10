@@ -35,6 +35,8 @@ export const API_ENDPOINTS = {
   SESSION_STATUS: (machineId: number) => `${API_BASE_URL}/auth/session-status?machine_id=${machineId}`,
   INTERACTION_ASK: `${API_BASE_URL}/api/interactions/ask`,
   INTERACTION_QUICK_ACTION: `${API_BASE_URL}/api/interactions/quick-action`,
+  INTERACTION_PENDING_QUICK_ACTION: (machineId: number) =>
+    `${API_BASE_URL}/api/interactions/pending-quick-action?machine_id=${machineId}`,
   INTERACTION_FEEDBACK: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/feedback`,
   INTERACTION_RESOLVE: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/resolve`,
 

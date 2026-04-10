@@ -1,9 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { UserCircle, ChevronDown, Key, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import badgeIcon from '@/app/components/images/icon.png';
-import { CredentialsLogin } from './CredentialsLogin';
+import { UserCircle, ChevronDown, Search, Lock, User } from 'lucide-react';
+import { motion } from 'motion/react';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { API_ENDPOINTS } from '@/shared/api/config';
 
@@ -28,19 +26,22 @@ type MachineSelectorRect = {
 };
 
 export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReaderProps) {
+  const badgeIcon = '/holo-mark.png';
   const [scanning, setScanning] = useState(false);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null);
   const [showMachineSelector, setShowMachineSelector] = useState(false);
-  const [showCredentialsLogin, setShowCredentialsLogin] = useState(false);
   const [machineSearch, setMachineSearch] = useState('');
   const [machineSelectorRect, setMachineSelectorRect] = useState<MachineSelectorRect | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const machineSelectorButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    fetchMachines();
+    void fetchMachines();
   }, []);
 
   const updateMachineSelectorRect = () => {
@@ -116,13 +117,21 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
     }, 1500);
   };
 
-  const handleCredentialsLogin = (username: string, password: string) => {
+  const handleCredentialsSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
     if (!selectedMachine) {
       setError('Seleziona un macchinario prima di procedere');
       return;
     }
-    onCredentialsLogin(username, password, selectedMachine.id);
-    setShowCredentialsLogin(false);
+
+    if (!username.trim() || !password) {
+      setError('Inserisci username e password');
+      return;
+    }
+
+    setError(null);
+    onCredentialsLogin(username.trim(), password, selectedMachine.id);
   };
 
   const filteredMachines = useMemo(() => {
@@ -152,131 +161,146 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
           initial={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.35 }}
-          className="grid h-full gap-4 md:min-h-0 md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)]"
+          className="grid h-full min-h-0 gap-4 overflow-hidden grid-rows-[minmax(14rem,0.82fr)_minmax(0,1.18fr)] md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)] md:grid-rows-1"
         >
-          <section className="flex min-h-[280px] flex-col rounded-[24px] border border-white/10 bg-slate-950/20 p-4 text-center backdrop-blur-sm sm:min-h-[340px] sm:p-6 md:min-h-0">
-            <div className="flex flex-1 flex-col items-center justify-center">
+          <section className="flex min-h-0 flex-col overflow-hidden p-4 text-center sm:p-6">
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+              <div
+                className="flex w-full max-w-md flex-col items-center gap-[clamp(0.875rem,1.8vh,1.25rem)]"
+                style={{ transform: 'scale(clamp(0.84, calc((100dvh - 8rem) / 42rem), 1))', transformOrigin: 'center center' }}
+              >
               <div className="relative inline-block">
-                <div className={`flex h-36 w-36 items-center justify-center rounded-[24px] border-4 border-white/20 bg-gradient-to-br from-blue-500/20 to-cyan-500/10 backdrop-blur-sm sm:h-44 sm:w-44 ${scanning ? 'animate-pulse' : ''}`}>
-                  <img
-                    src={badgeIcon}
-                    alt="Badge Reader"
-                    className="h-24 w-24 object-contain sm:h-32 sm:w-32"
-                  />
-                </div>
-
-                {scanning && (
-                  <motion.div
-                    className="absolute inset-0 rounded-[24px] border-4 border-blue-400"
-                    animate={{
-                      scale: [1, 1.06, 1],
-                      opacity: [1, 0, 1],
-                    }}
-                    transition={{
-                      duration: 1.5,
-                      repeat: Infinity,
-                    }}
-                  />
-                )}
+                <img
+                  src={badgeIcon}
+                  alt="Badge Reader"
+                  className="h-[clamp(6rem,14vh,9.5rem)] w-[clamp(6rem,14vh,9.5rem)] object-contain"
+                />
               </div>
 
-              <h2 className="mt-5 text-2xl font-semibold text-white sm:text-3xl">Benvenuto in Holo-Assistant</h2>
-              <p className="mt-3 max-w-md text-sm leading-6 text-slate-300 sm:text-base">
-                {scanning
-                  ? 'Lettura badge in corso...'
-                  : 'Seleziona la postazione e accedi senza far scorrere la schermata.'}
-              </p>
-
-              <div className="mt-4 w-full max-w-md rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Postazione selezionata</p>
-                <p className="mt-2 text-lg font-semibold text-white">{selectedMachine?.nome || 'Nessuna postazione selezionata'}</p>
-                <p className="mt-1 text-sm text-slate-400">
-                  {selectedMachine ? `${selectedMachine.reparto} - ${selectedMachine.id_postazione}` : 'Scegli una macchina dal pannello laterale.'}
+              <div className="space-y-2">
+                <h2 className="text-[clamp(1.5rem,3vw,1.875rem)] font-semibold text-white">Benvenuto in Holo-Assistant</h2>
+                <p className="max-w-md text-sm leading-6 text-slate-300 sm:text-base">
+                  {scanning
+                    ? 'Lettura badge in corso...'
+                    : 'Seleziona la postazione e accedi senza far scorrere la schermata.'}
                 </p>
+              </div>
+
+              {machines.length > 0 ? (
+                <button
+                  ref={machineSelectorButtonRef}
+                  onClick={toggleMachineSelector}
+                  className="flex w-full rounded-2xl border border-white/15 bg-white/10 px-[clamp(1rem,2vw,1.25rem)] py-[clamp(0.9rem,2vh,1.25rem)] text-left transition-colors hover:bg-white/15"
+                >
+                  <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Macchinario selezionato</div>
+                      <div className="truncate text-base font-semibold text-white sm:text-lg">{selectedMachine?.nome || 'Seleziona...'}</div>
+                      <div className="truncate text-xs text-slate-400">{selectedMachine?.reparto} - {selectedMachine?.id_postazione}</div>
+                    </div>
+                    <ChevronDown className={`h-5 w-5 shrink-0 transition-transform ${showMachineSelector ? 'rotate-180' : ''}`} />
+                  </div>
+                </button>
+              ) : null}
+
+              {loading ? (
+                <div className="flex w-full max-w-md items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-slate-300">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"></div>
+                  <span>Caricamento macchinari...</span>
+                </div>
+              ) : error ? (
+                <div className="w-full max-w-md rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-4 text-sm text-red-200">
+                  {error}
+                </div>
+              ) : null}
               </div>
             </div>
           </section>
 
-          <section className="flex min-h-[420px] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm md:min-h-0">
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
             <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
               <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Accesso operatore</p>
-              <h3 className="mt-1 text-lg font-semibold text-white">Seleziona il macchinario e il metodo di accesso</h3>
+              <h3 className="mt-1 text-lg font-semibold text-white">Accesso con credenziali</h3>
               <p className="mt-1 text-sm text-slate-400">
-                Scegli la postazione corrente e accedi con badge o credenziali per iniziare la sessione.
+                Inserisci le credenziali dell'operatore per iniziare la sessione sulla postazione selezionata.
               </p>
             </div>
 
-            <ScrollArea className="flex-1 px-4 py-4 sm:px-5 md:min-h-0 md:pr-3">
+            <ScrollArea className="flex-1 min-h-0 px-4 py-4 sm:px-5 md:pr-3">
               <div className="space-y-4">
-                {loading ? (
-                  <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-slate-300">
-                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-400 border-t-transparent"></div>
-                    <span>Caricamento macchinari...</span>
-                  </div>
-                ) : error ? (
-                  <div className="rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-4 text-sm text-red-200">
-                    {error}
-                  </div>
-                ) : machines.length === 0 ? (
+                {!loading && machines.length === 0 ? (
                   <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-4 text-sm text-amber-100">
                     Nessun macchinario disponibile al momento.
                   </div>
-                ) : (
-                  <div className="relative">
-                    <button
-                      ref={machineSelectorButtonRef}
-                      onClick={toggleMachineSelector}
-                      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/10 px-4 py-4 text-left transition-colors hover:bg-white/15"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Macchinario selezionato</div>
-                        <div className="truncate text-lg font-semibold text-white">{selectedMachine?.nome || 'Seleziona...'}</div>
-                        <div className="truncate text-xs text-slate-400">{selectedMachine?.reparto} - {selectedMachine?.id_postazione}</div>
-                      </div>
-                      <ChevronDown className={`h-5 w-5 shrink-0 transition-transform ${showMachineSelector ? 'rotate-180' : ''}`} />
-                    </button>
+                ) : null}
+
+                <form onSubmit={handleCredentialsSubmit} className="space-y-4">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">
+                      Username
+                    </label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="w-full rounded-xl border border-white/15 bg-white/10 py-3 pl-10 pr-4 text-white placeholder:text-slate-400 transition-colors focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        placeholder="es. mario.rossi"
+                        autoFocus
+                      />
+                    </div>
                   </div>
-                )}
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button
-                    onClick={simulateBadgeScan}
-                    disabled={scanning || !selectedMachine || machines.length === 0}
-                    className="flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-blue-500 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-600"
-                  >
-                    <UserCircle className="h-5 w-5" />
-                    {scanning ? 'Scansione in corso...' : 'Simula scansione badge'}
-                  </button>
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">
+                      Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full rounded-xl border border-white/15 bg-white/10 py-3 pl-10 pr-14 text-white placeholder:text-slate-400 transition-colors focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        placeholder="Inserisci la password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-300 transition-colors hover:text-white"
+                      >
+                        {showPassword ? 'Nascondi' : 'Mostra'}
+                      </button>
+                    </div>
+                  </div>
 
                   <button
-                    onClick={() => setShowCredentialsLogin(true)}
-                    disabled={!selectedMachine || machines.length === 0}
-                    className="flex min-h-12 items-center justify-center gap-3 rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+                    type="submit"
+                    disabled={!selectedMachine || !username.trim() || !password || machines.length === 0}
+                    className="w-full rounded-2xl bg-cyan-500 px-5 py-4 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
                   >
-                    <Key className="h-5 w-5" />
                     Accedi con credenziali
                   </button>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Sicurezza</p>
-                    <p className="mt-2 text-sm font-semibold text-white">Accesso protetto</p>
-                    <p className="mt-1 text-xs text-slate-400">Ogni accesso e associato a operatore e macchina.</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Tracciabilita</p>
-                    <p className="mt-2 text-sm font-semibold text-white">Sessione registrata</p>
-                    <p className="mt-1 text-xs text-slate-400">Il supporto segue sempre la postazione selezionata.</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Supporto</p>
-                    <p className="mt-2 text-sm font-semibold text-white">Risposte mirate</p>
-                    <p className="mt-1 text-xs text-slate-400">La conoscenza e filtrata sul contesto macchina corrente.</p>
-                  </div>
-                </div>
+                </form>
               </div>
             </ScrollArea>
+
+            <div className="shrink-0 border-t border-white/10 px-4 py-4 sm:px-5">
+              <div className="flex flex-col gap-3">
+                <p className="text-center text-sm text-slate-400">
+                  In alternativa puoi usare il badge dalla stessa postazione.
+                </p>
+                <button
+                  onClick={simulateBadgeScan}
+                  disabled={scanning || !selectedMachine || machines.length === 0}
+                  className="flex min-h-12 items-center justify-center gap-3 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300"
+                >
+                  <UserCircle className="h-5 w-5" />
+                  {scanning ? 'Scansione in corso...' : 'Simula scansione badge'}
+                </button>
+              </div>
+            </div>
           </section>
         </motion.div>
       </div>
@@ -334,15 +358,6 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
         </div>,
         document.body
       )}
-
-      <AnimatePresence>
-        {showCredentialsLogin && (
-          <CredentialsLogin
-            onLogin={handleCredentialsLogin}
-            onCancel={() => setShowCredentialsLogin(false)}
-          />
-        )}
-      </AnimatePresence>
     </>
   );
 }

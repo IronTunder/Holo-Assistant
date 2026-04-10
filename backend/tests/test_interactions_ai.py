@@ -7,7 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401
-from app.api.interactions import ask_question, resolve_interaction, submit_quick_action
+from app.api.interactions import (
+    ask_question,
+    get_pending_quick_action,
+    resolve_interaction,
+    submit_quick_action,
+)
 from app.database import Base
 from app.models.category import Category
 from app.models.department import Department
@@ -356,6 +361,95 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 403)
 
+    async def test_quick_action_rejects_second_open_signal(self) -> None:
+        request = QuickActionRequest(
+            machine_id=self.machine_id,
+            user_id=self.user_id,
+            action_type="maintenance",
+        )
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            await submit_quick_action(request, current_user=current_user, db=self.db)
+
+            with self.assertRaises(HTTPException) as context:
+                await submit_quick_action(
+                    QuickActionRequest(
+                        machine_id=self.machine_id,
+                        user_id=self.user_id,
+                        action_type="emergency",
+                    ),
+                    current_user=current_user,
+                    db=self.db,
+                )
+
+        self.assertEqual(context.exception.status_code, 409)
+
+    async def test_get_pending_quick_action_returns_open_signal(self) -> None:
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            created = await submit_quick_action(
+                QuickActionRequest(
+                    machine_id=self.machine_id,
+                    user_id=self.user_id,
+                    action_type="maintenance",
+                ),
+                current_user=current_user,
+                db=self.db,
+            )
+
+        pending = await get_pending_quick_action(
+            machine_id=self.machine_id,
+            current_user=current_user,
+            db=self.db,
+        )
+
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.interaction_id, created.interaction_id)
+        self.assertEqual(pending.action_type, "maintenance")
+        self.assertEqual(pending.feedback_status, "unresolved")
+
+    async def test_quick_action_is_available_again_after_resolution(self) -> None:
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with (
+            patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()),
+            patch("app.api.interactions.verify_password", return_value=True),
+        ):
+            created = await submit_quick_action(
+                QuickActionRequest(
+                    machine_id=self.machine_id,
+                    user_id=self.user_id,
+                    action_type="maintenance",
+                ),
+                current_user=current_user,
+                db=self.db,
+            )
+
+            await resolve_interaction(
+                created.interaction_id,
+                InteractionResolutionRequest(
+                    resolution_note="Richiesta chiusa",
+                    technician_username="Tecnico Manutentore",
+                    technician_password="password-tecnico",
+                ),
+                current_user=current_user,
+                db=self.db,
+            )
+
+            reopened = await submit_quick_action(
+                QuickActionRequest(
+                    machine_id=self.machine_id,
+                    user_id=self.user_id,
+                    action_type="emergency",
+                ),
+                current_user=current_user,
+                db=self.db,
+            )
+
+        self.assertEqual(reopened.action_type, "emergency")
+
     def _create_unresolved_interaction(self) -> InteractionLog:
         interaction = InteractionLog(
             user_id=self.user_id,
@@ -442,6 +536,39 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.feedback_status, "resolved")
         self.assertEqual(response.resolved_by_user_id, self.admin_id)
         self.assertEqual(interaction.resolved_by_user_id, self.admin_id)
+
+    async def test_resolve_interaction_rejects_already_closed_interaction(self) -> None:
+        interaction = self._create_unresolved_interaction()
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+
+        with (
+            patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()),
+            patch("app.api.interactions.verify_password", return_value=True),
+        ):
+            await resolve_interaction(
+                interaction.id,
+                InteractionResolutionRequest(
+                    resolution_note="Sostituito sensore",
+                    technician_username="Tecnico Manutentore",
+                    technician_password="password-tecnico",
+                ),
+                current_user=current_user,
+                db=self.db,
+            )
+
+            with self.assertRaises(HTTPException) as context:
+                await resolve_interaction(
+                    interaction.id,
+                    InteractionResolutionRequest(
+                        resolution_note="Secondo tentativo",
+                        technician_username="Tecnico Manutentore",
+                        technician_password="password-tecnico",
+                    ),
+                    current_user=current_user,
+                    db=self.db,
+                )
+
+        self.assertEqual(context.exception.status_code, 409)
 
     async def test_ask_question_returns_clarification_mode(self) -> None:
         request = AskQuestionRequest(

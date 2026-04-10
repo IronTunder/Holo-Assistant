@@ -1,0 +1,31 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="48" y1="36" x2="208" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F2A45"/>
+      <stop offset="1" stop-color="#091521"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="56" y1="44" x2="200" y2="212" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67D4FF"/>
+      <stop offset="1" stop-color="#2B6CFF"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="78" y1="68" x2="178" y2="188" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E385B"/>
+      <stop offset="1" stop-color="#0B1F33"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="98" y1="82" x2="158" y2="176" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D7F6FF"/>
+      <stop offset="1" stop-color="#7ED7FF"/>
+    </linearGradient>
+    <filter id="shadow" x="20" y="18" width="216" height="220" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#040B14" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <path d="M128 24L197.282 64V144L128 184L58.718 144V64L128 24Z" fill="url(#bg)"/>
+    <path d="M128 36L186.89 70V138L128 172L69.1103 138V70L128 36Z" stroke="url(#rim)" stroke-width="10"/>
+    <path d="M128 58L167.838 81V127L128 150L88.1622 127V81L128 58Z" fill="url(#plate)"/>
+  </g>
+
+  <path d="M102 92C102 87.5817 105.582 84 110 84H116C120.418 84 124 87.5817 124 92V116H132V92C132 87.5817 135.582 84 140 84H146C150.418 84 154 87.5817 154 92V160C154 164.418 150.418 168 146 168H140C135.582 168 132 164.418 132 160V136H124V160C124 164.418 120.418 168 116 168H110C105.582 168 102 164.418 102 160V92Z" fill="url(#mark)"/>
+</svg>
