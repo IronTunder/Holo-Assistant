@@ -1,8 +1,8 @@
-# Progetto Ditto
+# Progetto Holo-Assistant
 
 Ultimo aggiornamento documentazione: 10 aprile 2026
 
-Ditto e un sistema di supporto per postazioni e macchinari industriali composto da:
+Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
 - fallback CSS legacy generato in build per browser senza supporto ai CSS layers;
 - backend FastAPI;
@@ -25,7 +25,7 @@ Ditto e un sistema di supporto per postazioni e macchinari industriali composto 
 
 - Su Windows, il runtime AI supportato e solo `Ollama` nativo.
 - Su Windows, Docker serve al progetto solo per PostgreSQL e Adminer.
-- Se `docker` non e pronto lato Windows, gli script Windows chiedono i permessi amministrativi all'inizio se devono installare WSL oppure se la distro WSL esistente non e accessibile nella sessione corrente, poi riusano la prima distro WSL esistente oppure creano `ditto_wsl` e installano Docker Engine dentro quella distro, senza richiedere Docker Desktop come prerequisito del progetto.
+- Se `docker` non e pronto lato Windows, gli script Windows chiedono i permessi amministrativi all'inizio se devono installare WSL oppure se la distro WSL esistente non e accessibile nella sessione corrente, poi riusano la prima distro WSL esistente oppure creano `holo_assistant_wsl` e installano Docker Engine dentro quella distro, senza richiedere Docker Desktop come prerequisito del progetto.
 - I file `docker/docker-compose.nvidia.yml` e `docker/docker-compose.amd.yml` restano come override legacy e non fanno parte del flusso Windows corrente.
 
 ## Quick Start
@@ -47,11 +47,11 @@ Linux:
 Lo script di setup:
 - controlla Docker, Python, Node.js/npm, certificati HTTPS e Ollama nativo;
 - su Windows, se manca un prerequisito prova a installarlo con `winget` e aggiorna il `PATH` della sessione;
-- su Windows, se `docker` non e' pronto, chiede i permessi amministrativi se deve installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi prepara Docker via WSL usando la prima distro esistente oppure `ditto_wsl`;
+- su Windows, se `docker` non e' pronto, chiede i permessi amministrativi se deve installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi prepara Docker via WSL usando la prima distro esistente oppure `holo_assistant_wsl`;
 - esegue `docker compose down` e poi `docker compose up -d` per `postgres` e `adminer`;
 - aspetta PostgreSQL;
 - prepara il modello `qwen3.5:9b` in Ollama;
-- genera `certs/ditto.crt` e `certs/ditto.key` con `mkcert` se mancano quando `mkcert` e disponibile;
+- genera `certs/holo-assistant.crt` e `certs/holo-assistant.key` con `mkcert` se mancano quando `mkcert` e disponibile;
 - crea `backend/.env` e `frontend/my-app/.env`;
 - configura backend e frontend per HTTPS in LAN;
 - installa dipendenze backend e frontend;
@@ -80,7 +80,7 @@ Controllo non distruttivo Unix:
 
 Lo script di start:
 - controlla prerequisiti e prova la riparazione minima dei componenti mancanti;
-- su Windows, se `docker` non e' pronto, chiede i permessi amministrativi se deve installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi prepara Docker via WSL usando la prima distro esistente oppure `ditto_wsl`;
+- su Windows, se `docker` non e' pronto, chiede i permessi amministrativi se deve installare WSL oppure se la distro WSL non e accessibile in quella sessione e poi prepara Docker via WSL usando la prima distro esistente oppure `holo_assistant_wsl`;
 - riallinea Docker con `docker compose up -d` senza forzare il reset dei container, lasciando attivi solo `postgres` e `adminer`;
 - aspetta PostgreSQL;
 - verifica o genera il certificato HTTPS locale;
@@ -102,7 +102,7 @@ Lo script di start:
 - Python 3 con `venv`
 - Node.js e `npm`
 
-Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente Python, Node.js, mkcert e Ollama quando possibile. Per Docker, se un runtime Windows non e gia disponibile, il flusso Windows chiede i permessi amministrativi all'inizio quando deve installare WSL oppure quando WSL e presente ma non accessibile nella sessione corrente, poi riusa la prima distro WSL esistente oppure crea `ditto_wsl`, mette in pausa il setup dopo la creazione dell'utente Linux e installa Docker Engine dal repository ufficiale Docker dentro la distro scelta. Su Unix, `setup.sh` e `start.sh` provano a installare i prerequisiti automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato.
+Su Windows, `setup.bat` e `start.bat` provano a installare automaticamente Python, Node.js, mkcert e Ollama quando possibile. Per Docker, se un runtime Windows non e gia disponibile, il flusso Windows chiede i permessi amministrativi all'inizio quando deve installare WSL oppure quando WSL e presente ma non accessibile nella sessione corrente, poi riusa la prima distro WSL esistente oppure crea `holo_assistant_wsl`, mette in pausa il setup dopo la creazione dell'utente Linux e installa Docker Engine dal repository ufficiale Docker dentro la distro scelta. Su Unix, `setup.sh` e `start.sh` provano a installare i prerequisiti automaticamente con il package manager della distro (`apt`, `dnf`, `yum`, `pacman`, `zypper`) e usano `sudo` quando serve. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato.
 
 Versioni consigliate per evitare incompatibilita:
 - Python 3.10 o superiore
@@ -118,7 +118,7 @@ Dipendenze backend notevoli presenti in `backend/requirements.txt`:
 - `piper-tts`
 - `rapidfuzz`
 
-## Requisiti di sistema per hostare Ditto
+## Requisiti di sistema per hostare Holo-Assistant
 
 I numeri sotto sono un dimensionamento operativo consigliato per ospitare l'intero stack locale: frontend, backend FastAPI, PostgreSQL, Adminer e Ollama.
 
@@ -178,17 +178,17 @@ Nota: `wsl --shutdown` spegne tutte le distro WSL attive.
 
 ## HTTPS in rete locale
 
-Backend e frontend vengono avviati in HTTPS usando `certs/ditto.crt` e `certs/ditto.key`. Il certificato deve includere l'IP statico con cui i dispositivi aprono Ditto, ad esempio `{server-ip}`, `127.0.0.1`, `localhost` e `ditto.lan`.
+Backend e frontend vengono avviati in HTTPS usando `certs/holo-assistant.crt` e `certs/holo-assistant.key`. Il certificato deve includere l'IP statico con cui i dispositivi aprono Holo-Assistant, ad esempio `{server-ip}`, `127.0.0.1`, `localhost` e `holo-assistant.lan`.
 
 Su Windows, `setup.bat` e `start.bat` provano a generare automaticamente questi file se mancano. Se `mkcert` non e installato, lo script prova a installarlo con `winget install -e --id FiloSottile.mkcert --accept-package-agreements --accept-source-agreements`, aggiorna il `PATH` della sessione e poi genera il certificato. Se `winget` non e disponibile o `mkcert` non entra nel `PATH`, lo script mostra un errore guidato e chiede di riaprire il terminale o installare il prerequisito manualmente.
 
-Su Unix, gli script provano anche a installare automaticamente `mkcert` con il package manager della distro. Se `mkcert` viene installato o e gia disponibile, generano `certs/ditto.crt` e `certs/ditto.key` quando mancano. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato e puoi generare i file manualmente con un comando equivalente a quello indicato sotto.
+Su Unix, gli script provano anche a installare automaticamente `mkcert` con il package manager della distro. Se `mkcert` viene installato o e gia disponibile, generano `certs/holo-assistant.crt` e `certs/holo-assistant.key` quando mancano. Se l'installazione automatica non riesce, lo script si ferma con un messaggio guidato e puoi generare i file manualmente con un comando equivalente a quello indicato sotto.
 
 `*.crt` e `*.key` sono ignorati da Git: in `certs/` resta versionabile solo il placeholder `.gitkeep`, mentre i certificati reali sono locali alla macchina.
 
 Senza installare una CA attendibile sui dispositivi, browser desktop e mobile possono mostrare un avviso di certificato non attendibile: la connessione e comunque cifrata, ma va accettata manualmente. Nel flusso di sviluppo attuale le API passano dal proxy HTTPS di Vite, quindi di norma basta accettare il certificato del frontend. Se continui a chiamare il backend direttamente oppure usi strumenti esterni al browser, apri anche `https://{server-ip}:8000/health` sul dispositivo e accetta il certificato del backend.
 
-Se l'IP statico cambia, rigenera il certificato includendo il nuovo IP, ad esempio con `mkcert -cert-file certs/ditto.crt -key-file certs/ditto.key {server-ip} localhost 127.0.0.1 ditto.lan`, poi riavvia backend e frontend.
+Se l'IP statico cambia, rigenera il certificato includendo il nuovo IP, ad esempio con `mkcert -cert-file certs/holo-assistant.crt -key-file certs/holo-assistant.key {server-ip} localhost 127.0.0.1 holo-assistant.lan`, poi riavvia backend e frontend.
 
 ## Flussi applicativi
 
@@ -198,7 +198,7 @@ Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
 - selezione macchina tra quelle disponibili;
 - login con badge o credenziali;
 - area avatar con stati `idle`, `listening`, `thinking`, `speaking`;
-- wake-word locale con Vosk in browser: di' `Ehi Ditto`, poi pronuncia la domanda tecnica;
+- wake-word locale con Vosk in browser: di' `Holo`, poi pronuncia la domanda tecnica;
 - console laterale per domanda, risposta, chiarimenti e follow-up;
 - azioni rapide visibili senza scroll dell'intera pagina.
 
@@ -309,7 +309,7 @@ DATABASE_HOST=<ip-raggiungibile-dal-backend>
 DATABASE_PORT=5432
 DATABASE_USER=postgres
 DATABASE_PASSWORD=<genera-un-valore-casuale-lungo>
-DATABASE_NAME=ditto_db
+DATABASE_NAME=holo_assistant_db
 
 SECRET_KEY=<genera-almeno-32-caratteri-casuali>
 ALGORITHM=HS256
@@ -430,7 +430,7 @@ Se l'operatore viene disconnesso:
 
 Controlla:
 ```bash
-docker exec ditto_postgres pg_isready -U postgres
+docker exec holo_assistant_postgres pg_isready -U postgres
 docker compose logs -f postgres
 ```
 

@@ -35,28 +35,10 @@ const COMMAND_SILENCE_TIMEOUT_MS = 2200;
 const MIN_MODEL_BYTES = 10 * 1024 * 1024;
 const MODEL_LOAD_TIMEOUT_MS = 120_000;
 const VOSK_AUDIO_WORKLET_URL = '/assets/speech-audio-processor.js';
-const WAKE_VARIANTS = [
-  'ehi ditto',
-  'ehi dito',
-  'ehi detto',
-  'ehi ditta',
-  'hei ditto',
-  'hei dito',
-  'hei detto',
-  'hei ditta',
-  'hey ditto',
-  'hey dito',
-  'hey detto',
-  'hey ditta',
-  'e ditto',
-  'e dito',
-  'e detto',
-  'e ditta',
-  'editto',
-];
+const WAKE_VARIANTS = ['holo'];
 const DEBUG_VOSK_WAKE_WORD =
   new URLSearchParams(window.location.search).has('debugVosk') ||
-  localStorage.getItem('ditto.debugVosk') === '1';
+  localStorage.getItem('holo-assistant.debugVosk') === '1';
 
 type VoskAudioNode = AudioWorkletNode | ScriptProcessorNode;
 type VoskBrowserGlobal = {
@@ -64,7 +46,7 @@ type VoskBrowserGlobal = {
 };
 
 const VOSK_BROWSER_SCRIPT_URL = `${import.meta.env.BASE_URL}vendor/vosk-browser.js`;
-const VOSK_BROWSER_SCRIPT_ID = 'ditto-vosk-browser-script';
+const VOSK_BROWSER_SCRIPT_ID = 'holo-assistant-vosk-browser-script';
 
 let voskBrowserLoadPromise: Promise<VoskBrowserGlobal> | null = null;
 

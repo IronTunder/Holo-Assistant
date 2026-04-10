@@ -1059,7 +1059,7 @@ export function OperatorInterface() {
   } = useVoskWakeWord({
     enabled: isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine),
     paused: wakeWordPaused,
-    wakePhrase: 'Ehi Ditto',
+    wakePhrase: 'Holo',
     modelUrl: VOSK_MODEL_URL,
     onWake: () => {
       setAvatarState('listening');
@@ -1134,7 +1134,7 @@ export function OperatorInterface() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
               <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">
-                <span className="text-blue-400">DITTO</span> Assistente
+                <span className="text-blue-400">Holo-Assistant</span>
               </h1>
               {machine ? (
                 <p className="mt-1 truncate text-sm text-slate-300">
@@ -1223,7 +1223,7 @@ export function OperatorInterface() {
                   {avatarState === 'idle' && (
                     <>
                           <div className="h-3 w-3 rounded-full bg-green-400 animate-pulse"></div>
-                      <span>In attesa - Di' "Ehi Ditto" per iniziare</span>
+                      <span>In attesa - Di' "Holo" per iniziare</span>
                     </>
                   )}
                   {avatarState === 'listening' && (

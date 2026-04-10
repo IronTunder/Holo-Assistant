@@ -1,8 +1,8 @@
-# Frontend Ditto
+# Frontend Holo-Assistant
 
 Ultimo aggiornamento: 8 aprile 2026
 
-Frontend React/Vite del progetto Ditto. L'applicazione espone due macro-aree:
+Frontend React/Vite del progetto Holo-Assistant. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
 - area amministrativa su `/admin-login` e `/admin`.
 
@@ -29,7 +29,7 @@ Avvia il frontend in sviluppo:
 npm run dev -- --host 0.0.0.0
 ```
 
-In sviluppo Vite usa HTTPS se trova `../../certs/ditto.crt` e `../../certs/ditto.key`, cioe i certificati generati dagli script di root. Se questi file mancano, il dev server torna al comportamento standard di Vite.
+In sviluppo Vite usa HTTPS se trova `../../certs/holo-assistant.crt` e `../../certs/holo-assistant.key`, cioe i certificati generati dagli script di root. Se questi file mancano, il dev server torna al comportamento standard di Vite.
 
 Crea la build:
 ```bash
@@ -81,7 +81,7 @@ Passi principali:
 - selezione della macchina dal pannello di accesso;
 - login via `POST /auth/badge-login` oppure `POST /auth/credentials-login`;
 - apertura della console operatore con avatar, stato sessione e box domanda;
-- ascolto wake-word locale nel browser con frase `Ehi Ditto`;
+- ascolto wake-word locale nel browser con frase `Holo`;
 - invio domande a `POST /api/interactions/ask`;
 - eventuale riproduzione TTS tramite `POST /tts/synthesize`.
 

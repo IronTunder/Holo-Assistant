@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title DITTO Start - Windows
+title HOLO-ASSISTANT Start - Windows
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" %*
 set EXIT_CODE=%ERRORLEVEL%

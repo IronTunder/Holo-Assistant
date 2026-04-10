@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import psycopg2
+from psycopg2 import sql
 
 load_dotenv()
 
@@ -16,11 +17,11 @@ DATABASE_HOST = os.getenv("DATABASE_HOST", "localhost")
 DATABASE_PORT = os.getenv("DATABASE_PORT", "5432")
 DATABASE_USER = os.getenv("DATABASE_USER", "postgres")
 DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "ditto_db")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "holo_assistant_db")
 
 
 def _allow_insecure_defaults() -> bool:
-    return os.getenv("DITTO_ALLOW_INSECURE_DEFAULTS", "false").lower() == "true"
+    return os.getenv("HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS", "false").lower() == "true"
 
 
 def _require_database_password() -> str:
@@ -30,7 +31,7 @@ def _require_database_password() -> str:
         return DATABASE_PASSWORD or "postgres"
     raise RuntimeError(
         "DATABASE_PASSWORD must be set to a non-default value. "
-        "Set DITTO_ALLOW_INSECURE_DEFAULTS=true only for isolated tests or demos."
+        "Set HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS=true only for isolated tests or demos."
     )
 
 
@@ -77,6 +78,23 @@ def _create_database_connection():
         except psycopg2.OperationalError as exc:
             last_error = exc
             message = str(exc).lower()
+            if _is_missing_database_error(message):
+                _ensure_database_exists(host)
+                connection = psycopg2.connect(
+                    host=host,
+                    port=DATABASE_PORT,
+                    user=DATABASE_USER,
+                    password=DATABASE_PASSWORD,
+                    dbname=DATABASE_NAME,
+                    connect_timeout=3,
+                )
+                if host != DATABASE_HOST:
+                    logger.warning(
+                        "DATABASE_HOST '%s' non raggiungibile; uso fallback '%s' per PostgreSQL.",
+                        DATABASE_HOST,
+                        host,
+                    )
+                return connection
             if "connection refused" not in message and "timeout expired" not in message and "could not connect" not in message:
                 raise
 
@@ -84,6 +102,47 @@ def _create_database_connection():
         raise last_error
 
     raise RuntimeError("Impossibile creare una connessione PostgreSQL: nessun host candidato disponibile.")
+
+
+def _is_missing_database_error(message: str) -> bool:
+    normalized = (message or "").lower()
+    return (
+        "does not exist" in normalized
+        and "database" in normalized
+    ) or (
+        "non esiste" in normalized
+        and "database" in normalized
+    )
+
+
+def _ensure_database_exists(host: str) -> None:
+    logger.warning(
+        "Database '%s' non trovato su host '%s'. Provo a crearlo automaticamente.",
+        DATABASE_NAME,
+        host,
+    )
+    admin_connection = psycopg2.connect(
+        host=host,
+        port=DATABASE_PORT,
+        user=DATABASE_USER,
+        password=DATABASE_PASSWORD,
+        dbname="postgres",
+        connect_timeout=3,
+    )
+    try:
+        admin_connection.autocommit = True
+        with admin_connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s",
+                (DATABASE_NAME,),
+            )
+            if cursor.fetchone():
+                return
+            cursor.execute(
+                sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DATABASE_NAME))
+            )
+    finally:
+        admin_connection.close()
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, creator=_create_database_connection)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

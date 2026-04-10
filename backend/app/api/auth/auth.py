@@ -43,7 +43,7 @@ INSECURE_SECRET_PLACEHOLDERS = {
 
 
 def _allow_insecure_defaults() -> bool:
-    return os.getenv("DITTO_ALLOW_INSECURE_DEFAULTS", "false").lower() == "true"
+    return os.getenv("HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS", "false").lower() == "true"
 
 
 def _require_secret_key() -> str:
@@ -59,7 +59,7 @@ def _require_secret_key() -> str:
         return secret_key or "test-secret-key-for-isolated-tests-only"
     raise RuntimeError(
         "SECRET_KEY must be set to a strong non-placeholder value. "
-        "Set DITTO_ALLOW_INSECURE_DEFAULTS=true only for isolated tests or demos."
+        "Set HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS=true only for isolated tests or demos."
     )
 
 
@@ -70,7 +70,7 @@ ADMIN_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_TOKEN_EXPIRE_MINUTES", "120"))
 OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("OPERATOR_REFRESH_TOKEN_EXPIRE_MINUTES", "480"))
 ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES = int(os.getenv("ADMIN_REFRESH_TOKEN_EXPIRE_MINUTES", "120"))
 SSE_TOKEN_EXPIRE_MINUTES = int(os.getenv("SSE_TOKEN_EXPIRE_MINUTES", "5"))
-REFRESH_TOKEN_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "ditto_refresh_token")
+REFRESH_TOKEN_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "holo_assistant_refresh_token")
 REFRESH_TOKEN_COOKIE_SECURE = os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false").lower() == "true"
 REFRESH_TOKEN_COOKIE_SAMESITE = os.getenv("REFRESH_TOKEN_COOKIE_SAMESITE", "lax")
 

@@ -1,32 +1,38 @@
 services:
   postgres:
     image: postgres:16
-    container_name: ditto_postgres
+    container_name: holo_assistant_postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in your environment}
-      POSTGRES_DB: ditto_db
+      POSTGRES_DB: holo_assistant_db
       TZ: Europe/Rome
       PGTZ: Europe/Rome
     ports:
-      - "${DITTO_POSTGRES_PORT_MAPPING:-127.0.0.1:5432:5432}"
+      - "${HOLO_ASSISTANT_POSTGRES_PORT_MAPPING:-127.0.0.1:5432:5432}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - ditto_network
+      - holo_assistant_network
     command: postgres -c listen_addresses='*'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d holo_assistant_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
   adminer:
     image: adminer
-    container_name: ditto_adminer
+    container_name: holo_assistant_adminer
     ports:
-      - "${DITTO_ADMINER_PORT_MAPPING:-127.0.0.1:8080:8080}"
+      - "${HOLO_ASSISTANT_ADMINER_PORT_MAPPING:-127.0.0.1:8080:8080}"
     networks:
-      - ditto_network
+      - holo_assistant_network
 
 volumes:
   postgres_data:
 
 networks:
-  ditto_network:
+  holo_assistant_network:
     driver: bridge

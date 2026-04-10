@@ -38,7 +38,7 @@ export function CredentialsLogin({ onLogin, onCancel }: CredentialsLoginProps) {
           </div>
           <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Accesso operatore</p>
           <h3 className="mt-1 text-xl font-semibold text-white">Accesso con credenziali</h3>
-          <p className="mt-2 text-sm text-slate-400">Inserisci le tue credenziali DITTO.</p>
+          <p className="mt-2 text-sm text-slate-400">Inserisci le tue credenziali Holo-Assistant.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">

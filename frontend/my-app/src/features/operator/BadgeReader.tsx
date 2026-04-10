@@ -180,7 +180,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                 )}
               </div>
 
-              <h2 className="mt-5 text-2xl font-semibold text-white sm:text-3xl">Benvenuto in DITTO</h2>
+              <h2 className="mt-5 text-2xl font-semibold text-white sm:text-3xl">Benvenuto in Holo-Assistant</h2>
               <p className="mt-3 max-w-md text-sm leading-6 text-slate-300 sm:text-base">
                 {scanning
                   ? 'Lettura badge in corso...'

@@ -1,4 +1,5 @@
 import asyncio
+from sqlalchemy.exc import OperationalError
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import ipaddress
@@ -17,7 +18,7 @@ from app.services.ollama_service import warmup_model
 # Setup logging
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Ditto API", version="1.0.0")
+app = FastAPI(title="Holo-Assistant API", version="1.0.0")
 
 
 async def _warmup_ollama_background():
@@ -25,9 +26,26 @@ async def _warmup_ollama_background():
     await warmup_model()
 
 
+async def _apply_migrations_with_retry(max_attempts: int = 12, delay_seconds: float = 3.0):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            apply_compatible_migrations()
+            return
+        except OperationalError as exc:
+            if attempt == max_attempts:
+                raise
+            logger.warning(
+                "[startup] Database non ancora pronto (tentativo %s/%s): %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+            await asyncio.sleep(delay_seconds)
+
+
 @app.on_event("startup")
 async def startup_event():
-    apply_compatible_migrations()
+    await _apply_migrations_with_retry()
     asyncio.create_task(_warmup_ollama_background())
 
 # Funzione per rilevare il prefisso di rete locale dinamicamente
@@ -85,7 +103,7 @@ configured_origins = [
     for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-if not configured_origins and os.getenv("DITTO_ALLOW_INSECURE_DEFAULTS", "false").lower() != "true":
+if not configured_origins and os.getenv("HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS", "false").lower() != "true":
     raise RuntimeError("ALLOWED_ORIGINS must be configured with explicit trusted origins.")
 
 allowed_origins = list(dict.fromkeys(configured_origins))
@@ -109,4 +127,4 @@ app.include_router(tts_router, prefix="/tts", tags=["tts"])
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "Ditto API is running"}
+    return {"status": "ok", "message": "Holo-Assistant API is running"}

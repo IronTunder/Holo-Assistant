@@ -6,7 +6,7 @@ $modelName = "vosk-model-small-it-0.22"
 $modelZipUrl = "https://alphacephei.com/vosk/models/$modelName.zip"
 $modelsDir = Join-Path $rootDir "frontend\my-app\public\models"
 $outputArchive = Join-Path $modelsDir "$modelName.tar.gz"
-$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "ditto-vosk-$([System.Guid]::NewGuid().ToString('N'))"
+$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "holo-assistant-vosk-$([System.Guid]::NewGuid().ToString('N'))"
 
 New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null

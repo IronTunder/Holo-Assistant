@@ -6,8 +6,8 @@ import react from '@vitejs/plugin-react'
 
 const VOSK_BROWSER_VENDOR_PATH = '/vendor/vosk-browser.js'
 const VOSK_BROWSER_SOURCE_PATH = path.resolve(__dirname, 'node_modules/vosk-browser/dist/vosk.js')
-const HTTPS_CERT_PATH = path.resolve(__dirname, '../../certs/ditto.crt')
-const HTTPS_KEY_PATH = path.resolve(__dirname, '../../certs/ditto.key')
+const HTTPS_CERT_PATH = path.resolve(__dirname, '../../certs/holo-assistant.crt')
+const HTTPS_KEY_PATH = path.resolve(__dirname, '../../certs/holo-assistant.key')
 const HTTPS_CONFIG = existsSync(HTTPS_CERT_PATH) && existsSync(HTTPS_KEY_PATH)
   ? {
       cert: readFileSync(HTTPS_CERT_PATH),
@@ -33,7 +33,7 @@ function resolveBackendTarget(): string {
 
 function voskBrowserVendorPlugin(): Plugin {
   return {
-    name: 'ditto-vosk-browser-vendor',
+    name: 'holo-assistant-vosk-browser-vendor',
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use(VOSK_BROWSER_VENDOR_PATH, (_request, response) => {
@@ -46,7 +46,7 @@ function voskBrowserVendorPlugin(): Plugin {
 
 function voskBrowserBuildAssetPlugin(): Plugin {
   return {
-    name: 'ditto-vosk-browser-build-asset',
+    name: 'holo-assistant-vosk-browser-build-asset',
     apply: 'build',
     generateBundle() {
       this.emitFile({

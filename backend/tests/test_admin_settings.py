@@ -35,10 +35,10 @@ class AdminSettingsTestCase(unittest.IsolatedAsyncioTestCase):
 
     def test_secret_key_placeholder_is_rejected_without_test_override(self) -> None:
         previous_secret = auth_module.os.environ.get("SECRET_KEY")
-        previous_override = auth_module.os.environ.get("DITTO_ALLOW_INSECURE_DEFAULTS")
+        previous_override = auth_module.os.environ.get("HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS")
         try:
             auth_module.os.environ["SECRET_KEY"] = "your-super-secret-key-change-this-in-production"
-            auth_module.os.environ["DITTO_ALLOW_INSECURE_DEFAULTS"] = "false"
+            auth_module.os.environ["HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS"] = "false"
             with self.assertRaises(RuntimeError):
                 auth_module._require_secret_key()
         finally:
@@ -47,9 +47,9 @@ class AdminSettingsTestCase(unittest.IsolatedAsyncioTestCase):
             else:
                 auth_module.os.environ["SECRET_KEY"] = previous_secret
             if previous_override is None:
-                auth_module.os.environ.pop("DITTO_ALLOW_INSECURE_DEFAULTS", None)
+                auth_module.os.environ.pop("HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS", None)
             else:
-                auth_module.os.environ["DITTO_ALLOW_INSECURE_DEFAULTS"] = previous_override
+                auth_module.os.environ["HOLO_ASSISTANT_ALLOW_INSECURE_DEFAULTS"] = previous_override
 
     async def test_settings_view_does_not_allow_edit(self) -> None:
         role = Role(name="Settings Viewer", code="settings-viewer", is_active=True)

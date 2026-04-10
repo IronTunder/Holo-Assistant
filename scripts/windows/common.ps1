@@ -1,60 +1,60 @@
 $ErrorActionPreference = "Stop"
 
-$DittoDefaultBackendPort = 8000
-$DittoDefaultFrontendPort = 5173
-$DittoDefaultOllamaModel = "qwen3.5:9b"
-$DittoDefaultOllamaBaseUrl = "http://127.0.0.1:11434"
-$DittoVoskModelPublicUrl = "/models/vosk-model-small-it-0.22.tar.gz"
-$DittoVoskModelArchiveName = "vosk-model-small-it-0.22.tar.gz"
-$DittoPiperDefaultVoiceKey = "it_IT-paola-medium"
-$DittoPiperDefaultVoiceModelFilename = "$DittoPiperDefaultVoiceKey.onnx"
-$DittoPiperDefaultVoiceConfigFilename = "$DittoPiperDefaultVoiceModelFilename.json"
-$DittoWslInstallBaseDistro = "Ubuntu-24.04"
-$DittoWslDedicatedDistro = "ditto_wsl"
-$DittoWindowsScriptDir = $PSScriptRoot
+$HoloAssistantDefaultBackendPort = 8000
+$HoloAssistantDefaultFrontendPort = 5173
+$HoloAssistantDefaultOllamaModel = "qwen3.5:9b"
+$HoloAssistantDefaultOllamaBaseUrl = "http://127.0.0.1:11434"
+$HoloAssistantVoskModelPublicUrl = "/models/vosk-model-small-it-0.22.tar.gz"
+$HoloAssistantVoskModelArchiveName = "vosk-model-small-it-0.22.tar.gz"
+$HoloAssistantPiperDefaultVoiceKey = "it_IT-paola-medium"
+$HoloAssistantPiperDefaultVoiceModelFilename = "$HoloAssistantPiperDefaultVoiceKey.onnx"
+$HoloAssistantPiperDefaultVoiceConfigFilename = "$HoloAssistantPiperDefaultVoiceModelFilename.json"
+$HoloAssistantWslInstallBaseDistro = "Ubuntu-24.04"
+$HoloAssistantWslDedicatedDistro = "holo_assistant_wsl"
+$HoloAssistantWindowsScriptDir = $PSScriptRoot
 
-function Write-DittoInfo {
+function Write-HoloAssistantInfo {
     param([string]$Message)
     Write-Host "[INFO] $Message"
 }
 
-function Write-DittoOk {
+function Write-HoloAssistantOk {
     param([string]$Message)
     Write-Host "[OK] $Message"
 }
 
-function Write-DittoWarn {
+function Write-HoloAssistantWarn {
     param([string]$Message)
     Write-Host "[AVVISO] $Message"
 }
 
-function Write-DittoError {
+function Write-HoloAssistantError {
     param([string]$Message)
     Write-Host "[ERRORE] $Message"
 }
 
-function Write-DittoStep {
+function Write-HoloAssistantStep {
     param([string]$Message)
     Write-Host ""
     Write-Host $Message
 }
 
-function Get-DittoRoot {
-    return (Resolve-Path (Join-Path $DittoWindowsScriptDir "..\..")).Path
+function Get-HoloAssistantRoot {
+    return (Resolve-Path (Join-Path $HoloAssistantWindowsScriptDir "..\..")).Path
 }
 
-function Test-DittoCommand {
+function Test-HoloAssistantCommand {
     param([Parameter(Mandatory=$true)][string]$Name)
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-function Update-DittoPath {
+function Update-HoloAssistantPath {
     $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $env:Path = @($machinePath, $userPath, $env:Path) -join ";"
 }
 
-function Convert-DittoConsoleText {
+function Convert-HoloAssistantConsoleText {
     param([AllowNull()][string]$Text)
 
     if ($null -eq $Text) {
@@ -71,7 +71,7 @@ function Convert-DittoConsoleText {
     return $clean
 }
 
-function Get-DittoShellQuotedValue {
+function Get-HoloAssistantShellQuotedValue {
     param([AllowNull()][string]$Value)
 
     if ($null -eq $Value) {
@@ -81,7 +81,7 @@ function Get-DittoShellQuotedValue {
     return "'" + ($Value -replace "'", "'\''") + "'"
 }
 
-function Convert-DittoWindowsPathToWsl {
+function Convert-HoloAssistantWindowsPathToWsl {
     param([Parameter(Mandatory=$true)][string]$Path)
 
     $resolved = (Resolve-Path $Path).Path
@@ -93,13 +93,13 @@ function Convert-DittoWindowsPathToWsl {
     throw "Percorso non convertibile per WSL: $Path"
 }
 
-function Test-DittoIsAdmin {
+function Test-HoloAssistantIsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Start-DittoElevatedPowerShell {
+function Start-HoloAssistantElevatedPowerShell {
     param(
         [Parameter(Mandatory=$true)][string]$ScriptPath,
         [string[]]$ScriptArguments = @()
@@ -113,18 +113,18 @@ function Start-DittoElevatedPowerShell {
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList ($argumentList -join " ")
 }
 
-function Set-DittoWslDistributionName {
+function Set-HoloAssistantWslDistributionName {
     param([AllowNull()][string]$Name)
 
     if ($Name) {
-        $env:DITTO_WSL_DISTRO = $Name
+        $env:HOLO_ASSISTANT_WSL_DISTRO = $Name
         return
     }
 
-    Remove-Item Env:\DITTO_WSL_DISTRO -ErrorAction SilentlyContinue
+    Remove-Item Env:\HOLO_ASSISTANT_WSL_DISTRO -ErrorAction SilentlyContinue
 }
 
-function Invoke-DittoTool {
+function Invoke-HoloAssistantTool {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
@@ -138,7 +138,7 @@ function Invoke-DittoTool {
             Set-Location $WorkingDirectory
         }
         $ErrorActionPreference = "Continue"
-        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { Convert-DittoConsoleText $_.ToString() })
+        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { Convert-HoloAssistantConsoleText $_.ToString() })
         $exitCode = $LASTEXITCODE
         if ($output) {
             $output | ForEach-Object { Write-Host $_ }
@@ -150,7 +150,7 @@ function Invoke-DittoTool {
     }
 }
 
-function Invoke-DittoToolChecked {
+function Invoke-HoloAssistantToolChecked {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
@@ -159,30 +159,30 @@ function Invoke-DittoToolChecked {
         [switch]$AllowFailure  # Aggiunto parametro AllowFailure
     )
 
-    $exitCode = Invoke-DittoTool -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+    $exitCode = Invoke-HoloAssistantTool -FilePath $FilePath -Arguments $Arguments -WorkingDirectory $WorkingDirectory
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "$FailureMessage Exit code: $exitCode"
     }
     return $exitCode
 }
 
-function Get-DittoWslDistributionName {
-    if ($env:DITTO_WSL_DISTRO) {
-        return $env:DITTO_WSL_DISTRO
+function Get-HoloAssistantWslDistributionName {
+    if ($env:HOLO_ASSISTANT_WSL_DISTRO) {
+        return $env:HOLO_ASSISTANT_WSL_DISTRO
     }
 
-    $existingDistros = Get-DittoWslDistributions
+    $existingDistros = Get-HoloAssistantWslDistributions
     if ($existingDistros.Count -gt 0) {
         $selectedDistro = $existingDistros[0]
-        Set-DittoWslDistributionName -Name $selectedDistro
+        Set-HoloAssistantWslDistributionName -Name $selectedDistro
         return $selectedDistro
     }
 
-    return $DittoWslDedicatedDistro
+    return $HoloAssistantWslDedicatedDistro
 }
 
-function Get-DittoWslStatus {
-    $selectedDistro = Get-DittoWslDistributionName
+function Get-HoloAssistantWslStatus {
+    $selectedDistro = Get-HoloAssistantWslDistributionName
     $status = @{
         IsInstalled = $false
         IsAccessible = $false
@@ -208,9 +208,9 @@ function Get-DittoWslStatus {
     }
 
     # Controllo WSL installato PRIMA di verificare la virtualizzazione
-    if (Test-DittoCommand "wsl") {
+    if (Test-HoloAssistantCommand "wsl") {
         $status.IsInstalled = $true
-        $wslStatus = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--status")
+        $wslStatus = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("--status")
         $text = ($wslStatus.Output -join "`n")
         if ($wslStatus.ExitCode -eq 0) {
             $status.IsAccessible = $true
@@ -219,13 +219,13 @@ function Get-DittoWslStatus {
             $status.RebootRequired = $true
         }
 
-        $distroResult = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--quiet")
+        $distroResult = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--quiet")
         if ($distroResult.ExitCode -eq 0) {
             $status.IsAccessible = $true
             $status.ExistingDistros = @($distroResult.Output | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-            if ($status.ExistingDistros.Count -gt 0 -and -not $env:DITTO_WSL_DISTRO) {
+            if ($status.ExistingDistros.Count -gt 0 -and -not $env:HOLO_ASSISTANT_WSL_DISTRO) {
                 $status.DistroName = $status.ExistingDistros[0]
-                Set-DittoWslDistributionName -Name $status.DistroName
+                Set-HoloAssistantWslDistributionName -Name $status.DistroName
             }
             $status.DistroInstalled = ($status.ExistingDistros | Where-Object { $_ -eq $status.DistroName }).Count -gt 0
         } elseif (($distroResult.Output -join "`n") -match "E_ACCESSDENIED") {
@@ -277,7 +277,7 @@ function Get-DittoWslStatus {
     return $status
 }
 
-function Invoke-DittoWsl {
+function Invoke-HoloAssistantWsl {
     param(
         [Parameter(Mandatory=$true)][string]$Command,
         [switch]$AllowFailure,
@@ -285,14 +285,14 @@ function Invoke-DittoWsl {
     )
 
     if ($Activity) {
-        Write-DittoInfo $Activity
+        Write-HoloAssistantInfo $Activity
     }
-    $distroName = Get-DittoWslDistributionName
+    $distroName = Get-HoloAssistantWslDistributionName
     if (-not $distroName) {
         throw "Nessuna distribuzione WSL selezionata per eseguire il comando richiesto."
     }
     $args = @("-d", $distroName, "--", "bash", "-lc", $Command)
-    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments $args
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments $args
     if ($result.Output) {
         $result.Output | ForEach-Object { Write-Host $_ }
     }
@@ -302,58 +302,58 @@ function Invoke-DittoWsl {
     return $result
 }
 
-function Invoke-DittoOllamaInstallScript {
+function Invoke-HoloAssistantOllamaInstallScript {
     param([switch]$CheckOnly)
 
     if ($CheckOnly) {
-        Write-DittoWarn "Ollama nativo non e' disponibile. CheckOnly: salto installazione automatica."
+        Write-HoloAssistantWarn "Ollama nativo non e' disponibile. CheckOnly: salto installazione automatica."
         return $false
     }
 
-    Write-DittoInfo "Installo Ollama nativo con lo script ufficiale..."
+    Write-HoloAssistantInfo "Installo Ollama nativo con lo script ufficiale..."
     $command = "irm https://ollama.com/install.ps1 | iex"
-    $result = Invoke-DittoCapturedTool -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command)
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command)
     if ($result.Output) {
         $result.Output | ForEach-Object { Write-Host $_ }
     }
-    Update-DittoPath
+    Update-HoloAssistantPath
     return $result.ExitCode -eq 0
 }
 
-function Test-DittoDockerDirectReady {
-    Use-DittoWritableDockerConfig
-    if (-not (Test-DittoCommand "docker")) {
+function Test-HoloAssistantDockerDirectReady {
+    Use-HoloAssistantWritableDockerConfig
+    if (-not (Test-HoloAssistantCommand "docker")) {
         return @{ Ready = $false; Compose = $false; Output = @("docker non trovato") }
     }
 
-    $info = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("info")
+    $info = Invoke-HoloAssistantCapturedTool -FilePath "docker" -Arguments @("info")
     if ($info.ExitCode -ne 0) {
         return @{ Ready = $false; Compose = $false; Output = $info.Output }
     }
 
-    $compose = Invoke-DittoCapturedTool -FilePath "docker" -Arguments @("compose", "version")
+    $compose = Invoke-HoloAssistantCapturedTool -FilePath "docker" -Arguments @("compose", "version")
     return @{ Ready = $compose.ExitCode -eq 0; Compose = $compose.ExitCode -eq 0; Output = @($info.Output + $compose.Output) }
 }
 
-function Test-DittoDockerInWslReady {
-    if (-not (Test-DittoCommand "wsl")) {
+function Test-HoloAssistantDockerInWslReady {
+    if (-not (Test-HoloAssistantCommand "wsl")) {
         return @{ Ready = $false; Output = @("WSL non disponibile") }
     }
 
-    $distroName = Get-DittoWslDistributionName
+    $distroName = Get-HoloAssistantWslDistributionName
     if (-not $distroName) {
         return @{ Ready = $false; Output = @("Nessuna distribuzione WSL selezionata") }
     }
 
     $dockerReadyCommand = "(docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1) || (sudo docker info >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1)"
-    $check = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $dockerReadyCommand)
+    $check = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $dockerReadyCommand)
     return @{ Ready = $check.ExitCode -eq 0; Output = $check.Output; DistroName = $distroName }
 }
 
-function Ensure-DittoWindowsSupport {
+function Ensure-HoloAssistantWindowsSupport {
     param([switch]$AllowVirtualizationCheck)
     
-    $status = Get-DittoWslStatus
+    $status = Get-HoloAssistantWslStatus
     
     # Controllo base: Windows deve supportare WSL
     if (-not $status.WindowsSupported) {
@@ -362,7 +362,7 @@ function Ensure-DittoWindowsSupport {
     
     # Se WSL e gia installato, saltiamo il controllo della virtualizzazione
     if ($status.IsInstalled) {
-        Write-DittoInfo "WSL gia installato, proseguo con la configurazione..."
+        Write-HoloAssistantInfo "WSL gia installato, proseguo con la configurazione..."
         return $status
     }
     
@@ -374,25 +374,25 @@ function Ensure-DittoWindowsSupport {
     return $status
 }
 
-function Ensure-DittoWslDocker {
+function Ensure-HoloAssistantWslDocker {
     param(
         [switch]$CheckOnly
     )
 
-    $status = Ensure-DittoWindowsSupport
-    Write-DittoInfo "Stato WSL: $($status.Summary)"
+    $status = Ensure-HoloAssistantWindowsSupport
+    Write-HoloAssistantInfo "Stato WSL: $($status.Summary)"
 
     if ($CheckOnly) {
-        $distro = Ensure-DittoWslDistroForDocker -CheckOnly
-        Write-DittoInfo "CheckOnly: distribuzione WSL selezionata: $distro"
+        $distro = Ensure-HoloAssistantWslDistroForDocker -CheckOnly
+        Write-HoloAssistantInfo "CheckOnly: distribuzione WSL selezionata: $distro"
         return $distro
     }
 
     # Se WSL non e installato, dobbiamo procedere con l'installazione (richiede admin)
     if (-not $status.IsInstalled) {
-        Write-DittoInfo "WSL non installato. Procedo con l'installazione..."
+        Write-HoloAssistantInfo "WSL non installato. Procedo con l'installazione..."
         
-        if (-not (Test-DittoIsAdmin)) {
+        if (-not (Test-HoloAssistantIsAdmin)) {
             throw "Per installare WSL serve rilanciare lo script come amministratore."
             Write-Host ""
             Write-Host "Verra aperta una nuova finestra PowerShell come amministratore."
@@ -415,68 +415,68 @@ function Ensure-DittoWslDocker {
             ) -Wait
             
             # Verifica dopo l'installazione
-            $direct = Test-DittoDockerDirectReady
+            $direct = Test-HoloAssistantDockerDirectReady
             if ($direct.Ready) {
-                $env:DITTO_DOCKER_MODE = "windows"
-                Write-DittoOk "Docker disponibile dopo configurazione."
+                $env:HOLO_ASSISTANT_DOCKER_MODE = "windows"
+                Write-HoloAssistantOk "Docker disponibile dopo configurazione."
                 return
             }
         }
         
         # Siamo admin, installa WSL
-        Write-DittoInfo "Installazione WSL..."
-        Invoke-DittoToolChecked -FilePath "wsl.exe" -Arguments @("--install", "--web-download") -FailureMessage "Installazione WSL fallita."
-        Write-DittoInfo "WSL installato. Potrebbe essere necessario riavviare Windows."
+        Write-HoloAssistantInfo "Installazione WSL..."
+        Invoke-HoloAssistantToolChecked -FilePath "wsl.exe" -Arguments @("--install", "--web-download") -FailureMessage "Installazione WSL fallita."
+        Write-HoloAssistantInfo "WSL installato. Potrebbe essere necessario riavviare Windows."
         
         # Aggiorna lo stato
-        $status = Get-DittoWslStatus
+        $status = Get-HoloAssistantWslStatus
         if (-not $status.IsInstalled) {
             throw "WSL non rilevabile dopo l'installazione. Riavvia Windows e rilancia lo script."
         }
     }
 
     # A questo punto WSL e installato, continuiamo
-    Write-DittoInfo "Configurazione WSL2 come backend Docker del progetto..."
+    Write-HoloAssistantInfo "Configurazione WSL2 come backend Docker del progetto..."
     
     # Imposta WSL2 come default (non bloccante se fallisce)
-    Write-DittoInfo "Imposto WSL2 come versione predefinita..."
-    $setDefaultExit = Invoke-DittoToolChecked -FilePath "wsl.exe" -Arguments @("--set-default-version", "2") -FailureMessage "Impostazione WSL2 come default fallita." -AllowFailure
+    Write-HoloAssistantInfo "Imposto WSL2 come versione predefinita..."
+    $setDefaultExit = Invoke-HoloAssistantToolChecked -FilePath "wsl.exe" -Arguments @("--set-default-version", "2") -FailureMessage "Impostazione WSL2 come default fallita." -AllowFailure
     if ($setDefaultExit -ne 0) {
-        Write-DittoWarn "Impostazione WSL2 come default non riuscita (potrebbe essere gia configurata)."
+        Write-HoloAssistantWarn "Impostazione WSL2 come default non riuscita (potrebbe essere gia configurata)."
     }
     
     # Aggiorna kernel WSL (opzionale, non bloccante)
-    Write-DittoInfo "Aggiorno il kernel WSL..."
-    $updateExit = Invoke-DittoToolChecked -FilePath "wsl.exe" -Arguments @("--update", "--web-download") -FailureMessage "Aggiornamento kernel WSL fallito." -AllowFailure
+    Write-HoloAssistantInfo "Aggiorno il kernel WSL..."
+    $updateExit = Invoke-HoloAssistantToolChecked -FilePath "wsl.exe" -Arguments @("--update", "--web-download") -FailureMessage "Aggiornamento kernel WSL fallito." -AllowFailure
     if ($updateExit -ne 0) {
-        Write-DittoWarn "Aggiornamento kernel WSL non riuscito (potrebbe non essere necessario)."
+        Write-HoloAssistantWarn "Aggiornamento kernel WSL non riuscito (potrebbe non essere necessario)."
     }
 
     # Seleziona o crea distribuzione (questa funzione gestisce anche la pausa post-creazione utente)
-    $distroName = Ensure-DittoWslDistroForDocker -CheckOnly:$false
-    Write-DittoInfo "Uso la distribuzione WSL '$distroName' per Docker del progetto."
+    $distroName = Ensure-HoloAssistantWslDistroForDocker -CheckOnly:$false
+    Write-HoloAssistantInfo "Uso la distribuzione WSL '$distroName' per Docker del progetto."
     
     # Verifica che la distribuzione sia registrata
-    $distros = Get-DittoWslDistributions
+    $distros = Get-HoloAssistantWslDistributions
     if ($distros -notcontains $distroName) {
         throw "Distribuzione $distroName non trovata."
     }
 
     # Installa Docker nella distribuzione
-    $dockerInstalled = Ensure-DittoDockerInWsl -DistroName $distroName
+    $dockerInstalled = Ensure-HoloAssistantDockerInWsl -DistroName $distroName
     
     if (-not $dockerInstalled) {
         throw "Installazione Docker in $distroName fallita."
     }
 
-    $env:DITTO_DOCKER_MODE = "wsl"
-    Set-DittoWslDistributionName -Name $distroName
-    Write-DittoOk "Docker disponibile tramite WSL ($distroName)."
+    $env:HOLO_ASSISTANT_DOCKER_MODE = "wsl"
+    Set-HoloAssistantWslDistributionName -Name $distroName
+    Write-HoloAssistantOk "Docker disponibile tramite WSL ($distroName)."
     
     return $distroName
 }
 
-function Invoke-DittoDocker {
+function Invoke-HoloAssistantDocker {
     param(
         [Parameter(Mandatory=$true)][string[]]$Arguments,
         [string]$WorkingDirectory = "",
@@ -484,25 +484,25 @@ function Invoke-DittoDocker {
         [switch]$AllowFailure
     )
 
-    if ($env:DITTO_DOCKER_MODE -eq "wsl") {
+    if ($env:HOLO_ASSISTANT_DOCKER_MODE -eq "wsl") {
         $commandParts = @()
         if ($WorkingDirectory) {
-            $wslDir = Convert-DittoWindowsPathToWsl -Path $WorkingDirectory
-            $commandParts += "cd $(Get-DittoShellQuotedValue $wslDir)"
+            $wslDir = Convert-HoloAssistantWindowsPathToWsl -Path $WorkingDirectory
+            $commandParts += "cd $(Get-HoloAssistantShellQuotedValue $wslDir)"
         }
         if ($env:DATABASE_PASSWORD) {
-            $commandParts += "export DATABASE_PASSWORD=$(Get-DittoShellQuotedValue $env:DATABASE_PASSWORD)"
+            $commandParts += "export DATABASE_PASSWORD=$(Get-HoloAssistantShellQuotedValue $env:DATABASE_PASSWORD)"
         }
-        $commandParts += "export DITTO_POSTGRES_PORT_MAPPING='5432:5432'"
-        $commandParts += "export DITTO_ADMINER_PORT_MAPPING='8080:8080'"
-        $joinedArgs = ($Arguments | ForEach-Object { Get-DittoShellQuotedValue $_ }) -join " "
+        $commandParts += "export HOLO_ASSISTANT_POSTGRES_PORT_MAPPING='5432:5432'"
+        $commandParts += "export HOLO_ASSISTANT_ADMINER_PORT_MAPPING='8080:8080'"
+        $joinedArgs = ($Arguments | ForEach-Object { Get-HoloAssistantShellQuotedValue $_ }) -join " "
         $commandParts += "docker $joinedArgs"
         $command = $commandParts -join "; "
-        $distroName = Get-DittoWslDistributionName
+        $distroName = Get-HoloAssistantWslDistributionName
         if (-not $distroName) {
             throw "Nessuna distribuzione WSL selezionata per eseguire Docker."
         }
-        $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $command)
+        $result = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $command)
         if ($result.Output) {
             $result.Output | ForEach-Object { Write-Host $_ }
         }
@@ -510,13 +510,13 @@ function Invoke-DittoDocker {
             return $result.ExitCode
         }
         if ($result.ExitCode -ne 0) {
-            throw "$(Get-DittoDockerFailureMessage -FailureMessage $FailureMessage -Output $result.Output) Exit code: $($result.ExitCode)"
+            throw "$(Get-HoloAssistantDockerFailureMessage -FailureMessage $FailureMessage -Output $result.Output) Exit code: $($result.ExitCode)"
         }
         return
     }
 
-    Use-DittoWritableDockerConfig
-    $result = Invoke-DittoCapturedTool -FilePath "docker" -Arguments $Arguments -WorkingDirectory $WorkingDirectory
+    Use-HoloAssistantWritableDockerConfig
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "docker" -Arguments $Arguments -WorkingDirectory $WorkingDirectory
     if ($result.ExitCode -eq 0) {
         if ($result.Output) {
             $result.Output | ForEach-Object { Write-Host $_ }
@@ -531,10 +531,10 @@ function Invoke-DittoDocker {
         return $result.ExitCode
     }
 
-    throw "$(Get-DittoDockerFailureMessage -FailureMessage $FailureMessage -Output $result.Output) Exit code: $($result.ExitCode)"
+    throw "$(Get-HoloAssistantDockerFailureMessage -FailureMessage $FailureMessage -Output $result.Output) Exit code: $($result.ExitCode)"
 }
 
-function Invoke-DittoCapturedTool {
+function Invoke-HoloAssistantCapturedTool {
     param(
         [Parameter(Mandatory=$true)][string]$FilePath,
         [string[]]$Arguments = @(),
@@ -548,7 +548,7 @@ function Invoke-DittoCapturedTool {
             Set-Location $WorkingDirectory
         }
         $ErrorActionPreference = "Continue"
-        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { Convert-DittoConsoleText $_.ToString() })
+        $output = @(& $FilePath @Arguments 2>&1 | ForEach-Object { Convert-HoloAssistantConsoleText $_.ToString() })
         return @{ ExitCode = $LASTEXITCODE; Output = $output }
     } finally {
         $ErrorActionPreference = $oldErrorActionPreference
@@ -556,7 +556,7 @@ function Invoke-DittoCapturedTool {
     }
 }
 
-function Test-DittoDockerEngineError {
+function Test-HoloAssistantDockerEngineError {
     param([string[]]$Output = @())
 
     $text = ($Output -join "`n")
@@ -568,13 +568,13 @@ function Test-DittoDockerEngineError {
         $text -match "The system cannot find the file specified"
 }
 
-function Get-DittoDockerFailureMessage {
+function Get-HoloAssistantDockerFailureMessage {
     param(
         [Parameter(Mandatory=$true)][string]$FailureMessage,
         [string[]]$Output = @()
     )
 
-    if (Test-DittoDockerEngineError -Output $Output) {
+    if (Test-HoloAssistantDockerEngineError -Output $Output) {
         return "$FailureMessage Docker non risponde dal lato Windows. Lo script puo' usare Docker nativo se gia' pronto, altrimenti prepara WSL2 e Docker Engine nella distro selezionata."
     }
 
@@ -584,7 +584,7 @@ function Get-DittoDockerFailureMessage {
     return $FailureMessage
 }
 
-function Install-DittoWingetPackage {
+function Install-HoloAssistantWingetPackage {
     param(
         [Parameter(Mandatory=$true)][string]$PackageId,
         [string[]]$FallbackPackageIds = @(),
@@ -593,34 +593,34 @@ function Install-DittoWingetPackage {
     )
 
     if ($CheckOnly) {
-        Write-DittoWarn "$DisplayName non e' disponibile. CheckOnly: salto installazione automatica."
+        Write-HoloAssistantWarn "$DisplayName non e' disponibile. CheckOnly: salto installazione automatica."
         return $false
     }
 
-    if (-not (Test-DittoCommand "winget")) {
-        Write-DittoError "$DisplayName non e' disponibile e winget non e' nel PATH."
-        Write-DittoInfo "Installa App Installer dal Microsoft Store, poi rilancia lo script."
-        Write-DittoInfo "In alternativa installa manualmente: $DisplayName"
+    if (-not (Test-HoloAssistantCommand "winget")) {
+        Write-HoloAssistantError "$DisplayName non e' disponibile e winget non e' nel PATH."
+        Write-HoloAssistantInfo "Installa App Installer dal Microsoft Store, poi rilancia lo script."
+        Write-HoloAssistantInfo "In alternativa installa manualmente: $DisplayName"
         return $false
     }
 
     $ids = @($PackageId) + $FallbackPackageIds
     foreach ($id in $ids) {
-        Write-DittoInfo "Provo a installare $DisplayName con winget ($id)..."
-        $exitCode = Invoke-DittoTool -FilePath "winget" -Arguments @("install", "-e", "--id", $id, "--accept-package-agreements", "--accept-source-agreements")
-        Update-DittoPath
+        Write-HoloAssistantInfo "Provo a installare $DisplayName con winget ($id)..."
+        $exitCode = Invoke-HoloAssistantTool -FilePath "winget" -Arguments @("install", "-e", "--id", $id, "--accept-package-agreements", "--accept-source-agreements")
+        Update-HoloAssistantPath
         if ($exitCode -eq 0) {
-            Write-DittoOk "$DisplayName installato o gia' presente."
+            Write-HoloAssistantOk "$DisplayName installato o gia' presente."
             return $true
         }
-        Write-DittoWarn "Installazione winget fallita per $id."
+        Write-HoloAssistantWarn "Installazione winget fallita per $id."
     }
 
-    Write-DittoError "Non sono riuscito a installare $DisplayName automaticamente."
+    Write-HoloAssistantError "Non sono riuscito a installare $DisplayName automaticamente."
     return $false
 }
 
-function Ensure-DittoCommand {
+function Ensure-HoloAssistantCommand {
     param(
         [Parameter(Mandatory=$true)][string]$CommandName,
         [Parameter(Mandatory=$true)][string]$DisplayName,
@@ -629,49 +629,49 @@ function Ensure-DittoCommand {
         [switch]$CheckOnly
     )
 
-    if (Test-DittoCommand $CommandName) {
-        Write-DittoOk "$DisplayName disponibile."
+    if (Test-HoloAssistantCommand $CommandName) {
+        Write-HoloAssistantOk "$DisplayName disponibile."
         return $true
     }
 
     if (-not $PackageId) {
-        Write-DittoError "$DisplayName non trovato nel PATH."
+        Write-HoloAssistantError "$DisplayName non trovato nel PATH."
         return $false
     }
 
-    $installed = Install-DittoWingetPackage -PackageId $PackageId -FallbackPackageIds $FallbackPackageIds -DisplayName $DisplayName -CheckOnly:$CheckOnly
+    $installed = Install-HoloAssistantWingetPackage -PackageId $PackageId -FallbackPackageIds $FallbackPackageIds -DisplayName $DisplayName -CheckOnly:$CheckOnly
     if (-not $installed) {
         return $false
     }
 
-    Update-DittoPath
-    if (Test-DittoCommand $CommandName) {
-        Write-DittoOk "$DisplayName ora disponibile."
+    Update-HoloAssistantPath
+    if (Test-HoloAssistantCommand $CommandName) {
+        Write-HoloAssistantOk "$DisplayName ora disponibile."
         return $true
     }
 
-    Write-DittoError "$DisplayName risulta installato, ma non e' ancora disponibile nel PATH di questa finestra."
-    Write-DittoInfo "Chiudi e riapri il terminale, poi rilancia lo script."
+    Write-HoloAssistantError "$DisplayName risulta installato, ma non e' ancora disponibile nel PATH di questa finestra."
+    Write-HoloAssistantInfo "Chiudi e riapri il terminale, poi rilancia lo script."
     return $false
 }
 
-function Get-DittoPythonCommand {
+function Get-HoloAssistantPythonCommand {
     param([switch]$CheckOnly)
 
-    if (Test-DittoCommand "py") {
+    if (Test-HoloAssistantCommand "py") {
         return @{ Exe = "py"; Args = @("-3") }
     }
-    if (Test-DittoCommand "python") {
+    if (Test-HoloAssistantCommand "python") {
         return @{ Exe = "python"; Args = @() }
     }
 
-    $installed = Install-DittoWingetPackage -PackageId "Python.Python.3.13" -FallbackPackageIds @("Python.Python.3.12") -DisplayName "Python 3" -CheckOnly:$CheckOnly
+    $installed = Install-HoloAssistantWingetPackage -PackageId "Python.Python.3.13" -FallbackPackageIds @("Python.Python.3.12") -DisplayName "Python 3" -CheckOnly:$CheckOnly
     if ($installed) {
-        Update-DittoPath
-        if (Test-DittoCommand "py") {
+        Update-HoloAssistantPath
+        if (Test-HoloAssistantCommand "py") {
             return @{ Exe = "py"; Args = @("-3") }
         }
-        if (Test-DittoCommand "python") {
+        if (Test-HoloAssistantCommand "python") {
             return @{ Exe = "python"; Args = @() }
         }
     }
@@ -679,7 +679,7 @@ function Get-DittoPythonCommand {
     throw "Python 3 non trovato. Installa Python 3.12+ oppure abilita winget e rilancia."
 }
 
-function Invoke-DittoPython {
+function Invoke-HoloAssistantPython {
     param(
         [Parameter(Mandatory=$true)][hashtable]$Python,
         [string[]]$Arguments = @(),
@@ -687,19 +687,19 @@ function Invoke-DittoPython {
         [string]$FailureMessage = "Comando Python fallito."
     )
 
-    Invoke-DittoToolChecked -FilePath $Python.Exe -Arguments (@($Python.Args) + $Arguments) -WorkingDirectory $WorkingDirectory -FailureMessage $FailureMessage
+    Invoke-HoloAssistantToolChecked -FilePath $Python.Exe -Arguments (@($Python.Args) + $Arguments) -WorkingDirectory $WorkingDirectory -FailureMessage $FailureMessage
 }
 
-function Get-DittoLocalIp {
+function Get-HoloAssistantLocalIp {
     try {
         $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
             Sort-Object RouteMetric, InterfaceMetric |
             Select-Object -First 1
         if ($defaultRoute) {
             $adapter = Get-NetAdapter -InterfaceIndex $defaultRoute.InterfaceIndex -ErrorAction Stop
-            if (-not (Test-DittoVirtualAdapterName -Name $adapter.Name) -and -not (Test-DittoVirtualAdapterName -Name $adapter.InterfaceDescription)) {
+            if (-not (Test-HoloAssistantVirtualAdapterName -Name $adapter.Name) -and -not (Test-HoloAssistantVirtualAdapterName -Name $adapter.InterfaceDescription)) {
                 $routeIp = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $defaultRoute.InterfaceIndex -ErrorAction Stop |
-                    Where-Object { Test-DittoUsableIpv4 -IpAddress $_.IPAddress } |
+                    Where-Object { Test-HoloAssistantUsableIpv4 -IpAddress $_.IPAddress } |
                     Select-Object -First 1 -ExpandProperty IPAddress
                 if ($routeIp) {
                     return $routeIp
@@ -712,8 +712,8 @@ function Get-DittoLocalIp {
     try {
         $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
             Where-Object {
-                (Test-DittoUsableIpv4 -IpAddress $_.IPAddress) -and
-                -not (Test-DittoVirtualAdapterName -Name $_.InterfaceAlias)
+                (Test-HoloAssistantUsableIpv4 -IpAddress $_.IPAddress) -and
+                -not (Test-HoloAssistantVirtualAdapterName -Name $_.InterfaceAlias)
             } |
             Select-Object -First 1 -ExpandProperty IPAddress
         if ($ip) {
@@ -722,16 +722,16 @@ function Get-DittoLocalIp {
     } catch {
     }
 
-    $ipconfigCandidates = Get-DittoIpconfigCandidates
+    $ipconfigCandidates = Get-HoloAssistantIpconfigCandidates
     $preferred = $ipconfigCandidates |
-        Where-Object { -not (Test-DittoVirtualAdapterName -Name $_.AdapterName) -and (Test-DittoUsableIpv4 -IpAddress $_.IPAddress) } |
+        Where-Object { -not (Test-HoloAssistantVirtualAdapterName -Name $_.AdapterName) -and (Test-HoloAssistantUsableIpv4 -IpAddress $_.IPAddress) } |
         Select-Object -First 1
     if ($preferred) {
         return $preferred.IPAddress
     }
 
     $fallback = $ipconfigCandidates |
-        Where-Object { Test-DittoUsableIpv4 -IpAddress $_.IPAddress } |
+        Where-Object { Test-HoloAssistantUsableIpv4 -IpAddress $_.IPAddress } |
         Select-Object -First 1
     if ($fallback) {
         return $fallback.IPAddress
@@ -740,7 +740,7 @@ function Get-DittoLocalIp {
     return "localhost"
 }
 
-function Get-DittoIpconfigCandidates {
+function Get-HoloAssistantIpconfigCandidates {
     $candidates = @()
     $currentAdapter = ""
 
@@ -761,7 +761,7 @@ function Get-DittoIpconfigCandidates {
     return $candidates
 }
 
-function Test-DittoUsableIpv4 {
+function Test-HoloAssistantUsableIpv4 {
     param([string]$IpAddress)
 
     if (-not $IpAddress) {
@@ -789,7 +789,7 @@ function Test-DittoUsableIpv4 {
         $IpAddress -notlike "172.31.*"
 }
 
-function Test-DittoVirtualAdapterName {
+function Test-HoloAssistantVirtualAdapterName {
     param([string]$Name)
 
     if (-not $Name) {
@@ -799,7 +799,7 @@ function Test-DittoVirtualAdapterName {
     return $Name -match "(?i)wsl|docker|vEthernet|Hyper-V|Loopback|Bluetooth|VMware|VirtualBox|Tailscale|ZeroTier"
 }
 
-function Read-DittoEnvFile {
+function Read-HoloAssistantEnvFile {
     param([Parameter(Mandatory=$true)][string]$Path)
 
     $values = @{}
@@ -817,7 +817,7 @@ function Read-DittoEnvFile {
     return $values
 }
 
-function Set-DittoEnvValues {
+function Set-HoloAssistantEnvValues {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][hashtable]$Values
@@ -847,8 +847,8 @@ function Set-DittoEnvValues {
     Set-Content -Path $Path -Value $lines -Encoding ascii
 }
 
-function Get-DittoWslDistributions {
-    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--quiet")
+function Get-HoloAssistantWslDistributions {
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--quiet")
     if ($result.ExitCode -ne 0) {
         return @()
     }
@@ -856,8 +856,8 @@ function Get-DittoWslDistributions {
     return ,$distros
 }
 
-function Get-DittoWslRunningDistributions {
-    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--running", "--quiet")
+function Get-HoloAssistantWslRunningDistributions {
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("--list", "--running", "--quiet")
     if ($result.ExitCode -ne 0) {
         return @()
     }
@@ -865,17 +865,17 @@ function Get-DittoWslRunningDistributions {
     return ,$distros
 }
 
-function Get-DittoWslPrimaryIp {
+function Get-HoloAssistantWslPrimaryIp {
     param([string]$DistroName = "")
 
     if (-not $DistroName) {
-        $DistroName = Get-DittoWslDistributionName
+        $DistroName = Get-HoloAssistantWslDistributionName
     }
     if (-not $DistroName) {
         return ""
     }
 
-    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", "hostname -I | cut -d' ' -f1")
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", "hostname -I | cut -d' ' -f1")
     if ($result.ExitCode -ne 0) {
         return ""
     }
@@ -883,22 +883,22 @@ function Get-DittoWslPrimaryIp {
     return (($result.Output | Select-Object -First 1).Trim())
 }
 
-function Get-DittoDatabaseHost {
+function Get-HoloAssistantDatabaseHost {
     return "127.0.0.1"
 }
 
-function Get-DittoDatabaseHostCandidates {
+function Get-HoloAssistantDatabaseHostCandidates {
     $candidates = @("127.0.0.1", "localhost")
 
-    if ($env:DITTO_DOCKER_MODE -eq "wsl") {
-        $distroName = Get-DittoWslDistributionName
+    if ($env:HOLO_ASSISTANT_DOCKER_MODE -eq "wsl") {
+        $distroName = Get-HoloAssistantWslDistributionName
         if (-not $distroName) {
             throw "Docker e configurato in modalita WSL ma non risulta selezionata alcuna distribuzione WSL."
         }
 
-        $wslIp = Get-DittoWslPrimaryIp -DistroName $distroName
+        $wslIp = Get-HoloAssistantWslPrimaryIp -DistroName $distroName
         if (-not $wslIp) {
-            Write-DittoWarn "Docker e in modalita WSL ma non riesco a determinare l'IP della distro '$distroName'. Provero' solo loopback Windows."
+            Write-HoloAssistantWarn "Docker e in modalita WSL ma non riesco a determinare l'IP della distro '$distroName'. Provero' solo loopback Windows."
             return ,$candidates
         }
 
@@ -910,17 +910,17 @@ function Get-DittoDatabaseHostCandidates {
     return ,$candidates
 }
 
-function Resolve-DittoReachableDatabaseHost {
+function Resolve-HoloAssistantReachableDatabaseHost {
     param(
         [int]$Port = 5432,
         [int]$MaxAttemptsPerCandidate = 4
     )
 
-    $candidates = Get-DittoDatabaseHostCandidates
-    Write-DittoInfo "Host database candidati dal lato Windows (preferenza: localhost/127.0.0.1): $($candidates -join ', ')"
+    $candidates = Get-HoloAssistantDatabaseHostCandidates
+    Write-HoloAssistantInfo "Host database candidati dal lato Windows (preferenza: localhost/127.0.0.1): $($candidates -join ', ')"
 
     foreach ($candidate in $candidates) {
-        if (Wait-DittoTcpPort -TargetHost $candidate -Port $Port -MaxAttempts $MaxAttemptsPerCandidate) {
+        if (Wait-HoloAssistantTcpPort -TargetHost $candidate -Port $Port -MaxAttempts $MaxAttemptsPerCandidate) {
             return $candidate
         }
     }
@@ -928,29 +928,29 @@ function Resolve-DittoReachableDatabaseHost {
     throw "PostgreSQL non e raggiungibile da Windows su nessuno degli host candidati: $($candidates -join ', ')."
 }
 
-function Ensure-DittoWslDistroForDocker {
+function Ensure-HoloAssistantWslDistroForDocker {
     param(
-        [string]$PreferredDistro = $DittoWslInstallBaseDistro,
-        [string]$CustomDistroName = $DittoWslDedicatedDistro,
+        [string]$PreferredDistro = $HoloAssistantWslInstallBaseDistro,
+        [string]$CustomDistroName = $HoloAssistantWslDedicatedDistro,
         [switch]$CheckOnly
     )
 
-    $existingDistros = Get-DittoWslDistributions
+    $existingDistros = Get-HoloAssistantWslDistributions
 
     if ($existingDistros.Count -gt 0) {
         $selectedDistro = $existingDistros[0]
-        Set-DittoWslDistributionName -Name $selectedDistro
-        Write-DittoInfo "Trovata una distro WSL esistente. Uso la prima disponibile: $selectedDistro"
+        Set-HoloAssistantWslDistributionName -Name $selectedDistro
+        Write-HoloAssistantInfo "Trovata una distro WSL esistente. Uso la prima disponibile: $selectedDistro"
         return $selectedDistro
     }
 
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: nessuna distribuzione WSL trovata"
+        Write-HoloAssistantInfo "CheckOnly: nessuna distribuzione WSL trovata"
         return $null
     }
     
     # Crea nuova distribuzione dedicata
-    Write-DittoInfo "Creazione nuova distribuzione WSL dedicata: $CustomDistroName"
+    Write-HoloAssistantInfo "Creazione nuova distribuzione WSL dedicata: $CustomDistroName"
     Write-Host ""
     Write-Host "========================================"
     Write-Host "   CONFIGURAZIONE NUOVA DISTRIBUZIONE WSL"
@@ -958,7 +958,7 @@ function Ensure-DittoWslDistroForDocker {
     Write-Host ""
     Write-Host "Verra creata una nuova distribuzione Linux chiamata '$CustomDistroName'."
     Write-Host "Completa la configurazione quando richiesto:"
-    Write-Host "  1. Inserisci un username (es. ditto-user)"
+    Write-Host "  1. Inserisci un username (es. holo-assistant-user)"
     Write-Host "  2. Inserisci una password"
     Write-Host "  3. Conferma la password"
     Write-Host "Dopo la conferma della password tornerai automaticamente al setup."
@@ -969,7 +969,7 @@ function Ensure-DittoWslDistroForDocker {
         throw "Installazione distribuzione WSL fallita."
     }
 
-    Write-DittoInfo "Avvio iniziale di $CustomDistroName per completare la creazione dell'utente Linux..."
+    Write-HoloAssistantInfo "Avvio iniziale di $CustomDistroName per completare la creazione dell'utente Linux..."
     $firstLaunch = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $CustomDistroName, "--", "sh", "-lc", "exit 0") -NoNewWindow -Wait -PassThru
     if ($firstLaunch.ExitCode -ne 0) {
         throw "Inizializzazione della distribuzione $CustomDistroName fallita."
@@ -978,16 +978,16 @@ function Ensure-DittoWslDistroForDocker {
     Write-Host ""
     Read-Host "Configurazione Linux completata. Premi INVIO per continuare con l'installazione di Docker"
 
-    $newDistros = Get-DittoWslDistributions
+    $newDistros = Get-HoloAssistantWslDistributions
     if ($newDistros -notcontains $CustomDistroName) {
         throw "Distribuzione $CustomDistroName non trovata dopo l'installazione."
     }
 
-    Set-DittoWslDistributionName -Name $CustomDistroName
+    Set-HoloAssistantWslDistributionName -Name $CustomDistroName
     return $CustomDistroName
 }
 
-function Ensure-DittoDockerInWsl {
+function Ensure-HoloAssistantDockerInWsl {
     param(
         [Parameter(Mandatory=$true)][string]$DistroName,
         [switch]$CheckOnly
@@ -995,7 +995,7 @@ function Ensure-DittoDockerInWsl {
 
     if ($CheckOnly) {
         $checkCommand = "command -v docker >/dev/null 2>&1 && (docker compose version >/dev/null 2>&1 || sudo docker compose version >/dev/null 2>&1)"
-        $check = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", $checkCommand)
+        $check = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", $checkCommand)
         return $check.ExitCode -eq 0
     }
 
@@ -1036,35 +1036,35 @@ echo "[WSL] Verifico che Docker risponda..."
 echo "[WSL] Docker pronto nella distro."
 '@
 
-    Write-DittoInfo "Installazione Docker in $DistroName (potrebbe richiedere alcuni minuti)..."
-    Write-DittoInfo "Se dopo questa riga sembra fermo, molto probabilmente WSL sta aspettando la password Linux per sudo."
+    Write-HoloAssistantInfo "Installazione Docker in $DistroName (potrebbe richiedere alcuni minuti)..."
+    Write-HoloAssistantInfo "Se dopo questa riga sembra fermo, molto probabilmente WSL sta aspettando la password Linux per sudo."
     $dockerInstallScriptBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($dockerInstallScript))
     $bootstrapCommand = "printf '%s' $dockerInstallScriptBase64 | base64 -d | bash"
-    $result = Invoke-DittoCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", $bootstrapCommand)
+    $result = Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $DistroName, "--", "bash", "-lc", $bootstrapCommand)
     
     if ($result.ExitCode -ne 0) {
-        Write-DittoError "Installazione Docker fallita."
+        Write-HoloAssistantError "Installazione Docker fallita."
         if ($result.Output) {
             $result.Output | ForEach-Object { Write-Host $_ }
         }
         return $false
     }
     
-    Write-DittoOk "Docker installato in $DistroName"
+    Write-HoloAssistantOk "Docker installato in $DistroName"
     return $true
 }
 
-function New-DittoBackendEnv {
+function New-HoloAssistantBackendEnv {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
         [Parameter(Mandatory=$true)][string]$Ip,
         [Parameter(Mandatory=$true)][hashtable]$OllamaConfig,
         [string]$DatabaseHost = "",
-        [int]$FrontendPort = $DittoDefaultFrontendPort
+        [int]$FrontendPort = $HoloAssistantDefaultFrontendPort
     )
 
     if (-not $DatabaseHost) {
-        $DatabaseHost = Get-DittoDatabaseHost
+        $DatabaseHost = Get-HoloAssistantDatabaseHost
     }
 
     $databasePassword = -join (([guid]::NewGuid().ToString("N")), ([guid]::NewGuid().ToString("N")))
@@ -1086,7 +1086,7 @@ function New-DittoBackendEnv {
         "DATABASE_PORT=5432",
         "DATABASE_USER=postgres",
         "DATABASE_PASSWORD=$databasePassword",
-        "DATABASE_NAME=ditto_db",
+        "DATABASE_NAME=holo_assistant_db",
         "SECRET_KEY=$secretKey",
         "ADMIN_USERNAME=admin",
         "ADMIN_PASSWORD=$adminPassword",
@@ -1120,13 +1120,13 @@ function New-DittoBackendEnv {
     Set-Content -Path $Path -Value $lines -Encoding ascii
 }
 
-function Get-DittoOllamaConfig {
+function Get-HoloAssistantOllamaConfig {
     param([Parameter(Mandatory=$true)][string]$BackendEnvPath)
 
-    $envValues = Read-DittoEnvFile -Path $BackendEnvPath
+    $envValues = Read-HoloAssistantEnvFile -Path $BackendEnvPath
     return @{
-        Model = $(if ($envValues["OLLAMA_MODEL"]) { $envValues["OLLAMA_MODEL"] } else { $DittoDefaultOllamaModel })
-        BaseUrl = $DittoDefaultOllamaBaseUrl
+        Model = $(if ($envValues["OLLAMA_MODEL"]) { $envValues["OLLAMA_MODEL"] } else { $HoloAssistantDefaultOllamaModel })
+        BaseUrl = $HoloAssistantDefaultOllamaBaseUrl
         Runtime = "native"
         Accelerator = $(if ($envValues["OLLAMA_ACCELERATOR"]) { $envValues["OLLAMA_ACCELERATOR"] } else { "auto" })
         NativeVulkan = $(if ($envValues["OLLAMA_NATIVE_VULKAN"]) { $envValues["OLLAMA_NATIVE_VULKAN"] } elseif ($envValues["OLLAMA_VULKAN"]) { $envValues["OLLAMA_VULKAN"] } else { "1" })
@@ -1138,50 +1138,50 @@ function Get-DittoOllamaConfig {
     }
 }
 
-function Get-DittoOllamaRuntime {
+function Get-HoloAssistantOllamaRuntime {
     param(
         [Parameter(Mandatory=$true)][hashtable]$Config,
         [switch]$CheckOnly
     )
 
-    if (Test-DittoCommand "ollama") {
-        Write-DittoInfo "Runtime Ollama Windows: nativo."
+    if (Test-HoloAssistantCommand "ollama") {
+        Write-HoloAssistantInfo "Runtime Ollama Windows: nativo."
         return @{ UseNative = $true; ComposeArgs = @("-f", "docker-compose.yml") }
     }
 
-    if (-not (Invoke-DittoOllamaInstallScript -CheckOnly:$CheckOnly)) {
+    if (-not (Invoke-HoloAssistantOllamaInstallScript -CheckOnly:$CheckOnly)) {
         throw "Ollama nativo non disponibile."
     }
-    Update-DittoPath
-    if (-not (Test-DittoCommand "ollama")) {
+    Update-HoloAssistantPath
+    if (-not (Test-HoloAssistantCommand "ollama")) {
         throw "Ollama risulta installato ma non e' ancora disponibile nel PATH di questa finestra."
     }
 
     return @{ UseNative = $true; ComposeArgs = @("-f", "docker-compose.yml") }
 }
 
-function Ensure-DittoDocker {
+function Ensure-HoloAssistantDocker {
     param(
         [switch]$CheckOnly
     )
 
-    $env:DITTO_DOCKER_MODE = ""
-    $direct = Test-DittoDockerDirectReady
+    $env:HOLO_ASSISTANT_DOCKER_MODE = ""
+    $direct = Test-HoloAssistantDockerDirectReady
     if ($direct.Ready) {
-        $env:DITTO_DOCKER_MODE = "windows"
-        Write-DittoOk "Docker disponibile nel runtime Windows corrente."
+        $env:HOLO_ASSISTANT_DOCKER_MODE = "windows"
+        Write-HoloAssistantOk "Docker disponibile nel runtime Windows corrente."
         return
     }
 
-    $wslStatus = Get-DittoWslStatus
-    Write-DittoInfo "Stato WSL: $($wslStatus.Summary)"
+    $wslStatus = Get-HoloAssistantWslStatus
+    Write-HoloAssistantInfo "Stato WSL: $($wslStatus.Summary)"
 
     if ($CheckOnly) {
-        $wslDocker = Test-DittoDockerInWslReady
-        Write-DittoInfo "CheckOnly: Docker Windows pronto: $($direct.Ready)"
-        Write-DittoInfo "CheckOnly: Docker via WSL pronto: $($wslDocker.Ready)"
+        $wslDocker = Test-HoloAssistantDockerInWslReady
+        Write-HoloAssistantInfo "CheckOnly: Docker Windows pronto: $($direct.Ready)"
+        Write-HoloAssistantInfo "CheckOnly: Docker via WSL pronto: $($wslDocker.Ready)"
         if ($wslDocker.DistroName) {
-            Write-DittoInfo "CheckOnly: distribuzione WSL selezionata: $($wslDocker.DistroName)"
+            Write-HoloAssistantInfo "CheckOnly: distribuzione WSL selezionata: $($wslDocker.DistroName)"
         }
         return
     }
@@ -1190,27 +1190,27 @@ function Ensure-DittoDocker {
         throw "WSL richiede un riavvio di Windows prima di completare il setup Docker."
     }
 
-    $distro = Ensure-DittoWslDocker
+    $distro = Ensure-HoloAssistantWslDocker
 
-    $wslDocker = Test-DittoDockerInWslReady
+    $wslDocker = Test-HoloAssistantDockerInWslReady
     if (-not $wslDocker.Ready) {
         throw "Docker in WSL non risponde ancora. Verifica $distro e il daemon Docker, poi rilancia lo script."
     }
 }
 
-function Test-DittoNeedsWindowsAdminForDockerBootstrap {
+function Test-HoloAssistantNeedsWindowsAdminForDockerBootstrap {
     param([switch]$CheckOnly)
 
-    if ($CheckOnly -or (Test-DittoIsAdmin)) {
+    if ($CheckOnly -or (Test-HoloAssistantIsAdmin)) {
         return $false
     }
 
-    $direct = Test-DittoDockerDirectReady
+    $direct = Test-HoloAssistantDockerDirectReady
     if ($direct.Ready) {
         return $false
     }
 
-    $wslStatus = Get-DittoWslStatus
+    $wslStatus = Get-HoloAssistantWslStatus
     if (-not $wslStatus.IsInstalled) {
         return $true
     }
@@ -1222,7 +1222,7 @@ function Test-DittoNeedsWindowsAdminForDockerBootstrap {
     return $false
 }
 
-function Start-DittoScriptElevated {
+function Start-HoloAssistantScriptElevated {
     param(
         [Parameter(Mandatory=$true)][string]$ScriptPath,
         [string[]]$ScriptArguments = @()
@@ -1236,8 +1236,8 @@ function Start-DittoScriptElevated {
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList ($argumentList -join " ")
 }
 
-function Use-DittoWritableDockerConfig {
-    if ($env:DITTO_DOCKER_CONFIG_READY -eq "1") {
+function Use-HoloAssistantWritableDockerConfig {
+    if ($env:HOLO_ASSISTANT_DOCKER_CONFIG_READY -eq "1") {
         return
     }
 
@@ -1257,77 +1257,100 @@ function Use-DittoWritableDockerConfig {
             }
         }
     } catch {
-        $fallbackDir = Join-Path $env:TEMP "ditto-docker-config"
+        $fallbackDir = Join-Path $env:TEMP "holo-assistant-docker-config"
         New-Item -ItemType Directory -Force -Path $fallbackDir | Out-Null
         $env:DOCKER_CONFIG = $fallbackDir
-        Write-DittoWarn "Docker config utente non leggibile: uso DOCKER_CONFIG temporaneo per questa sessione."
+        Write-HoloAssistantWarn "Docker config utente non leggibile: uso DOCKER_CONFIG temporaneo per questa sessione."
     }
-    $env:DITTO_DOCKER_CONFIG_READY = "1"
+    $env:HOLO_ASSISTANT_DOCKER_CONFIG_READY = "1"
 }
 
-function Ensure-DittoHttpsCertificate {
+function Ensure-HoloAssistantHttpsCertificate {
     param(
         [Parameter(Mandatory=$true)][string]$RootDir,
         [Parameter(Mandatory=$true)][string]$Ip,
         [switch]$CheckOnly
     )
 
-    $certFile = Join-Path $RootDir "certs\ditto.crt"
-    $keyFile = Join-Path $RootDir "certs\ditto.key"
+    $certFile = Join-Path $RootDir "certs\holo-assistant.crt"
+    $keyFile = Join-Path $RootDir "certs\holo-assistant.key"
     if ((Test-Path $certFile) -and (Test-Path $keyFile)) {
-        Write-DittoOk "HTTPS attivo con certificato: $certFile"
+        Write-HoloAssistantOk "HTTPS attivo con certificato: $certFile"
         return @{ CertFile = $certFile; KeyFile = $keyFile }
     }
 
-    Ensure-DittoCommand -CommandName "mkcert" -DisplayName "mkcert" -PackageId "FiloSottile.mkcert" -CheckOnly:$CheckOnly | Out-Null
+    Ensure-HoloAssistantCommand -CommandName "mkcert" -DisplayName "mkcert" -PackageId "FiloSottile.mkcert" -CheckOnly:$CheckOnly | Out-Null
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: non genero certificati HTTPS."
+        Write-HoloAssistantInfo "CheckOnly: non genero certificati HTTPS."
         return @{ CertFile = $certFile; KeyFile = $keyFile }
     }
 
-    if (-not (Test-DittoCommand "mkcert")) {
+    if (-not (Test-HoloAssistantCommand "mkcert")) {
         throw "mkcert non disponibile."
     }
 
     $certDir = Join-Path $RootDir "certs"
     New-Item -ItemType Directory -Force -Path $certDir | Out-Null
-    Write-DittoInfo "Genero certificato HTTPS per $Ip, localhost, 127.0.0.1 e ditto.lan..."
-    Invoke-DittoToolChecked -FilePath "mkcert" -Arguments @("-cert-file", $certFile, "-key-file", $keyFile, $Ip, "localhost", "127.0.0.1", "ditto.lan") -FailureMessage "Generazione certificato HTTPS fallita."
+    Write-HoloAssistantInfo "Genero certificato HTTPS per $Ip, localhost, 127.0.0.1 e holo-assistant.lan..."
+    Invoke-HoloAssistantToolChecked -FilePath "mkcert" -Arguments @("-cert-file", $certFile, "-key-file", $keyFile, $Ip, "localhost", "127.0.0.1", "holo-assistant.lan") -FailureMessage "Generazione certificato HTTPS fallita."
 
     if (-not (Test-Path $certFile) -or -not (Test-Path $keyFile)) {
         throw "Certificato HTTPS non creato correttamente."
     }
-    Write-DittoOk "Certificato HTTPS generato."
+    Write-HoloAssistantOk "Certificato HTTPS generato."
     return @{ CertFile = $certFile; KeyFile = $keyFile }
 }
 
-function Wait-DittoPostgres {
+function Wait-HoloAssistantPostgres {
     param([int]$MaxAttempts = 30)
 
-    Write-DittoInfo "Attendo che PostgreSQL sia pronto..."
+    Write-HoloAssistantInfo "Attendo che PostgreSQL sia pronto..."
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        $exitCode = Invoke-DittoDocker -Arguments @("exec", "ditto_postgres", "pg_isready", "-U", "postgres") -AllowFailure
+        $exitCode = Invoke-HoloAssistantDocker -Arguments @("exec", "holo_assistant_postgres", "pg_isready", "-U", "postgres") -AllowFailure
         if ($exitCode -eq 0) {
-            Write-DittoOk "PostgreSQL e' pronto."
+            Write-HoloAssistantOk "PostgreSQL e' pronto."
             return $true
         }
         if ($attempt -eq 1 -or $attempt % 5 -eq 0) {
-            Write-DittoInfo "PostgreSQL non e' ancora pronto, continuo ad aspettare..."
+            Write-HoloAssistantInfo "PostgreSQL non e' ancora pronto, continuo ad aspettare..."
         }
         Start-Sleep -Seconds 2
     }
-    Write-DittoWarn "PostgreSQL potrebbe non essere ancora pronto."
+    Write-HoloAssistantWarn "PostgreSQL potrebbe non essere ancora pronto."
     return $false
 }
 
-function Wait-DittoTcpPort {
+function Wait-HoloAssistantPostgresHealthy {
+    param([int]$MaxAttempts = 30)
+
+    Write-HoloAssistantInfo "Attendo che il container PostgreSQL diventi healthy..."
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $result = Invoke-HoloAssistantCapturedDocker -Arguments @("inspect", "-f", "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}", "holo_assistant_postgres")
+        if ($result.ExitCode -eq 0) {
+            $health = (($result.Output | Select-Object -First 1).Trim())
+            if ($health -eq "healthy") {
+                Write-HoloAssistantOk "Container PostgreSQL healthy."
+                return $true
+            }
+            if ($attempt -eq 1 -or $attempt % 5 -eq 0) {
+                Write-HoloAssistantInfo "Stato health PostgreSQL corrente: $health"
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Write-HoloAssistantWarn "Il container PostgreSQL non e diventato healthy in tempo."
+    return $false
+}
+
+function Wait-HoloAssistantTcpPort {
     param(
         [string]$TargetHost = "127.0.0.1",
         [int]$Port,
         [int]$MaxAttempts = 30
     )
 
-    Write-DittoInfo "Attendo che $TargetHost`:$Port sia raggiungibile dal lato Windows..."
+    Write-HoloAssistantInfo "Attendo che $TargetHost`:$Port sia raggiungibile dal lato Windows..."
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         $client = $null
         try {
@@ -1335,7 +1358,7 @@ function Wait-DittoTcpPort {
             $asyncResult = $client.BeginConnect($TargetHost, $Port, $null, $null)
             if ($asyncResult.AsyncWaitHandle.WaitOne(1000, $false)) {
                 $client.EndConnect($asyncResult)
-                Write-DittoOk "$TargetHost`:$Port raggiungibile."
+                Write-HoloAssistantOk "$TargetHost`:$Port raggiungibile."
                 return $true
             }
         } catch {
@@ -1346,24 +1369,52 @@ function Wait-DittoTcpPort {
         }
 
         if ($attempt -eq 1 -or $attempt % 5 -eq 0) {
-            Write-DittoInfo "La porta $TargetHost`:$Port non e ancora raggiungibile, continuo ad aspettare..."
+            Write-HoloAssistantInfo "La porta $TargetHost`:$Port non e ancora raggiungibile, continuo ad aspettare..."
         }
         Start-Sleep -Seconds 2
     }
 
-    Write-DittoWarn "La porta $TargetHost`:$Port non risulta raggiungibile."
+    Write-HoloAssistantWarn "La porta $TargetHost`:$Port non risulta raggiungibile."
     return $false
 }
 
-function Show-DittoPostgresDiagnostics {
-    param([string]$DockerDir = "")
+function Invoke-HoloAssistantCapturedDocker {
+    param(
+        [string[]]$Arguments,
+        [string]$WorkingDirectory = ""
+    )
 
-    Write-DittoWarn "Raccolgo diagnostica PostgreSQL..."
-    Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "ps") -WorkingDirectory $DockerDir -FailureMessage "Diagnostica docker compose ps fallita." -AllowFailure | Out-Null
-    Invoke-DittoDocker -Arguments @("compose", "-f", "docker-compose.yml", "logs", "--tail", "120", "postgres") -WorkingDirectory $DockerDir -FailureMessage "Diagnostica log postgres fallita." -AllowFailure | Out-Null
+    if ($env:HOLO_ASSISTANT_DOCKER_MODE -eq "wsl") {
+        $commandParts = @()
+        if ($WorkingDirectory) {
+            $wslDir = Convert-HoloAssistantWindowsPathToWsl -Path $WorkingDirectory
+            $commandParts += "cd $(Get-HoloAssistantShellQuotedValue $wslDir)"
+        }
+        if ($env:DATABASE_PASSWORD) {
+            $commandParts += "export DATABASE_PASSWORD=$(Get-HoloAssistantShellQuotedValue $env:DATABASE_PASSWORD)"
+        }
+        $commandParts += "export HOLO_ASSISTANT_POSTGRES_PORT_MAPPING='5432:5432'"
+        $commandParts += "export HOLO_ASSISTANT_ADMINER_PORT_MAPPING='8080:8080'"
+        $joinedArgs = ($Arguments | ForEach-Object { Get-HoloAssistantShellQuotedValue $_ }) -join " "
+        $commandParts += "docker $joinedArgs"
+        $command = ($commandParts -join " && ")
+        $distroName = Get-HoloAssistantWslDistributionName
+        return Invoke-HoloAssistantCapturedTool -FilePath "wsl.exe" -Arguments @("-d", $distroName, "--", "bash", "-lc", $command)
+    }
+
+    Use-HoloAssistantWritableDockerConfig
+    return Invoke-HoloAssistantCapturedTool -FilePath "docker" -Arguments $Arguments -WorkingDirectory $WorkingDirectory
 }
 
-function Test-DittoHttp {
+function Show-HoloAssistantPostgresDiagnostics {
+    param([string]$DockerDir = "")
+
+    Write-HoloAssistantWarn "Raccolgo diagnostica PostgreSQL..."
+    Invoke-HoloAssistantDocker -Arguments @("compose", "-f", "docker-compose.yml", "ps") -WorkingDirectory $DockerDir -FailureMessage "Diagnostica docker compose ps fallita." -AllowFailure | Out-Null
+    Invoke-HoloAssistantDocker -Arguments @("compose", "-f", "docker-compose.yml", "logs", "--tail", "120", "postgres") -WorkingDirectory $DockerDir -FailureMessage "Diagnostica log postgres fallita." -AllowFailure | Out-Null
+}
+
+function Test-HoloAssistantHttp {
     param(
         [Parameter(Mandatory=$true)][string]$Url,
         [int]$TimeoutSeconds = 3
@@ -1377,45 +1428,45 @@ function Test-DittoHttp {
     }
 }
 
-function Ensure-DittoNativeOllama {
+function Ensure-HoloAssistantNativeOllama {
     param(
         [Parameter(Mandatory=$true)][hashtable]$Config,
         [switch]$CheckOnly
     )
 
-    if (-not (Test-DittoCommand "ollama")) {
-        $installed = Invoke-DittoOllamaInstallScript -CheckOnly:$CheckOnly
+    if (-not (Test-HoloAssistantCommand "ollama")) {
+        $installed = Invoke-HoloAssistantOllamaInstallScript -CheckOnly:$CheckOnly
         if ($installed) {
-            Update-DittoPath
+            Update-HoloAssistantPath
         }
     }
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: non avvio Ollama nativo."
+        Write-HoloAssistantInfo "CheckOnly: non avvio Ollama nativo."
         return
     }
 
-    if (-not (Test-DittoCommand "ollama")) {
+    if (-not (Test-HoloAssistantCommand "ollama")) {
         throw "Ollama nativo non disponibile."
     }
 
-    if (Test-DittoHttp -Url "$($Config.BaseUrl)/api/tags") {
-        Write-DittoOk "Ollama nativo raggiungibile."
+    if (Test-HoloAssistantHttp -Url "$($Config.BaseUrl)/api/tags") {
+        Write-HoloAssistantOk "Ollama nativo raggiungibile."
         return
     }
 
-    Write-DittoInfo "Avvio Ollama nativo in background..."
+    Write-HoloAssistantInfo "Avvio Ollama nativo in background..."
     Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", "set OLLAMA_VULKAN=$($Config.NativeVulkan) && ollama serve") -WindowStyle Normal | Out-Null
     for ($attempt = 1; $attempt -le 20; $attempt++) {
         Start-Sleep -Seconds 2
-        if (Test-DittoHttp -Url "$($Config.BaseUrl)/api/tags") {
-            Write-DittoOk "Ollama nativo raggiungibile."
+        if (Test-HoloAssistantHttp -Url "$($Config.BaseUrl)/api/tags") {
+            Write-HoloAssistantOk "Ollama nativo raggiungibile."
             return
         }
     }
-    Write-DittoWarn "Ollama nativo non risponde ancora su $($Config.BaseUrl)."
+    Write-HoloAssistantWarn "Ollama nativo non risponde ancora su $($Config.BaseUrl)."
 }
 
-function Ensure-DittoOllamaModel {
+function Ensure-HoloAssistantOllamaModel {
     param(
         [Parameter(Mandatory=$true)][hashtable]$Config,
         [Parameter(Mandatory=$true)][hashtable]$Runtime,
@@ -1423,46 +1474,46 @@ function Ensure-DittoOllamaModel {
     )
 
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: non controllo ne' scarico il modello Ollama."
+        Write-HoloAssistantInfo "CheckOnly: non controllo ne' scarico il modello Ollama."
         return
     }
 
-    Write-DittoInfo "Preparazione modello AI: $($Config.Model)"
-    Ensure-DittoNativeOllama -Config $Config
+    Write-HoloAssistantInfo "Preparazione modello AI: $($Config.Model)"
+    Ensure-HoloAssistantNativeOllama -Config $Config
     $models = @(ollama list 2>$null)
     if (-not ($models | Select-String -SimpleMatch $Config.Model)) {
-        Write-DittoInfo "Modello non trovato in Ollama nativo. Inizio download con ollama pull..."
-        Invoke-DittoToolChecked -FilePath "ollama" -Arguments @("pull", $Config.Model) -FailureMessage "Pull modello Ollama nativo fallito."
+        Write-HoloAssistantInfo "Modello non trovato in Ollama nativo. Inizio download con ollama pull..."
+        Invoke-HoloAssistantToolChecked -FilePath "ollama" -Arguments @("pull", $Config.Model) -FailureMessage "Pull modello Ollama nativo fallito."
     }
-    Write-DittoOk "Modello $($Config.Model) pronto su Ollama nativo."
+    Write-HoloAssistantOk "Modello $($Config.Model) pronto su Ollama nativo."
 }
 
-function Invoke-DittoOllamaWarmup {
+function Invoke-HoloAssistantOllamaWarmup {
     param(
         [Parameter(Mandatory=$true)][hashtable]$Config,
         [switch]$CheckOnly
     )
 
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: salto warmup Ollama."
+        Write-HoloAssistantInfo "CheckOnly: salto warmup Ollama."
         return
     }
 
-    Write-DittoInfo "Attendo che Ollama risponda su $($Config.BaseUrl)..."
+    Write-HoloAssistantInfo "Attendo che Ollama risponda su $($Config.BaseUrl)..."
     $ready = $false
     for ($attempt = 1; $attempt -le 30; $attempt++) {
-        if (Test-DittoHttp -Url "$($Config.BaseUrl)/api/tags" -TimeoutSeconds 5) {
+        if (Test-HoloAssistantHttp -Url "$($Config.BaseUrl)/api/tags" -TimeoutSeconds 5) {
             $ready = $true
             break
         }
         Start-Sleep -Seconds 2
     }
     if (-not $ready) {
-        Write-DittoWarn "Ollama non risponde ancora all'endpoint /api/tags."
+        Write-HoloAssistantWarn "Ollama non risponde ancora all'endpoint /api/tags."
         return
     }
 
-    Write-DittoInfo "Warmup modello AI in corso..."
+    Write-HoloAssistantInfo "Warmup modello AI in corso..."
     $body = @{
         model = $Config.Model
         prompt = "Rispondi solo OK"
@@ -1481,13 +1532,13 @@ function Invoke-DittoOllamaWarmup {
 
     try {
         Invoke-RestMethod -Uri "$($Config.BaseUrl)/api/generate" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 120 | Out-Null
-        Write-DittoOk "Modello AI pronto."
+        Write-HoloAssistantOk "Modello AI pronto."
     } catch {
-        Write-DittoWarn "Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento."
+        Write-HoloAssistantWarn "Warmup Ollama non completato. Il primo prompt potrebbe essere piu' lento."
     }
 }
 
-function Ensure-DittoBackendDependencies {
+function Ensure-HoloAssistantBackendDependencies {
     param(
         [Parameter(Mandatory=$true)][string]$BackendDir,
         [Parameter(Mandatory=$true)][hashtable]$Python,
@@ -1496,13 +1547,13 @@ function Ensure-DittoBackendDependencies {
 
     $venvDir = Join-Path $BackendDir "venv"
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: verifico solo se venv esiste: $([bool](Test-Path $venvDir))"
+        Write-HoloAssistantInfo "CheckOnly: verifico solo se venv esiste: $([bool](Test-Path $venvDir))"
         return
     }
 
     if (-not (Test-Path $venvDir)) {
-        Write-DittoInfo "Creo ambiente virtuale backend..."
-        Invoke-DittoPython -Python $Python -Arguments @("-m", "venv", "venv") -WorkingDirectory $BackendDir -FailureMessage "Creazione venv fallita."
+        Write-HoloAssistantInfo "Creo ambiente virtuale backend..."
+        Invoke-HoloAssistantPython -Python $Python -Arguments @("-m", "venv", "venv") -WorkingDirectory $BackendDir -FailureMessage "Creazione venv fallita."
     }
 
     $venvPython = Join-Path $venvDir "Scripts\python.exe"
@@ -1510,56 +1561,56 @@ function Ensure-DittoBackendDependencies {
         throw "Python del virtualenv non trovato: $venvPython"
     }
 
-    Ensure-DittoPipCurrent -VenvPython $venvPython -BackendDir $BackendDir
+    Ensure-HoloAssistantPipCurrent -VenvPython $venvPython -BackendDir $BackendDir
 
     if (Test-Path (Join-Path $BackendDir "requirements.txt")) {
-        Write-DittoInfo "Installo dipendenze Python del backend da requirements.txt. Questa fase puo' richiedere un po' di tempo..."
-        Invoke-DittoToolChecked -FilePath $venvPython -Arguments @("-m", "pip", "install", "-r", "requirements.txt", "--quiet") -WorkingDirectory $BackendDir -FailureMessage "Installazione dipendenze Python fallita."
+        Write-HoloAssistantInfo "Installo dipendenze Python del backend da requirements.txt. Questa fase puo' richiedere un po' di tempo..."
+        Invoke-HoloAssistantToolChecked -FilePath $venvPython -Arguments @("-m", "pip", "install", "-r", "requirements.txt", "--quiet") -WorkingDirectory $BackendDir -FailureMessage "Installazione dipendenze Python fallita."
     } else {
-        Write-DittoWarn "requirements.txt non trovato, installo dipendenze base."
-        Invoke-DittoToolChecked -FilePath $venvPython -Arguments @("-m", "pip", "install", "fastapi", "uvicorn", "sqlalchemy", "psycopg2-binary", "python-jose[cryptography]", "passlib[bcrypt]", "python-multipart", "python-dotenv", "requests", "--quiet") -WorkingDirectory $BackendDir -FailureMessage "Installazione dipendenze Python base fallita."
+        Write-HoloAssistantWarn "requirements.txt non trovato, installo dipendenze base."
+        Invoke-HoloAssistantToolChecked -FilePath $venvPython -Arguments @("-m", "pip", "install", "fastapi", "uvicorn", "sqlalchemy", "psycopg2-binary", "python-jose[cryptography]", "passlib[bcrypt]", "python-multipart", "python-dotenv", "requests", "--quiet") -WorkingDirectory $BackendDir -FailureMessage "Installazione dipendenze Python base fallita."
     }
 }
 
-function Ensure-DittoPipCurrent {
+function Ensure-HoloAssistantPipCurrent {
     param(
         [Parameter(Mandatory=$true)][string]$VenvPython,
         [Parameter(Mandatory=$true)][string]$BackendDir
     )
 
-    $before = Get-DittoPipVersion -VenvPython $VenvPython -BackendDir $BackendDir
+    $before = Get-HoloAssistantPipVersion -VenvPython $VenvPython -BackendDir $BackendDir
     if ($before) {
-        Write-DittoInfo "Verifico pip (versione attuale: $before)..."
+        Write-HoloAssistantInfo "Verifico pip (versione attuale: $before)..."
     } else {
-        Write-DittoInfo "Verifico pip..."
+        Write-HoloAssistantInfo "Verifico pip..."
     }
 
-    $upgrade = Invoke-DittoCapturedTool -FilePath $VenvPython -Arguments @("-m", "pip", "install", "--upgrade", "pip", "--quiet", "--disable-pip-version-check") -WorkingDirectory $BackendDir
+    $upgrade = Invoke-HoloAssistantCapturedTool -FilePath $VenvPython -Arguments @("-m", "pip", "install", "--upgrade", "pip", "--quiet", "--disable-pip-version-check") -WorkingDirectory $BackendDir
     if ($upgrade.ExitCode -ne 0) {
-        Write-DittoWarn "Aggiornamento pip non completato; continuo con la versione installata."
+        Write-HoloAssistantWarn "Aggiornamento pip non completato; continuo con la versione installata."
         if ($upgrade.Output) {
-            Write-DittoWarn ($upgrade.Output | Select-Object -Last 1)
+            Write-HoloAssistantWarn ($upgrade.Output | Select-Object -Last 1)
         }
         return
     }
 
-    $after = Get-DittoPipVersion -VenvPython $VenvPython -BackendDir $BackendDir
+    $after = Get-HoloAssistantPipVersion -VenvPython $VenvPython -BackendDir $BackendDir
     if ($before -and $after -and $before -ne $after) {
-        Write-DittoOk "pip aggiornato: $before -> $after"
+        Write-HoloAssistantOk "pip aggiornato: $before -> $after"
     } elseif ($after) {
-        Write-DittoOk "pip gia' aggiornato: $after"
+        Write-HoloAssistantOk "pip gia' aggiornato: $after"
     } else {
-        Write-DittoOk "pip verificato."
+        Write-HoloAssistantOk "pip verificato."
     }
 }
 
-function Get-DittoPipVersion {
+function Get-HoloAssistantPipVersion {
     param(
         [Parameter(Mandatory=$true)][string]$VenvPython,
         [Parameter(Mandatory=$true)][string]$BackendDir
     )
 
-    $result = Invoke-DittoCapturedTool -FilePath $VenvPython -Arguments @("-m", "pip", "--version") -WorkingDirectory $BackendDir
+    $result = Invoke-HoloAssistantCapturedTool -FilePath $VenvPython -Arguments @("-m", "pip", "--version") -WorkingDirectory $BackendDir
     if ($result.ExitCode -ne 0 -or -not $result.Output) {
         return ""
     }
@@ -1571,62 +1622,62 @@ function Get-DittoPipVersion {
     return $line
 }
 
-function Ensure-DittoFrontendDependencies {
+function Ensure-HoloAssistantFrontendDependencies {
     param(
         [Parameter(Mandatory=$true)][string]$FrontendDir,
         [switch]$CheckOnly
     )
 
-    Ensure-DittoCommand -CommandName "node" -DisplayName "Node.js" -PackageId "OpenJS.NodeJS.LTS" -CheckOnly:$CheckOnly | Out-Null
-    Ensure-DittoCommand -CommandName "npm" -DisplayName "npm" -PackageId "OpenJS.NodeJS.LTS" -CheckOnly:$CheckOnly | Out-Null
+    Ensure-HoloAssistantCommand -CommandName "node" -DisplayName "Node.js" -PackageId "OpenJS.NodeJS.LTS" -CheckOnly:$CheckOnly | Out-Null
+    Ensure-HoloAssistantCommand -CommandName "npm" -DisplayName "npm" -PackageId "OpenJS.NodeJS.LTS" -CheckOnly:$CheckOnly | Out-Null
 
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: verifico solo se node_modules esiste: $([bool](Test-Path (Join-Path $FrontendDir "node_modules")))"
+        Write-HoloAssistantInfo "CheckOnly: verifico solo se node_modules esiste: $([bool](Test-Path (Join-Path $FrontendDir "node_modules")))"
         return
     }
 
-    if (-not (Test-DittoCommand "npm")) {
+    if (-not (Test-HoloAssistantCommand "npm")) {
         throw "npm non disponibile."
     }
 
     if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
-        Write-DittoInfo "Installo dipendenze Node.js del frontend. Questa fase puo' richiedere qualche minuto..."
-        Invoke-DittoToolChecked -FilePath "npm" -Arguments @("install") -WorkingDirectory $FrontendDir -FailureMessage "Installazione dipendenze frontend fallita."
+        Write-HoloAssistantInfo "Installo dipendenze Node.js del frontend. Questa fase puo' richiedere qualche minuto..."
+        Invoke-HoloAssistantToolChecked -FilePath "npm" -Arguments @("install") -WorkingDirectory $FrontendDir -FailureMessage "Installazione dipendenze frontend fallita."
     } else {
-        Write-DittoOk "Dipendenze Node.js gia' installate."
+        Write-HoloAssistantOk "Dipendenze Node.js gia' installate."
     }
 }
 
-function Test-DittoPiperVoiceModelPresent {
+function Test-HoloAssistantPiperVoiceModelPresent {
     param([Parameter(Mandatory=$true)][string]$BackendDir)
 
-    $modelPath = Join-Path $BackendDir "app\services\voice_models\$DittoPiperDefaultVoiceModelFilename"
-    $configPath = Join-Path $BackendDir "app\services\voice_models\$DittoPiperDefaultVoiceConfigFilename"
+    $modelPath = Join-Path $BackendDir "app\services\voice_models\$HoloAssistantPiperDefaultVoiceModelFilename"
+    $configPath = Join-Path $BackendDir "app\services\voice_models\$HoloAssistantPiperDefaultVoiceConfigFilename"
     return (Test-Path $modelPath) -and (Test-Path $configPath)
 }
 
-function Ensure-DittoPiperVoiceModel {
+function Ensure-HoloAssistantPiperVoiceModel {
     param(
         [Parameter(Mandatory=$true)][string]$RootDir,
         [Parameter(Mandatory=$true)][string]$BackendDir,
         [switch]$CheckOnly
     )
 
-    if (Test-DittoPiperVoiceModelPresent -BackendDir $BackendDir) {
-        Write-DittoOk "Modello Piper gia' presente."
+    if (Test-HoloAssistantPiperVoiceModelPresent -BackendDir $BackendDir) {
+        Write-HoloAssistantOk "Modello Piper gia' presente."
         return
     }
 
     if ($CheckOnly) {
-        Write-DittoInfo "CheckOnly: modello Piper presente: False"
+        Write-HoloAssistantInfo "CheckOnly: modello Piper presente: False"
         return
     }
 
-    Write-DittoInfo "Preparo voce Piper predefinita..."
-    Invoke-DittoToolChecked -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $RootDir "scripts\windows\prepare_piper_model.ps1")) -FailureMessage "Preparazione modello Piper fallita."
+    Write-HoloAssistantInfo "Preparo voce Piper predefinita..."
+    Invoke-HoloAssistantToolChecked -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $RootDir "scripts\windows\prepare_piper_model.ps1")) -FailureMessage "Preparazione modello Piper fallita."
 }
 
-function Start-DittoCmdWindow {
+function Start-HoloAssistantCmdWindow {
     param(
         [Parameter(Mandatory=$true)][string]$Title,
         [Parameter(Mandatory=$true)][string]$Command

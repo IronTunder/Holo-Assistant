@@ -4,8 +4,8 @@ import os
 
 from passlib.context import CryptContext
 
-if os.getenv("DITTO_ALLOW_DEMO_SEED", "false").lower() != "true":
-    raise SystemExit("Demo seed disabilitato. Imposta DITTO_ALLOW_DEMO_SEED=true per popolare dati dimostrativi.")
+if os.getenv("HOLO_ASSISTANT_ALLOW_DEMO_SEED", "false").lower() != "true":
+    raise SystemExit("Demo seed disabilitato. Imposta HOLO_ASSISTANT_ALLOW_DEMO_SEED=true per popolare dati dimostrativi.")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
