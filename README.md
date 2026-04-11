@@ -445,6 +445,6 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 9 aprile 2026
+- ultimo aggiornamento documentazione: 10 aprile 2026
 - script pubblici supportati: `setup.bat`, `start.bat`, `./setup.sh`, `./start.sh`
 - controlli non distruttivi Unix: `./setup.sh --check-only`, `./start.sh --check-only`
