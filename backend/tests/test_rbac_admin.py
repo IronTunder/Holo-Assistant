@@ -10,19 +10,44 @@ from sqlalchemy.pool import StaticPool
 from app import models  # noqa: F401
 from app.api.admin import (
     DepartmentRequest,
+    MachineUpdateRequest,
     RoleRequest,
+    UserUpdateRequest,
     create_department,
     create_role,
     delete_department,
+    delete_machine,
+    delete_user,
     list_departments_metadata,
+    update_machine,
     update_role,
+    update_user,
 )
-from app.api.auth.auth import user_has_permission
-from app.api.auth.auth import BadgeLoginRequest, LogoutRequest, badge_login, create_refresh_token, logout
+from app.api.auth.auth import (
+    BadgeLoginRequest,
+    CredentialsLoginRequest,
+    LogoutRequest,
+    SSETokenRequest,
+    badge_login,
+    create_operator_sse_token,
+    create_refresh_token,
+    credentials_login,
+    get_password_hash,
+    logout,
+    user_has_permission,
+)
 from app.database import Base
 from app.models.department import Department
 from app.models.machine import Machine
-from app.models.role import ADMIN_ROLE_CODE, ALL_PERMISSIONS, MAINTENANCE_TECH_ROLE_CODE, Role
+from app.models.role import (
+    ADMIN_DEFAULT_PERMISSIONS,
+    ADMIN_ROLE_CODE,
+    ALL_PERMISSIONS,
+    MAINTENANCE_TECH_DEFAULT_PERMISSIONS,
+    MAINTENANCE_TECH_ROLE_CODE,
+    OPERATOR_DEFAULT_PERMISSIONS,
+    Role,
+)
 from app.models.user import LivelloEsperienza, RefreshToken, Ruolo, Turno, User
 from app.services.cache import admin_metadata_cache
 
@@ -54,7 +79,7 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
             is_system=True,
             is_active=True,
         )
-        self.admin_role.permissions = ALL_PERMISSIONS
+        self.admin_role.permissions = ADMIN_DEFAULT_PERMISSIONS
         self.tech_role = Role(
             name="Tecnico Manutenzione",
             code=MAINTENANCE_TECH_ROLE_CODE,
@@ -63,11 +88,7 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
             is_active=True,
         )
         self.tech_role.permissions = [
-            "backoffice.access",
-            "maintenance.view",
-            "emergencies.view",
-            "logs.view",
-            "interactions.resolve",
+            *MAINTENANCE_TECH_DEFAULT_PERMISSIONS,
         ]
         self.operator_role = Role(
             name="Operaio",
@@ -76,14 +97,14 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
             is_system=True,
             is_active=True,
         )
-        self.operator_role.permissions = []
+        self.operator_role.permissions = OPERATOR_DEFAULT_PERMISSIONS
         department = Department(name="Manutenzione", code="manutenzione", is_active=True)
         self.db.add_all([self.admin_role, self.tech_role, self.operator_role, department])
         self.db.flush()
         self.admin = User(
             nome="Admin",
             badge_id="ADMIN",
-            password_hash="hash",
+            password_hash=get_password_hash("admin-password"),
             ruolo=Ruolo.ADMIN,
             role_id=self.admin_role.id,
             livello_esperienza=LivelloEsperienza.SENIOR,
@@ -94,7 +115,7 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.technician = User(
             nome="Tecnico",
             badge_id="TECH",
-            password_hash="hash",
+            password_hash=get_password_hash("tech-password"),
             ruolo=Ruolo.OPERAIO,
             role_id=self.tech_role.id,
             livello_esperienza=LivelloEsperienza.MANUTENTORE,
@@ -105,7 +126,7 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.operator = User(
             nome="Operaio",
             badge_id="OP",
-            password_hash="hash",
+            password_hash=get_password_hash("operator-password"),
             ruolo=Ruolo.OPERAIO,
             role_id=self.operator_role.id,
             livello_esperienza=LivelloEsperienza.OPERAIO,
@@ -122,6 +143,9 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(user_has_permission(self.technician, "interactions.resolve"))
         self.assertFalse(user_has_permission(self.technician, "users.manage"))
         self.assertFalse(user_has_permission(self.operator, "backoffice.access"))
+        self.assertTrue(user_has_permission(self.operator, "operator.interface.access"))
+        self.assertFalse(user_has_permission(self.admin, "operator.interface.access"))
+        self.assertFalse(user_has_permission(self.technician, "operator.interface.access"))
 
     async def test_create_role_and_protect_admin_permissions(self) -> None:
         created_role = await create_role(
@@ -154,6 +178,7 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(context.exception.status_code, 400)
+        self.assertEqual(set(self.admin_role.permissions), set(ADMIN_DEFAULT_PERMISSIONS))
 
     async def test_delete_department_with_linked_machine_disables_it(self) -> None:
         machine = Machine(
@@ -304,6 +329,247 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(stale_machine.operatore_attuale_id)
         self.assertTrue(target_machine.in_uso)
         self.assertEqual(target_machine.operatore_attuale_id, self.operator.id)
+
+    async def test_operator_system_role_defaults_to_operator_interface_permission(self) -> None:
+        self.assertEqual(self.operator_role.permissions, OPERATOR_DEFAULT_PERMISSIONS)
+        self.assertEqual(self.tech_role.permissions, MAINTENANCE_TECH_DEFAULT_PERMISSIONS)
+        self.assertEqual(self.admin_role.permissions, ADMIN_DEFAULT_PERMISSIONS)
+        self.assertIn("operator.interface.access", ALL_PERMISSIONS)
+
+    async def test_badge_login_requires_operator_interface_permission(self) -> None:
+        self.operator_role.permissions = []
+        self.db.commit()
+
+        machine = Machine(
+            nome="Pressa",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-5",
+            startup_checklist=[],
+            in_uso=False,
+        )
+        self.db.add(machine)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await badge_login(
+                BadgeLoginRequest(badge_id=self.operator.badge_id, machine_id=machine.id),
+                Response(),
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 403)
+        self.assertEqual(context.exception.detail, "Accesso interfaccia operatore non consentito")
+
+    async def test_credentials_login_requires_operator_interface_permission(self) -> None:
+        self.operator_role.permissions = []
+        self.db.commit()
+
+        machine = Machine(
+            nome="Tornio",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-6",
+            startup_checklist=[],
+            in_uso=False,
+        )
+        self.db.add(machine)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await credentials_login(
+                CredentialsLoginRequest(
+                    username=self.operator.nome,
+                    password="operator-password",
+                    machine_id=machine.id,
+                ),
+                Response(),
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 403)
+        self.assertEqual(context.exception.detail, "Accesso interfaccia operatore non consentito")
+
+    async def test_sse_token_requires_operator_interface_permission(self) -> None:
+        machine = Machine(
+            nome="Fresa",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-7",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+        self.db.refresh(machine)
+
+        with self.assertRaises(HTTPException) as context:
+            await create_operator_sse_token(
+                SSETokenRequest(machine_id=machine.id),
+                current_user=self.admin,
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 403)
+        self.assertEqual(context.exception.detail, "Accesso interfaccia operatore non consentito")
+
+    async def test_sse_token_allows_admin_when_operator_permission_is_explicitly_granted(self) -> None:
+        self.admin_role.permissions = [*ADMIN_DEFAULT_PERMISSIONS, "operator.interface.access"]
+        self.db.commit()
+
+        machine = Machine(
+            nome="Trapano",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-8",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.admin.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+        self.db.refresh(machine)
+
+        response = await create_operator_sse_token(
+            SSETokenRequest(machine_id=machine.id),
+            current_user=self.admin,
+            db=self.db,
+        )
+
+        self.assertTrue(response.token)
+        self.assertGreater(response.expires_in, 0)
+
+    async def test_sse_token_allows_technician_when_operator_permission_is_explicitly_granted(self) -> None:
+        self.tech_role.permissions = [*MAINTENANCE_TECH_DEFAULT_PERMISSIONS, "operator.interface.access"]
+        self.db.commit()
+
+        machine = Machine(
+            nome="Segatrice",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-9",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.technician.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+        self.db.refresh(machine)
+
+        response = await create_operator_sse_token(
+            SSETokenRequest(machine_id=machine.id),
+            current_user=self.technician,
+            db=self.db,
+        )
+
+        self.assertTrue(response.token)
+        self.assertGreater(response.expires_in, 0)
+
+    async def test_sse_token_returns_conflict_when_machine_session_is_invalid(self) -> None:
+        machine = Machine(
+            nome="Laser",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-10",
+            startup_checklist=[],
+            in_uso=False,
+            operatore_attuale_id=None,
+        )
+        self.db.add(machine)
+        self.db.commit()
+        self.db.refresh(machine)
+
+        with self.assertRaises(HTTPException) as context:
+            await create_operator_sse_token(
+                SSETokenRequest(machine_id=machine.id),
+                current_user=self.operator,
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 409)
+
+    async def test_update_machine_rejects_machine_in_use(self) -> None:
+        machine = Machine(
+            nome="Piegatrice",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-11",
+            startup_checklist=["Controllo olio"],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await update_machine(
+                machine.id,
+                MachineUpdateRequest(nome="Piegatrice X"),
+                admin=self.admin,
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 409)
+
+    async def test_delete_machine_rejects_machine_in_use(self) -> None:
+        machine = Machine(
+            nome="Rettifica",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-12",
+            startup_checklist=["Controllo protezioni"],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await delete_machine(machine.id, admin=self.admin, db=self.db)
+
+        self.assertEqual(context.exception.status_code, 409)
+
+    async def test_update_user_rejects_user_with_active_machine_session(self) -> None:
+        machine = Machine(
+            nome="Trapano Radiale",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-13",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await update_user(
+                self.operator.id,
+                UserUpdateRequest(nome="Operaio Nuovo"),
+                admin=self.admin,
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 409)
+
+    async def test_delete_user_rejects_user_with_active_machine_session(self) -> None:
+        machine = Machine(
+            nome="Centro CNC",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-14",
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(machine)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await delete_user(self.operator.id, admin=self.admin, db=self.db)
+
+        self.assertEqual(context.exception.status_code, 409)
 
 
 if __name__ == "__main__":

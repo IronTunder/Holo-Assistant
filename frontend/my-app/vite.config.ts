@@ -120,6 +120,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/working-stations': {
+        target: resolveBackendTarget(),
+        changeOrigin: true,
+        secure: false,
+      },
       '/admin/': {
         target: resolveBackendTarget(),
         changeOrigin: true,

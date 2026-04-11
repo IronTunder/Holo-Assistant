@@ -221,6 +221,53 @@ def _backfill_departments() -> None:
         db.close()
 
 
+def _backfill_working_stations() -> None:
+    from app.models.machine import Machine
+    from app.models.working_station import WorkingStation
+
+    db = SessionLocal()
+    try:
+        existing_by_code = {
+            station.station_code: station
+            for station in db.query(WorkingStation).all()
+            if station.station_code
+        }
+
+        for machine in db.query(Machine).all():
+            station_code = (machine.id_postazione or f"station-{machine.id}").strip()
+            station = existing_by_code.get(station_code)
+            if station is None:
+                station = WorkingStation(
+                    name=machine.nome,
+                    department_id=machine.department_id,
+                    description=machine.descrizione,
+                    station_code=station_code,
+                    startup_checklist=machine.startup_checklist or ["Controllo visivo iniziale"],
+                    in_uso=machine.in_uso,
+                    operatore_attuale_id=machine.operatore_attuale_id,
+                )
+                db.add(station)
+                db.flush()
+                existing_by_code[station_code] = station
+
+            if machine.working_station_id is None:
+                machine.working_station_id = station.id
+
+            if station.department_id is None and machine.department_id is not None:
+                station.department_id = machine.department_id
+            if not station.description and machine.descrizione:
+                station.description = machine.descrizione
+            if not station.startup_checklist:
+                station.startup_checklist = machine.startup_checklist or ["Controllo visivo iniziale"]
+            if machine.in_uso:
+                station.in_uso = True
+                station.operatore_attuale_id = machine.operatore_attuale_id
+
+        db.commit()
+    finally:
+        db.close()
+
+
 def _slugify_role_code(name: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
     return value[:64] or "role"
@@ -415,14 +462,90 @@ def apply_compatible_migrations():
                 "ix_machines_department_id",
                 "CREATE INDEX ix_machines_department_id ON machines (department_id)",
             )
+            _ensure_column(connection, inspector, "machines", "working_station_id", "working_station_id INTEGER")
+            _ensure_index(
+                connection,
+                inspector,
+                "machines",
+                "ix_machines_working_station_id",
+                "CREATE UNIQUE INDEX ix_machines_working_station_id ON machines (working_station_id)",
+            )
+
+        if "working_stations" in inspector.get_table_names():
+            _ensure_column(connection, inspector, "working_stations", "department_id", "department_id INTEGER")
+            _ensure_index(
+                connection,
+                inspector,
+                "working_stations",
+                "ix_working_stations_department_id",
+                "CREATE INDEX ix_working_stations_department_id ON working_stations (department_id)",
+            )
+            _ensure_column(connection, inspector, "working_stations", "description", "description TEXT")
+            _ensure_column(
+                connection,
+                inspector,
+                "working_stations",
+                "station_code",
+                "station_code VARCHAR(120)",
+            )
+            _ensure_column(
+                connection,
+                inspector,
+                "working_stations",
+                "startup_checklist",
+                "startup_checklist JSONB NOT NULL DEFAULT '[]'::jsonb",
+            )
+            _ensure_column(
+                connection,
+                inspector,
+                "working_stations",
+                "in_uso",
+                "in_uso BOOLEAN NOT NULL DEFAULT FALSE",
+            )
+            _ensure_column(connection, inspector, "working_stations", "operatore_attuale_id", "operatore_attuale_id INTEGER")
+            _ensure_index(
+                connection,
+                inspector,
+                "working_stations",
+                "ix_working_stations_operatore_attuale_id",
+                "CREATE INDEX ix_working_stations_operatore_attuale_id ON working_stations (operatore_attuale_id)",
+            )
+            connection.execute(
+                text(
+                    """
+                    UPDATE working_stations
+                    SET station_code = COALESCE(NULLIF(TRIM(station_code), ''), NULLIF(TRIM(name), ''), CONCAT('station-', id))
+                    WHERE station_code IS NULL OR TRIM(station_code) = ''
+                    """
+                )
+            )
+            connection.execute(
+                text("UPDATE working_stations SET startup_checklist = '[]'::jsonb WHERE startup_checklist IS NULL")
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "working_stations",
+                "ix_working_stations_station_code",
+                "CREATE UNIQUE INDEX ix_working_stations_station_code ON working_stations (station_code)",
+            )
 
         if "interaction_logs" in inspector.get_table_names():
+            interaction_columns = {
+                column["name"]: column
+                for column in inspector.get_columns("interaction_logs")
+            }
+            machine_id_column = interaction_columns.get("machine_id")
+            if machine_id_column and not machine_id_column.get("nullable", False):
+                connection.execute(text("ALTER TABLE interaction_logs ALTER COLUMN machine_id DROP NOT NULL"))
             _ensure_column(connection, inspector, "interaction_logs", "knowledge_item_id", "knowledge_item_id INTEGER")
             _ensure_column(connection, inspector, "interaction_logs", "feedback_status", "feedback_status VARCHAR(32)")
             _ensure_column(connection, inspector, "interaction_logs", "feedback_timestamp", "feedback_timestamp TIMESTAMP")
             _ensure_column(connection, inspector, "interaction_logs", "resolved_by_user_id", "resolved_by_user_id INTEGER")
             _ensure_column(connection, inspector, "interaction_logs", "resolution_note", "resolution_note TEXT")
             _ensure_column(connection, inspector, "interaction_logs", "resolution_timestamp", "resolution_timestamp TIMESTAMP")
+            _ensure_column(connection, inspector, "interaction_logs", "working_station_id", "working_station_id INTEGER")
+            _ensure_column(connection, inspector, "interaction_logs", "chat_session_id", "chat_session_id INTEGER")
             _ensure_column(
                 connection,
                 inspector,
@@ -465,6 +588,20 @@ def apply_compatible_migrations():
                 "ix_interaction_logs_priority",
                 "CREATE INDEX ix_interaction_logs_priority ON interaction_logs (priority)",
             )
+            _ensure_index(
+                connection,
+                inspector,
+                "interaction_logs",
+                "ix_interaction_logs_working_station_id",
+                "CREATE INDEX ix_interaction_logs_working_station_id ON interaction_logs (working_station_id)",
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "interaction_logs",
+                "ix_interaction_logs_chat_session_id",
+                "CREATE INDEX ix_interaction_logs_chat_session_id ON interaction_logs (chat_session_id)",
+            )
 
         if "knowledge_items" in inspector.get_table_names():
             _ensure_column(
@@ -501,8 +638,31 @@ def apply_compatible_migrations():
                 "CREATE UNIQUE INDEX ix_roles_code ON roles (code)",
             )
 
+        refresh_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("refresh_tokens")
+        }
+        if "working_station_id" not in refresh_columns:
+            _ensure_column(
+                connection,
+                inspector,
+                "refresh_tokens",
+                "working_station_id",
+                "working_station_id INTEGER",
+            )
+
+        if "operator_chat_sessions" in inspector.get_table_names():
+            _ensure_index(
+                connection,
+                inspector,
+                "operator_chat_sessions",
+                "ix_operator_chat_sessions_refresh_token_id",
+                "CREATE INDEX ix_operator_chat_sessions_refresh_token_id ON operator_chat_sessions (refresh_token_id)",
+            )
+
     _backfill_departments()
     _backfill_roles()
+    _backfill_working_stations()
     _migrate_legacy_preset_responses()
 
 def get_db():

@@ -8,22 +8,24 @@ import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AdminMachine, DepartmentOption } from './adminTypes';
+import type { AdminMachine, AdminWorkingStation, DepartmentOption } from './adminTypes';
 
 interface MachineFormProps {
   isOpen: boolean;
   onClose: () => void;
   machine: AdminMachine | null;
   departments: DepartmentOption[];
+  workingStations: AdminWorkingStation[];
   onSuccess: () => void;
 }
 
-export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }: MachineFormProps) => {
+export const MachineForm = ({ isOpen, onClose, machine, departments, workingStations, onSuccess }: MachineFormProps) => {
   const { apiCall } = useApiClient();
   const [nome, setNome] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [descrizione, setDescrizione] = useState('');
   const [idPostazione, setIdPostazione] = useState('');
+  const [workingStationId, setWorkingStationId] = useState('');
   const [startupChecklist, setStartupChecklist] = useState<string[]>(['']);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -37,6 +39,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
       setDepartmentId(machine.department_id ? String(machine.department_id) : '');
       setDescrizione(machine.descrizione || '');
       setIdPostazione(machine.id_postazione || '');
+      setWorkingStationId(machine.working_station_id ? String(machine.working_station_id) : 'none');
       setStartupChecklist(machine.startup_checklist?.length ? machine.startup_checklist : ['']);
       return;
     }
@@ -45,6 +48,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
     setDepartmentId(departments[0] ? String(departments[0].id) : '');
     setDescrizione('');
     setIdPostazione('');
+    setWorkingStationId('none');
     setStartupChecklist(['']);
   }, [departments, isOpen, machine]);
 
@@ -93,6 +97,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
         department_id: Number(departmentId),
         descrizione: descrizione.trim() || null,
         id_postazione: idPostazione.trim(),
+        working_station_id: workingStationId !== 'none' ? Number(workingStationId) : null,
         startup_checklist: startupChecklist.map((item) => item.trim()),
       };
 
@@ -160,6 +165,23 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, onSuccess }
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium">Descrizione</label>
               <Input value={descrizione} onChange={(event) => setDescrizione(event.target.value)} />
+            </div>
+
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium">Postazione associata</label>
+              <Select value={workingStationId} onValueChange={setWorkingStationId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Nessuna postazione" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nessuna postazione</SelectItem>
+                  {workingStations.map((workingStation) => (
+                    <SelectItem key={workingStation.id} value={String(workingStation.id)}>
+                      {workingStation.name} - {workingStation.station_code}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

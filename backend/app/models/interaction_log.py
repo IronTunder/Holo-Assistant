@@ -10,7 +10,9 @@ class InteractionLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=False)
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
+    working_station_id = Column(Integer, ForeignKey("working_stations.id"), nullable=True, index=True)
+    chat_session_id = Column(Integer, ForeignKey("operator_chat_sessions.id"), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     knowledge_item_id = Column(Integer, ForeignKey("knowledge_items.id"), nullable=True)
     domanda = Column(Text, nullable=False)
@@ -27,5 +29,7 @@ class InteractionLog(Base):
     user = relationship("User", foreign_keys=[user_id])
     resolved_by_user = relationship("User", foreign_keys=[resolved_by_user_id])
     machine = relationship("Machine")
+    working_station = relationship("WorkingStation")
+    chat_session = relationship("OperatorChatSession")
     category = relationship("Category")
     knowledge_item = relationship("KnowledgeItem")

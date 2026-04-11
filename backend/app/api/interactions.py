@@ -11,12 +11,16 @@ from app.api.auth.auth import verify_password
 from app.core.database import get_db
 from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
+from app.models.operator_chat_session import OperatorChatSession
 from app.models.user import User
+from app.models.working_station import WorkingStation
 from app.schemas.interaction import (
     AskQuestionRequest,
     AskQuestionResponse,
     InteractionFeedbackRequest,
     InteractionFeedbackResponse,
+    OperatorChatMessage,
+    OperatorChatSessionResponse,
     InteractionResolutionRequest,
     InteractionResolutionResponse,
     PendingQuickActionResponse,
@@ -75,8 +79,18 @@ def _build_interaction_event_payload(interaction: InteractionLog) -> dict:
         "interaction_id": interaction.id,
         "user_id": interaction.user_id,
         "user_name": interaction.user.nome if interaction.user else f"Utente {interaction.user_id}",
+        "working_station_id": interaction.working_station_id,
+        "working_station_name": (
+            interaction.working_station.name
+            if interaction.working_station
+            else f"Postazione {interaction.working_station_id}"
+        ),
         "machine_id": interaction.machine_id,
-        "machine_name": interaction.machine.nome if interaction.machine else f"Macchina {interaction.machine_id}",
+        "machine_name": (
+            interaction.machine.nome
+            if interaction.machine
+            else (f"Macchina {interaction.machine_id}" if interaction.machine_id is not None else None)
+        ),
         "category_id": interaction.category_id,
         "category_name": interaction.category.name if interaction.category else None,
         "knowledge_item_id": interaction.knowledge_item_id,
@@ -102,20 +116,21 @@ def _is_technician(user: User) -> bool:
 def _get_open_quick_action(
     db: Session,
     user_id: int,
-    machine_id: int,
+    working_station_id: int,
 ) -> InteractionLog | None:
     return (
         db.query(InteractionLog)
         .options(
             joinedload(InteractionLog.user),
             joinedload(InteractionLog.machine),
+            joinedload(InteractionLog.working_station),
             joinedload(InteractionLog.category),
             joinedload(InteractionLog.knowledge_item),
             joinedload(InteractionLog.resolved_by_user),
         )
         .filter(
             InteractionLog.user_id == user_id,
-            InteractionLog.machine_id == machine_id,
+            InteractionLog.working_station_id == working_station_id,
             InteractionLog.action_type.in_(("maintenance", "emergency")),
             InteractionLog.feedback_status == "unresolved",
         )
@@ -170,6 +185,84 @@ def _resolve_technician_user(
     return technician
 
 
+def _load_working_station(
+    db: Session,
+    working_station_id: int,
+) -> WorkingStation | None:
+    return (
+        db.query(WorkingStation)
+        .options(
+            joinedload(WorkingStation.assigned_machine),
+            joinedload(WorkingStation.department),
+        )
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+
+
+def _load_active_chat_session(
+    db: Session,
+    user_id: int,
+    working_station_id: int,
+) -> OperatorChatSession | None:
+    return (
+        db.query(OperatorChatSession)
+        .filter(
+            OperatorChatSession.user_id == user_id,
+            OperatorChatSession.working_station_id == working_station_id,
+            OperatorChatSession.is_active.is_(True),
+        )
+        .order_by(OperatorChatSession.started_at.desc(), OperatorChatSession.id.desc())
+        .first()
+    )
+
+
+def _build_chat_messages(interactions: list[InteractionLog]) -> list[OperatorChatMessage]:
+    messages: list[OperatorChatMessage] = []
+    for interaction in interactions:
+        timestamp = interaction.timestamp or datetime.now(timezone.utc)
+        messages.append(
+            OperatorChatMessage(
+                id=f"user-{interaction.id}",
+                role="user",
+                content=interaction.domanda,
+                timestamp=timestamp,
+                interaction_id=interaction.id,
+                action_type=interaction.action_type,
+                feedback_status=interaction.feedback_status,
+            )
+        )
+        if interaction.risposta:
+            messages.append(
+                OperatorChatMessage(
+                    id=f"assistant-{interaction.id}",
+                    role="assistant",
+                    content=interaction.risposta,
+                    timestamp=timestamp,
+                    interaction_id=interaction.id,
+                    action_type=interaction.action_type,
+                    feedback_status=interaction.feedback_status,
+                )
+            )
+        if interaction.feedback_status == "resolved" and interaction.resolution_timestamp:
+            messages.append(
+                OperatorChatMessage(
+                    id=f"system-{interaction.id}",
+                    role="system",
+                    content=(
+                        f"Intervento confermato da {interaction.resolved_by_user.nome}"
+                        if interaction.resolved_by_user
+                        else "Intervento confermato"
+                    ),
+                    timestamp=interaction.resolution_timestamp,
+                    interaction_id=interaction.id,
+                    action_type=interaction.action_type,
+                    feedback_status=interaction.feedback_status,
+                )
+            )
+    return messages
+
+
 @router.post("/ask", response_model=AskQuestionResponse)
 async def ask_question(
     request: AskQuestionRequest,
@@ -185,16 +278,46 @@ async def ask_question(
             if current_user is None:
                 raise HTTPException(status_code=401, detail="Utente non valido")
 
-        machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
+        working_station = _load_working_station(db, request.working_station_id)
+        if working_station is None:
+            logger.warning("Working station %s not found", request.working_station_id)
+            raise HTTPException(status_code=404, detail="Working station not found")
+        if not working_station.in_uso or working_station.operatore_attuale_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
+
+        machine = working_station.assigned_machine
+        chat_session = _load_active_chat_session(db, current_user.id, working_station.id)
+
         if machine is None:
-            logger.warning("Machine %s not found", request.machine_id)
-            raise HTTPException(status_code=404, detail="Machine not found")
-        if not machine.in_uso or machine.operatore_attuale_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Macchinario non assegnato all'utente corrente")
+            response_text = (
+                "Questa postazione non ha un macchinario associato. Posso gestire la sessione e le segnalazioni, "
+                "ma per risposte tecniche serve associare un macchinario in amministrazione."
+            )
+            interaction = InteractionLog(
+                user_id=current_user.id,
+                working_station_id=working_station.id,
+                chat_session_id=chat_session.id if chat_session else None,
+                domanda=request.question,
+                risposta=response_text,
+                action_type="question",
+                priority="normal",
+                feedback_status="not_applicable",
+                feedback_timestamp=datetime.now(timezone.utc),
+            )
+            db.add(interaction)
+            db.commit()
+            db.refresh(interaction)
+            return _build_response(
+                mode="fallback",
+                reason_code="out_of_scope",
+                response=response_text,
+                confidence=0.0,
+                interaction_id=interaction.id,
+            )
 
         retrieval_result = await knowledge_retrieval_service.resolve_question(
             db,
-            machine_id=request.machine_id,
+            machine_id=machine.id,
             question=request.question,
             selected_knowledge_item_id=request.selected_knowledge_item_id,
         )
@@ -209,9 +332,10 @@ async def ask_question(
             for candidate in retrieval_result.top_candidates
         ]
         logger.info(
-            "interaction route=%s machine_id=%s user_id=%s confidence=%.3f latency_ms=%.2f ollama_latency_ms=%s top_candidates=%s",
+            "interaction route=%s working_station_id=%s machine_id=%s user_id=%s confidence=%.3f latency_ms=%.2f ollama_latency_ms=%s top_candidates=%s",
             retrieval_result.route,
-            request.machine_id,
+            working_station.id,
+            machine.id,
             current_user.id,
             retrieval_result.confidence,
             total_latency_ms,
@@ -235,7 +359,9 @@ async def ask_question(
 
         interaction = InteractionLog(
             user_id=current_user.id,
-            machine_id=request.machine_id,
+            machine_id=machine.id,
+            working_station_id=working_station.id,
+            chat_session_id=chat_session.id if chat_session else None,
             category_id=selected_response.get("category_id") if selected_response else None,
             knowledge_item_id=selected_response.get("knowledge_item_id") if selected_response else None,
             domanda=request.question,
@@ -251,6 +377,7 @@ async def ask_question(
             .options(
                 joinedload(InteractionLog.user),
                 joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.working_station),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
                 joinedload(InteractionLog.resolved_by_user),
@@ -306,15 +433,17 @@ async def submit_quick_action(
         raise HTTPException(status_code=403, detail="Non puoi creare una segnalazione per un altro utente")
 
     try:
-        machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
-        if machine is None:
-            raise HTTPException(status_code=404, detail="Macchinario non trovato")
+        working_station = _load_working_station(db, request.working_station_id)
+        if working_station is None:
+            raise HTTPException(status_code=404, detail="Postazione non trovata")
+        if not working_station.in_uso or working_station.operatore_attuale_id != request.user_id:
+            raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
 
         user = db.query(User).filter(User.id == request.user_id).first()
         if user is None:
             raise HTTPException(status_code=404, detail="Utente non trovato")
 
-        existing_open_quick_action = _get_open_quick_action(db, request.user_id, request.machine_id)
+        existing_open_quick_action = _get_open_quick_action(db, request.user_id, request.working_station_id)
         if existing_open_quick_action is not None:
             raise HTTPException(
                 status_code=409,
@@ -327,9 +456,12 @@ async def submit_quick_action(
             )
 
         quick_action = QUICK_ACTION_COPY[request.action_type]
+        chat_session = _load_active_chat_session(db, request.user_id, request.working_station_id)
         interaction = InteractionLog(
             user_id=request.user_id,
-            machine_id=request.machine_id,
+            machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+            working_station_id=working_station.id,
+            chat_session_id=chat_session.id if chat_session else None,
             domanda=quick_action["domanda"],
             risposta=quick_action["risposta"],
             feedback_status="unresolved",
@@ -345,6 +477,7 @@ async def submit_quick_action(
             .options(
                 joinedload(InteractionLog.user),
                 joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.working_station),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
                 joinedload(InteractionLog.resolved_by_user),
@@ -387,14 +520,52 @@ async def submit_quick_action(
 
 @router.get("/pending-quick-action", response_model=PendingQuickActionResponse | None)
 async def get_pending_quick_action(
-    machine_id: int,
+    working_station_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    interaction = _get_open_quick_action(db, current_user.id, machine_id)
+    interaction = _get_open_quick_action(db, current_user.id, working_station_id)
     if interaction is None:
         return None
     return _build_pending_quick_action_response(interaction)
+
+
+@router.get("/session-history", response_model=OperatorChatSessionResponse)
+async def get_session_history(
+    working_station_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    working_station = _load_working_station(db, working_station_id)
+    if working_station is None:
+        raise HTTPException(status_code=404, detail="Postazione non trovata")
+    if working_station.operatore_attuale_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
+
+    chat_session = _load_active_chat_session(db, current_user.id, working_station_id)
+    if chat_session is None:
+        return OperatorChatSessionResponse(
+            chat_session_id=None,
+            working_station_id=working_station_id,
+            machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+            messages=[],
+        )
+
+    interactions = (
+        db.query(InteractionLog)
+        .options(
+            joinedload(InteractionLog.resolved_by_user),
+        )
+        .filter(InteractionLog.chat_session_id == chat_session.id)
+        .order_by(InteractionLog.timestamp.asc(), InteractionLog.id.asc())
+        .all()
+    )
+    return OperatorChatSessionResponse(
+        chat_session_id=chat_session.id,
+        working_station_id=working_station_id,
+        machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+        messages=_build_chat_messages(interactions),
+    )
 
 
 @router.post("/{interaction_id}/feedback", response_model=InteractionFeedbackResponse)
@@ -410,6 +581,7 @@ async def submit_interaction_feedback(
             .options(
                 joinedload(InteractionLog.user),
                 joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.working_station),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
                 joinedload(InteractionLog.resolved_by_user),
@@ -465,6 +637,7 @@ async def resolve_interaction(
             .options(
                 joinedload(InteractionLog.user),
                 joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.working_station),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
                 joinedload(InteractionLog.resolved_by_user),
@@ -497,6 +670,7 @@ async def resolve_interaction(
             .options(
                 joinedload(InteractionLog.user),
                 joinedload(InteractionLog.machine),
+                joinedload(InteractionLog.working_station),
                 joinedload(InteractionLog.category),
                 joinedload(InteractionLog.knowledge_item),
                 joinedload(InteractionLog.resolved_by_user),

@@ -57,6 +57,7 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
+    working_station_id = Column(Integer, ForeignKey("working_stations.id"), nullable=True)
     token = Column(String, unique=True, index=True, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_revoked = Column(Boolean, default=False, nullable=False)

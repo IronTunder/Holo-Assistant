@@ -14,12 +14,20 @@ from dotenv import load_dotenv
 import secrets
 
 from app.core.database import get_db
+from app.models.interaction_log import InteractionLog
+from app.models.operator_chat_session import OperatorChatSession
 from app.models.user import User, RefreshToken, Ruolo
-from app.models.role import ALL_PERMISSIONS
+from app.models.role import (
+    ADMIN_DEFAULT_PERMISSIONS,
+    ALL_PERMISSIONS,
+    MAINTENANCE_TECH_DEFAULT_PERMISSIONS,
+)
 from app.models.machine import Machine
+from app.models.working_station import WorkingStation
 from app.schemas.user import UserResponse
 from app.schemas.machine import MachineResponse
-from app.api.presenters import serialize_machine, serialize_operator, serialize_user
+from app.schemas.working_station import WorkingStationResponse
+from app.api.presenters import serialize_machine, serialize_operator, serialize_user, serialize_working_station
 from app.services.session_events import ADMIN_MACHINE_EVENTS_CHANNEL, session_event_bus
 
 load_dotenv()
@@ -73,15 +81,18 @@ SSE_TOKEN_EXPIRE_MINUTES = int(os.getenv("SSE_TOKEN_EXPIRE_MINUTES", "5"))
 REFRESH_TOKEN_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "holo_assistant_refresh_token")
 REFRESH_TOKEN_COOKIE_SECURE = os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false").lower() == "true"
 REFRESH_TOKEN_COOKIE_SAMESITE = os.getenv("REFRESH_TOKEN_COOKIE_SAMESITE", "lax")
+OPERATOR_INTERFACE_PERMISSION = "operator.interface.access"
 
 class BadgeLoginRequest(BaseModel):
     badge_id: str
-    machine_id: int
+    working_station_id: Optional[int] = None
+    machine_id: Optional[int] = None
 
 class CredentialsLoginRequest(BaseModel):
     username: str
     password: str
-    machine_id: int
+    working_station_id: Optional[int] = None
+    machine_id: Optional[int] = None
 
 class AdminLoginRequest(BaseModel):
     username: str
@@ -95,10 +106,12 @@ class RefreshTokenStatusRequest(BaseModel):
     refresh_token: Optional[str] = None
 
 class SSETokenRequest(BaseModel):
-    machine_id: int
+    working_station_id: Optional[int] = None
+    machine_id: Optional[int] = None
 
 class LogoutRequest(BaseModel):
     user_id: Optional[int] = None
+    working_station_id: Optional[int] = None
     machine_id: Optional[int] = None
     refresh_token: Optional[str] = None
 
@@ -108,7 +121,10 @@ class LoginResponse(BaseModel):
     token_type: str
     expires_in: int  # secondi fino a scadenza access token
     user: UserResponse
-    machine: MachineResponse
+    working_station: WorkingStationResponse
+    assigned_machine: Optional[MachineResponse] = None
+    chat_session_id: Optional[int] = None
+    machine: Optional[MachineResponse] = None
     message: Optional[str] = None
 
 class AdminLoginResponse(BaseModel):
@@ -164,15 +180,9 @@ def user_has_permission(user: User, permission: str) -> bool:
     if user.role is not None and user.role.is_active:
         return permission in user.role.permissions
     if user.ruolo == Ruolo.ADMIN:
-        return permission in ALL_PERMISSIONS
+        return permission in ADMIN_DEFAULT_PERMISSIONS
     if getattr(user.livello_esperienza, "value", user.livello_esperienza) == "manutentore":
-        return permission in {
-            "backoffice.access",
-            "maintenance.view",
-            "emergencies.view",
-            "logs.view",
-            "interactions.resolve",
-        }
+        return permission in MAINTENANCE_TECH_DEFAULT_PERMISSIONS
     return False
 
 
@@ -190,11 +200,11 @@ def verify_permission(permission: str):
 
 class SessionStatusResponse(BaseModel):
     session_valid: bool
-    machine_assigned: bool
-    machine_in_use: bool
+    working_station_assigned: bool
+    working_station_in_use: bool
     operator_matches: bool
     should_logout: bool
-    reason: Literal["ok", "machine_released", "machine_reassigned", "machine_not_found"]
+    reason: Literal["ok", "working_station_released", "working_station_reassigned", "working_station_not_found"]
 
 
 def _build_operator_payload(user: Optional[User]) -> Optional[dict]:
@@ -234,6 +244,7 @@ def build_machine_response_model(machine: Machine) -> MachineResponse:
         id=payload["id"],
         nome=payload["nome"],
         department_id=payload["department_id"],
+        working_station_id=payload["working_station_id"],
         department_name=payload["department_name"],
         reparto=payload["reparto"],
         descrizione=payload["descrizione"],
@@ -242,6 +253,38 @@ def build_machine_response_model(machine: Machine) -> MachineResponse:
         in_uso=payload["in_uso"],
         operatore_attuale_id=payload["operatore_attuale_id"],
     )
+
+
+def build_working_station_response_model(working_station: WorkingStation) -> WorkingStationResponse:
+    payload = serialize_working_station(working_station)
+    return WorkingStationResponse(
+        id=payload["id"],
+        name=payload["name"],
+        description=payload["description"],
+        station_code=payload["station_code"],
+        startup_checklist=payload["startup_checklist"],
+        department_id=payload["department_id"],
+        department_name=payload["department_name"],
+        reparto=payload["reparto"],
+        in_uso=payload["in_uso"],
+        operatore_attuale_id=payload["operatore_attuale_id"],
+        operator=payload["operator"],
+        assigned_machine=payload["assigned_machine"],
+        deleted=payload["deleted"],
+    )
+
+
+def resolve_requested_working_station_id(
+    working_station_id: Optional[int] = None,
+    machine_id: Optional[int] = None,
+) -> int:
+    resolved_id = working_station_id or machine_id
+    if resolved_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="working_station_id obbligatorio",
+        )
+    return resolved_id
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -255,11 +298,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def create_sse_token(user_id: int, machine_id: int) -> str:
+def create_sse_token(user_id: int, working_station_id: int) -> str:
     expire = utc_now() + timedelta(minutes=SSE_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user_id),
-        "machine_id": machine_id,
+        "working_station_id": working_station_id,
         "type": "sse",
         "exp": expire,
     }
@@ -307,6 +350,7 @@ def create_refresh_token(
     db: Session,
     expires_delta: timedelta,
     machine_id: Optional[int] = None,
+    working_station_id: Optional[int] = None,
 ) -> str:
     """Genera un refresh token e lo salva nel database."""
     token = secrets.token_urlsafe(32)
@@ -315,6 +359,7 @@ def create_refresh_token(
     refresh_token_db = RefreshToken(
         user_id=user_id,
         machine_id=machine_id,
+        working_station_id=working_station_id,
         token=token,
         expires_at=expires_at,
         is_revoked=False
@@ -429,50 +474,54 @@ def build_session_status_payload(
     machine: Optional[Machine],
     expected_user_id: int,
 ) -> SessionStatusResponse:
-    if not machine:
+    working_station = machine if isinstance(machine, WorkingStation) else None
+    if working_station is None and isinstance(machine, Machine):
+        working_station = machine.working_station
+
+    if not working_station:
         return SessionStatusResponse(
             session_valid=True,
-            machine_assigned=False,
-            machine_in_use=False,
+            working_station_assigned=False,
+            working_station_in_use=False,
             operator_matches=False,
             should_logout=True,
-            reason="machine_not_found",
+            reason="working_station_not_found",
         )
 
-    if not machine.in_uso:
+    if not working_station.in_uso:
         return SessionStatusResponse(
             session_valid=True,
-            machine_assigned=False,
-            machine_in_use=False,
+            working_station_assigned=False,
+            working_station_in_use=False,
             operator_matches=False,
             should_logout=True,
-            reason="machine_released",
+            reason="working_station_released",
         )
 
-    if machine.operatore_attuale_id is None:
+    if working_station.operatore_attuale_id is None:
         return SessionStatusResponse(
             session_valid=True,
-            machine_assigned=False,
-            machine_in_use=True,
+            working_station_assigned=False,
+            working_station_in_use=True,
             operator_matches=False,
             should_logout=True,
-            reason="machine_released",
+            reason="working_station_released",
         )
 
-    if machine.operatore_attuale_id != expected_user_id:
+    if working_station.operatore_attuale_id != expected_user_id:
         return SessionStatusResponse(
             session_valid=True,
-            machine_assigned=True,
-            machine_in_use=True,
+            working_station_assigned=True,
+            working_station_in_use=True,
             operator_matches=False,
             should_logout=True,
-            reason="machine_reassigned",
+            reason="working_station_reassigned",
         )
 
     return SessionStatusResponse(
         session_valid=True,
-        machine_assigned=True,
-        machine_in_use=True,
+        working_station_assigned=True,
+        working_station_in_use=True,
         operator_matches=True,
         should_logout=False,
         reason="ok",
@@ -485,15 +534,27 @@ async def publish_machine_session_event(
     machine_id: Optional[int] = None,
     db: Optional[Session] = None,
 ) -> None:
-    target_machine_id = machine.id if machine is not None else machine_id
-    if target_machine_id is None:
+    working_station = machine if isinstance(machine, WorkingStation) else None
+    if working_station is None and machine is not None:
+        working_station = machine.working_station
+    if working_station is None and machine_id is not None and db is not None:
+        resolved_machine = (
+            db.query(Machine)
+            .options(joinedload(Machine.working_station))
+            .filter(Machine.id == machine_id)
+            .first()
+        )
+        if resolved_machine is not None:
+            working_station = resolved_machine.working_station
+
+    if working_station is None:
         return
 
-    payload = build_session_status_payload(machine, expected_user_id).model_dump()
-    await session_event_bus.publish(target_machine_id, "session_status", payload)
+    payload = build_session_status_payload(working_station, expected_user_id).model_dump()
+    await session_event_bus.publish(working_station.id, "session_status", payload)
 
-    if machine is not None and db is not None:
-        await publish_admin_machine_event(db, machine)
+    if db is not None:
+        await publish_admin_working_station_event(db, working_station)
 
 
 async def publish_admin_machine_event(
@@ -513,29 +574,112 @@ async def publish_admin_machine_event(
     )
 
 
+async def publish_admin_working_station_event(
+    db: Session,
+    working_station: WorkingStation,
+    deleted: bool = False,
+) -> None:
+    operator = None
+    if working_station.operatore_attuale_id is not None:
+        operator = db.query(User).filter(User.id == working_station.operatore_attuale_id).first()
+
+    payload = serialize_working_station(working_station, operator=operator, deleted=deleted)
+    await session_event_bus.publish(
+        ADMIN_MACHINE_EVENTS_CHANNEL,
+        "working_station_status",
+        payload,
+    )
+
+
+def _sync_working_station_machine_state(working_station: WorkingStation) -> None:
+    assigned_machine = working_station.assigned_machine
+    if assigned_machine is None:
+        return
+    assigned_machine.in_uso = working_station.in_uso
+    assigned_machine.operatore_attuale_id = working_station.operatore_attuale_id
+
+
+def _delete_chat_session_logs(db: Session, chat_session_ids: list[int]) -> None:
+    if not chat_session_ids:
+        return
+    db.query(InteractionLog).filter(InteractionLog.chat_session_id.in_(chat_session_ids)).delete(
+        synchronize_session=False
+    )
+
+
+def _close_active_chat_sessions(
+    db: Session,
+    user_id: int,
+    working_station_id: Optional[int] = None,
+) -> None:
+    query = db.query(OperatorChatSession).filter(
+        OperatorChatSession.user_id == user_id,
+        OperatorChatSession.is_active.is_(True),
+    )
+    if working_station_id is not None:
+        query = query.filter(OperatorChatSession.working_station_id == working_station_id)
+
+    sessions = query.all()
+    if not sessions:
+        return
+
+    chat_session_ids = [session.id for session in sessions]
+    for session in sessions:
+        session.is_active = False
+        session.ended_at = utc_now()
+
+    _delete_chat_session_logs(db, chat_session_ids)
+    db.flush()
+
+
+def _create_operator_chat_session(
+    db: Session,
+    user_id: int,
+    working_station_id: int,
+    refresh_token_id: Optional[int] = None,
+) -> OperatorChatSession:
+    _close_active_chat_sessions(db, user_id, working_station_id)
+    chat_session = OperatorChatSession(
+        user_id=user_id,
+        working_station_id=working_station_id,
+        refresh_token_id=refresh_token_id,
+        is_active=True,
+    )
+    db.add(chat_session)
+    db.flush()
+    return chat_session
+
+
 async def release_user_machine_sessions(
     db: Session,
     user_id: int,
     requested_machine_id: Optional[int] = None,
 ) -> None:
-    query = db.query(Machine).filter(Machine.operatore_attuale_id == user_id)
+    query = db.query(WorkingStation).options(joinedload(WorkingStation.assigned_machine)).filter(
+        WorkingStation.operatore_attuale_id == user_id
+    )
     if requested_machine_id is not None:
-        query = query.filter((Machine.id == requested_machine_id) | (Machine.in_uso.is_(True)))
+        query = query.filter((WorkingStation.id == requested_machine_id) | (WorkingStation.in_uso.is_(True)))
     else:
-        query = query.filter(Machine.in_uso.is_(True))
+        query = query.filter(WorkingStation.in_uso.is_(True))
 
-    machines = query.all()
-    if not machines:
+    working_stations = query.all()
+    if not working_stations:
         return
 
-    for machine in machines:
-        machine.in_uso = False
-        machine.operatore_attuale_id = None
+    released_ids: list[int] = []
+    for working_station in working_stations:
+        released_ids.append(working_station.id)
+        working_station.in_uso = False
+        working_station.operatore_attuale_id = None
+        _sync_working_station_machine_state(working_station)
+
+    _close_active_chat_sessions(db, user_id, None if requested_machine_id is None else requested_machine_id)
 
     db.commit()
 
-    for machine in machines:
-        await publish_machine_session_event(machine, user_id, db=db)
+    for working_station in working_stations:
+        await publish_machine_session_event(working_station, user_id, db=db)
 
 
 def decode_sse_token(token: str) -> dict:
@@ -551,7 +695,7 @@ def decode_sse_token(token: str) -> dict:
     if payload.get("type") != "sse":
         raise credentials_exception
 
-    if payload.get("sub") is None or payload.get("machine_id") is None:
+    if payload.get("sub") is None or payload.get("working_station_id") is None:
         raise credentials_exception
 
     return payload
@@ -559,13 +703,18 @@ def decode_sse_token(token: str) -> dict:
 
 @router.get("/session-status", response_model=SessionStatusResponse)
 async def session_status(
-    machine_id: int,
+    working_station_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Controlla lo stato minimo della sessione operatore e dell'assegnazione macchina."""
-    machine = db.query(Machine).filter(Machine.id == machine_id).first()
-    return build_session_status_payload(machine, current_user.id)
+    """Controlla lo stato minimo della sessione operatore e dell'assegnazione postazione."""
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    return build_session_status_payload(working_station, current_user.id)
 
 
 @router.get("/me", response_model=CurrentUserResponse)
@@ -633,21 +782,30 @@ async def create_operator_sse_token(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if user_has_permission(current_user, "backoffice.access"):
+    if not user_has_permission(current_user, OPERATOR_INTERFACE_PERMISSION):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Canale SSE disponibile solo per operatori",
+            detail="Accesso interfaccia operatore non consentito",
         )
 
-    machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
-    session_status_payload = build_session_status_payload(machine, current_user.id)
+    working_station_id = resolve_requested_working_station_id(
+        request.working_station_id,
+        request.machine_id,
+    )
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    session_status_payload = build_session_status_payload(working_station, current_user.id)
     if session_status_payload.should_logout:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="La sessione macchina non e valida per aprire SSE",
+            detail="La sessione postazione non e valida per aprire SSE",
         )
 
-    token = create_sse_token(current_user.id, request.machine_id)
+    token = create_sse_token(current_user.id, working_station_id)
     return SSETokenResponse(
         token=token,
         expires_in=SSE_TOKEN_EXPIRE_MINUTES * 60,
@@ -657,25 +815,30 @@ async def create_operator_sse_token(
 @router.get("/session-events")
 async def session_events(
     request: Request,
-    machine_id: int,
+    working_station_id: int,
     token: str,
     db: Session = Depends(get_db),
 ):
     token_payload = decode_sse_token(token)
-    token_machine_id = int(token_payload["machine_id"])
+    token_working_station_id = int(token_payload["working_station_id"])
     token_user_id = int(token_payload["sub"])
 
-    if token_machine_id != machine_id:
+    if token_working_station_id != working_station_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Machine ID SSE non valido",
+            detail="Working station ID SSE non valido",
         )
 
-    machine = db.query(Machine).filter(Machine.id == machine_id).first()
-    initial_payload = build_session_status_payload(machine, token_user_id).model_dump()
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    initial_payload = build_session_status_payload(working_station, token_user_id).model_dump()
 
     async def event_generator():
-        stream = session_event_bus.stream(machine_id, initial_payload)
+        stream = session_event_bus.stream(working_station_id, initial_payload)
         async for message in stream:
             if await request.is_disconnected():
                 break
@@ -698,66 +861,91 @@ async def badge_login(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    # Verifica macchinario
-    machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
-    if not machine:
+    working_station_id = resolve_requested_working_station_id(
+        request.working_station_id,
+        request.machine_id,
+    )
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    if not working_station:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Macchinario non trovato"
+            detail="Postazione non trovata"
         )
-    
-    # Cerca utente
-    user = db.query(User).filter(User.badge_id == request.badge_id).first()
+
+    user = db.query(User).options(joinedload(User.role)).filter(User.badge_id == request.badge_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Badge non riconosciuto"
+            detail="Credenziali non valide"
+        )
+
+    if not user_has_permission(user, OPERATOR_INTERFACE_PERMISSION):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accesso interfaccia operatore non consentito",
         )
 
     if (
-        machine.in_uso
-        and machine.operatore_attuale_id is not None
-        and machine.operatore_attuale_id != user.id
+        working_station.in_uso
+        and working_station.operatore_attuale_id is not None
+        and working_station.operatore_attuale_id != user.id
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Macchinario gia in uso da un altro operatore"
+            detail="Postazione gia in uso da un altro operatore"
         )
-    
-    # Prepara risposta
-    user_response = build_user_response_model(user)
 
-    await release_user_machine_sessions(db, user.id, request.machine_id)
-    
-    # Occupa macchinario
-    db.refresh(machine)
-    machine.in_uso = True
-    machine.operatore_attuale_id = user.id
+    user_response = build_user_response_model(user)
+    await release_user_machine_sessions(db, user.id, working_station.id)
+
+    db.refresh(working_station)
+    working_station.in_uso = True
+    working_station.operatore_attuale_id = user.id
+    _sync_working_station_machine_state(working_station)
     db.commit()
-    await publish_machine_session_event(machine, user.id, db=db)
-    
-    # Crea token di accesso e refresh token
+    await publish_machine_session_event(working_station, user.id, db=db)
+
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome}
     )
     cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
     refresh_token_expires_delta = get_refresh_token_expires_delta(user)
-    refresh_token = create_refresh_token(
+    refresh_token_value = create_refresh_token(
         user.id,
         db,
         expires_delta=refresh_token_expires_delta,
-        machine_id=machine.id,
+        machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+        working_station_id=working_station.id,
     )
-    set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
-    
-    machine_response = build_machine_response_model(machine)
-    
+    set_refresh_token_cookie(response, refresh_token_value, refresh_token_expires_delta)
+    refresh_token_db = db.query(RefreshToken).filter(RefreshToken.token == refresh_token_value).first()
+    chat_session = _create_operator_chat_session(
+        db,
+        user.id,
+        working_station.id,
+        refresh_token_id=refresh_token_db.id if refresh_token_db else None,
+    )
+    db.commit()
+
+    assigned_machine_response = (
+        build_machine_response_model(working_station.assigned_machine)
+        if working_station.assigned_machine is not None
+        else None
+    )
     return LoginResponse(
         access_token=access_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # secondi
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=user_response,
-        machine=machine_response,
+        working_station=build_working_station_response_model(working_station),
+        assigned_machine=assigned_machine_response,
+        chat_session_id=chat_session.id,
+        machine=assigned_machine_response,
         message=f"Benvenuto {user_response.nome}!"
     )
 
@@ -767,79 +955,104 @@ async def credentials_login(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    # Verifica macchinario
-    machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
-    if not machine:
+    working_station_id = resolve_requested_working_station_id(
+        request.working_station_id,
+        request.machine_id,
+    )
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    if not working_station:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Macchinario non trovato"
+            detail="Postazione non trovata"
         )
-    
-    # Cerca utente per username
-    user = db.query(User).filter(User.nome == request.username).first()
+
+    user = db.query(User).options(joinedload(User.role)).filter(User.nome == request.username).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Username non trovato"
+            detail="Credenziali non valide"
+        )
+
+    if not user_has_permission(user, OPERATOR_INTERFACE_PERMISSION):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Accesso interfaccia operatore non consentito",
         )
     
     # Verifica password
     if not user.password_hash:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Password non configurata per questo utente"
+            detail="Credenziali non valide"
         )
     
     if not verify_password(request.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Password non valida"
+            detail="Credenziali non valide"
         )
 
     if (
-        machine.in_uso
-        and machine.operatore_attuale_id is not None
-        and machine.operatore_attuale_id != user.id
+        working_station.in_uso
+        and working_station.operatore_attuale_id is not None
+        and working_station.operatore_attuale_id != user.id
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Macchinario gia in uso da un altro operatore"
+            detail="Postazione gia in uso da un altro operatore"
         )
-    
-    # Prepara risposta
-    user_response = build_user_response_model(user)
 
-    await release_user_machine_sessions(db, user.id, request.machine_id)
-    
-    # Occupa macchinario
-    db.refresh(machine)
-    machine.in_uso = True
-    machine.operatore_attuale_id = user.id
+    user_response = build_user_response_model(user)
+    await release_user_machine_sessions(db, user.id, working_station.id)
+
+    db.refresh(working_station)
+    working_station.in_uso = True
+    working_station.operatore_attuale_id = user.id
+    _sync_working_station_machine_state(working_station)
     db.commit()
-    await publish_machine_session_event(machine, user.id, db=db)
-    
-    # Crea token di accesso e refresh token
+    await publish_machine_session_event(working_station, user.id, db=db)
+
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome}
     )
     cleanup_refresh_tokens(db, user_id=user.id, remove_other_active=True)
     refresh_token_expires_delta = get_refresh_token_expires_delta(user)
-    refresh_token = create_refresh_token(
+    refresh_token_value = create_refresh_token(
         user.id,
         db,
         expires_delta=refresh_token_expires_delta,
-        machine_id=machine.id,
+        machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+        working_station_id=working_station.id,
     )
-    set_refresh_token_cookie(response, refresh_token, refresh_token_expires_delta)
-    
-    machine_response = build_machine_response_model(machine)
-    
+    set_refresh_token_cookie(response, refresh_token_value, refresh_token_expires_delta)
+    refresh_token_db = db.query(RefreshToken).filter(RefreshToken.token == refresh_token_value).first()
+    chat_session = _create_operator_chat_session(
+        db,
+        user.id,
+        working_station.id,
+        refresh_token_id=refresh_token_db.id if refresh_token_db else None,
+    )
+    db.commit()
+
+    assigned_machine_response = (
+        build_machine_response_model(working_station.assigned_machine)
+        if working_station.assigned_machine is not None
+        else None
+    )
     return LoginResponse(
         access_token=access_token,
         token_type="bearer",
-        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # secondi
+        expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=user_response,
-        machine=machine_response,
+        working_station=build_working_station_response_model(working_station),
+        assigned_machine=assigned_machine_response,
+        chat_session_id=chat_session.id,
+        machine=assigned_machine_response,
         message=f"Benvenuto {user_response.nome}!"
     )
 
@@ -915,17 +1128,21 @@ async def logout(
     """Endpoint per fare logout - libera solo la sessione dell'utente autenticato."""
 
     refresh_token_value = refresh_token_cookie or request.refresh_token
-    refresh_token_machine_id = None
+    refresh_token_working_station_id = None
     refresh_token_db = None
     if refresh_token_value:
         refresh_token_db = db.query(RefreshToken).filter(
             RefreshToken.token == refresh_token_value
         ).first()
         if refresh_token_db and refresh_token_db.user_id == current_user.id:
-            refresh_token_machine_id = refresh_token_db.machine_id
+            refresh_token_working_station_id = refresh_token_db.working_station_id or refresh_token_db.machine_id
 
-    requested_machine_id = request.machine_id or refresh_token_machine_id
-    await release_user_machine_sessions(db, current_user.id, requested_machine_id)
+    requested_working_station_id = (
+        request.working_station_id
+        or request.machine_id
+        or refresh_token_working_station_id
+    )
+    await release_user_machine_sessions(db, current_user.id, requested_working_station_id)
     
     cleanup_refresh_tokens(db, user_id=current_user.id)
 
@@ -955,20 +1172,20 @@ async def admin_login(
     if not user or not user_has_permission(user, "backoffice.access"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Admin username non trovato"
+            detail="Credenziali non valide"
         )
     
     # Verifica password
     if not user.password_hash:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Password non configurata per questo utente"
+            detail="Credenziali non valide"
         )
     
     if not verify_password(request.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Password non valida"
+            detail="Credenziali non valide"
         )
     
     # Prepara risposta

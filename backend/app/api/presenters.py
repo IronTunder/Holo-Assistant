@@ -4,6 +4,7 @@ from app.models.category import Category
 from app.models.department import Department
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
+from app.models.working_station import WorkingStation
 from app.models.role import ALL_PERMISSIONS
 from app.models.user import Ruolo
 from app.models.user import User
@@ -89,7 +90,33 @@ def serialize_machine(machine: Machine, operator: Optional[User] = None, deleted
         "startup_checklist": machine.startup_checklist or [],
         "in_uso": machine.in_uso,
         "operatore_attuale_id": machine.operatore_attuale_id,
+        "working_station_id": machine.working_station_id,
         "operator": serialize_operator(operator),
+        "deleted": deleted,
+    }
+
+
+def serialize_working_station(
+    working_station: WorkingStation,
+    operator: Optional[User] = None,
+    assigned_machine: Optional[Machine] = None,
+    deleted: bool = False,
+) -> dict:
+    department_name = working_station.department.name if working_station.department else None
+    resolved_machine = assigned_machine or working_station.assigned_machine
+    return {
+        "id": working_station.id,
+        "name": working_station.name,
+        "description": working_station.description,
+        "station_code": working_station.station_code,
+        "startup_checklist": working_station.startup_checklist or [],
+        "department_id": working_station.department_id,
+        "department_name": department_name,
+        "reparto": department_name,
+        "in_uso": working_station.in_uso,
+        "operatore_attuale_id": working_station.operatore_attuale_id,
+        "operator": serialize_operator(operator),
+        "assigned_machine": serialize_machine(resolved_machine) if resolved_machine else None,
         "deleted": deleted,
     }
 
@@ -105,6 +132,7 @@ def serialize_category(category: Category) -> dict:
 def serialize_knowledge_item(
     knowledge_item: KnowledgeItem,
     assigned_machine_ids: Optional[list[int]] = None,
+    assigned_working_station_ids: Optional[list[int]] = None,
     assignment_count: Optional[int] = None,
 ) -> dict:
     if assigned_machine_ids is None:
@@ -113,8 +141,18 @@ def serialize_knowledge_item(
             for assignment in knowledge_item.machine_assignments
             if assignment.is_enabled
         ]
+    if assigned_working_station_ids is None:
+        assigned_working_station_ids = sorted(
+            {
+                assignment.machine.working_station_id
+                for assignment in knowledge_item.machine_assignments
+                if assignment.is_enabled
+                and assignment.machine is not None
+                and assignment.machine.working_station_id is not None
+            }
+        )
     if assignment_count is None:
-        assignment_count = len(assigned_machine_ids)
+        assignment_count = len(assigned_working_station_ids)
 
     category_name = knowledge_item.category.name if knowledge_item.category else None
     return {
@@ -128,6 +166,7 @@ def serialize_knowledge_item(
         "is_active": knowledge_item.is_active,
         "sort_order": knowledge_item.sort_order,
         "assigned_machine_ids": assigned_machine_ids,
+        "assigned_working_station_ids": assigned_working_station_ids,
         "assignment_count": assignment_count,
     }
 

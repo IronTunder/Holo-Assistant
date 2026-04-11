@@ -12,11 +12,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/shared/ui/textarea';
 import { Edit2, FolderTree, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AdminCategory, AdminMachine, KnowledgeItem } from './adminTypes';
+import type { AdminCategory, AdminWorkingStation, KnowledgeItem } from './adminTypes';
 
 interface KnowledgeManagerProps {
   categories: AdminCategory[];
-  machines: AdminMachine[];
+  workingStations: AdminWorkingStation[];
   onMetadataRefresh: () => Promise<void>;
 }
 
@@ -27,11 +27,11 @@ const emptyForm = {
   keywords: '',
   example_questions: '',
   sort_order: '0',
-  machine_ids: [] as number[],
+  working_station_ids: [] as number[],
   is_active: true,
 };
 
-export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: KnowledgeManagerProps) => {
+export const KnowledgeManager = ({ categories, workingStations, onMetadataRefresh }: KnowledgeManagerProps) => {
   const { apiCall } = useApiClient();
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -92,18 +92,18 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
       keywords: item.keywords || '',
       example_questions: item.example_questions || '',
       sort_order: String(item.sort_order),
-      machine_ids: item.assigned_machine_ids,
+      working_station_ids: item.assigned_working_station_ids,
       is_active: item.is_active,
     });
     setIsFormOpen(true);
   };
 
-  const handleMachineToggle = (machineId: number) => {
+  const handleWorkingStationToggle = (workingStationId: number) => {
     setFormState((currentState) => ({
       ...currentState,
-      machine_ids: currentState.machine_ids.includes(machineId)
-        ? currentState.machine_ids.filter((id) => id !== machineId)
-        : [...currentState.machine_ids, machineId],
+      working_station_ids: currentState.working_station_ids.includes(workingStationId)
+        ? currentState.working_station_ids.filter((id) => id !== workingStationId)
+        : [...currentState.working_station_ids, workingStationId],
     }));
   };
 
@@ -123,7 +123,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
         keywords: formState.keywords.trim() || null,
         example_questions: formState.example_questions.trim() || null,
         sort_order: Number(formState.sort_order) || 0,
-        machine_ids: formState.machine_ids,
+        working_station_ids: formState.working_station_ids,
         is_active: formState.is_active,
       };
 
@@ -177,7 +177,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
               <h3 className="text-lg font-semibold">Knowledge</h3>
             </div>
             <p className="text-sm text-slate-500">
-              Categorie globali condivise, con template assegnati ai macchinari.
+              Categorie globali condivise, con template assegnati alle postazioni.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -296,19 +296,21 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
                 </div>
 
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Macchinari assegnati</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Postazioni assegnate</p>
                   <div className="mt-3 space-y-2">
-                    {machines.map((machine) => {
-                      const assigned = selectedItem.assigned_machine_ids.includes(machine.id);
+                    {workingStations.map((workingStation) => {
+                      const assigned = selectedItem.assigned_working_station_ids.includes(workingStation.id);
                       return (
                         <div
-                          key={machine.id}
+                          key={workingStation.id}
                           className={`rounded-lg border px-3 py-2 text-sm ${
                             assigned ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-slate-200 text-slate-500'
                           }`}
                         >
-                          <p className="font-medium">{machine.nome}</p>
-                          <p className="text-xs">{machine.department_name || machine.reparto || '-'}</p>
+                          <p className="font-medium">{workingStation.name}</p>
+                          <p className="text-xs">
+                            {workingStation.station_code} - {workingStation.assigned_machine?.nome || 'Nessun macchinario'}
+                          </p>
                         </div>
                       );
                     })}
@@ -325,7 +327,7 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
           <DialogHeader>
             <DialogTitle>{editingItem ? 'Modifica template' : 'Nuovo template'}</DialogTitle>
             <DialogDescription>
-              Definisci categoria, risposta e assegnazioni macchina in un unico flusso.
+              Definisci categoria, risposta e assegnazioni postazione in un unico flusso.
             </DialogDescription>
           </DialogHeader>
 
@@ -401,30 +403,60 @@ export const KnowledgeManager = ({ categories, machines, onMetadataRefresh }: Kn
 
             <div className="space-y-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm font-medium text-slate-900">Assegna ai macchinari</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFormState((currentState) => ({ ...currentState, machine_ids: machines.map((machine) => machine.id) }))}
-                >
-                  Seleziona tutti
-                </Button>
+                <p className="text-sm font-medium text-slate-900">Assegna alle postazioni</p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setFormState((currentState) => ({
+                        ...currentState,
+                        working_station_ids: workingStations
+                          .filter((workingStation) => Boolean(workingStation.assigned_machine))
+                          .map((workingStation) => workingStation.id),
+                      }))
+                    }
+                  >
+                    Seleziona tutti
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setFormState((currentState) => ({
+                        ...currentState,
+                        working_station_ids: [],
+                      }))
+                    }
+                  >
+                    Deseleziona tutti
+                  </Button>
+                </div>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                {machines.map((machine) => {
-                  const checked = formState.machine_ids.includes(machine.id);
+                {workingStations.map((workingStation) => {
+                  const checked = formState.working_station_ids.includes(workingStation.id);
+                  const disabled = !workingStation.assigned_machine;
                   return (
                     <button
-                      key={machine.id}
+                      key={workingStation.id}
                       type="button"
-                      onClick={() => handleMachineToggle(machine.id)}
+                      onClick={() => handleWorkingStationToggle(workingStation.id)}
+                      disabled={disabled}
                       className={`rounded-lg border px-3 py-3 text-left transition ${
-                        checked ? 'border-sky-300 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'
+                        checked
+                          ? 'border-sky-300 bg-sky-50'
+                          : disabled
+                            ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
+                            : 'border-slate-200 hover:bg-slate-50'
                       }`}
                     >
-                      <p className="font-medium text-slate-900">{machine.nome}</p>
-                      <p className="text-xs text-slate-500">{machine.department_name || machine.reparto || '-'}</p>
+                      <p className="font-medium text-slate-900">{workingStation.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {workingStation.station_code} - {workingStation.assigned_machine?.nome || 'Nessun macchinario associato'}
+                      </p>
                     </button>
                   );
                 })}

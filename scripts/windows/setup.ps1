@@ -182,7 +182,7 @@ try {
     Write-Host "   - Adminer DB:  http://localhost:8080"
     Write-Host ""
     Write-Host "Credenziali di test:"
-    Write-Host "   - Username: Mario Rossi / Luigi Verdi / Anna Bianchi / Marco Neri"
+    Write-Host "   - Username: luca.ferri,matteo.villa,sara.galli (Operatori) davide.rinaldi (Manutentore) e elisa.conti (Admin)"
     Write-Host "   - Password: password123"
     Write-Host ""
     Write-Host "[INFO] In sviluppo le chiamate API passano dal frontend tramite proxy Vite."

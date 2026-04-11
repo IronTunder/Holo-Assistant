@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, Column, Integer, String, Text
 from app.database import Base
 
 ALL_PERMISSIONS = [
+    "operator.interface.access",
     "backoffice.access",
     "users.manage",
     "roles.manage",
@@ -18,6 +19,33 @@ ALL_PERMISSIONS = [
     "interactions.resolve",
 ]
 
+ADMIN_DEFAULT_PERMISSIONS = [
+    "backoffice.access",
+    "users.manage",
+    "roles.manage",
+    "departments.manage",
+    "machines.manage",
+    "knowledge.manage",
+    "logs.view",
+    "settings.view",
+    "settings.edit",
+    "maintenance.view",
+    "emergencies.view",
+    "interactions.resolve",
+]
+
+OPERATOR_DEFAULT_PERMISSIONS = [
+    "operator.interface.access",
+]
+
+MAINTENANCE_TECH_DEFAULT_PERMISSIONS = [
+    "backoffice.access",
+    "maintenance.view",
+    "emergencies.view",
+    "logs.view",
+    "interactions.resolve",
+]
+
 ADMIN_ROLE_CODE = "admin"
 OPERATOR_ROLE_CODE = "operaio"
 MAINTENANCE_TECH_ROLE_CODE = "tecnico-manutenzione"
@@ -26,23 +54,17 @@ SYSTEM_ROLE_DEFINITIONS = {
     ADMIN_ROLE_CODE: {
         "name": "Admin",
         "description": "Accesso completo alla console amministrativa.",
-        "permissions": ALL_PERMISSIONS,
+        "permissions": ADMIN_DEFAULT_PERMISSIONS,
     },
     OPERATOR_ROLE_CODE: {
         "name": "Operaio",
         "description": "Accesso operativo alla postazione macchina.",
-        "permissions": [],
+        "permissions": OPERATOR_DEFAULT_PERMISSIONS,
     },
     MAINTENANCE_TECH_ROLE_CODE: {
         "name": "Tecnico Manutenzione",
         "description": "Gestione richieste di manutenzione, emergenze e risoluzione problemi.",
-        "permissions": [
-            "backoffice.access",
-            "maintenance.view",
-            "emergencies.view",
-            "logs.view",
-            "interactions.resolve",
-        ],
+        "permissions": MAINTENANCE_TECH_DEFAULT_PERMISSIONS,
     },
 }
 

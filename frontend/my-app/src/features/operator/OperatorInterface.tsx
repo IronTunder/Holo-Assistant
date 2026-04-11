@@ -1,21 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Mic, MicOff, Radio, X } from 'lucide-react';
+import { AlertTriangle, Info, Mic, MicOff, Radio, Siren, Wrench, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { StartupChecklistDialog } from './StartupChecklistDialog';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
 import { API_ENDPOINTS } from '@/shared/api/config';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { useVoskWakeWord, type VoskWakeWordStatus } from './voice/useVoskWakeWord';
 
 type AvatarState = 'idle' | 'listening' | 'thinking' | 'speaking';
-type SessionStatusReason = 'ok' | 'machine_released' | 'machine_reassigned' | 'machine_not_found';
+type SessionStatusReason = 'ok' | 'working_station_released' | 'working_station_reassigned' | 'working_station_not_found';
 
 type SessionStatusPayload = {
   session_valid: boolean;
-  machine_assigned: boolean;
-  machine_in_use: boolean;
+  working_station_assigned: boolean;
+  working_station_in_use: boolean;
   operator_matches: boolean;
   should_logout: boolean;
   reason: SessionStatusReason;
@@ -81,18 +82,33 @@ type InteractionResolutionResponse = {
   resolution_timestamp: string;
 };
 
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+  interaction_id?: number | null;
+};
+
+type SessionHistoryResponse = {
+  chat_session_id?: number | null;
+  working_station_id: number;
+  machine_id?: number | null;
+  messages: ChatMessage[];
+};
+
 const UNRESOLVED_CONFIRMATION_MESSAGE =
   "L'assistenza è stata informata del tuo problema e inviera al piu presto un tecnico. Quando il tecnico avra risolto il problema, l'intervento potra essere confermato nel sistema.";
 
 const VOSK_MODEL_URL = import.meta.env.VITE_VOSK_MODEL_URL || '/models/vosk-model-small-it-0.22.tar.gz';
 
 const quickActions = [
-  { actionType: 'emergency', title: 'Emergenza', subtitle: 'Alert rapido' },
-  { actionType: 'maintenance', title: 'Manutenzione', subtitle: 'Chiama tecnico' },
+  { actionType: 'emergency', title: 'Emergenza', icon: Siren },
+  { actionType: 'maintenance', title: 'Manutenzione', icon: Wrench },
 ] as const satisfies readonly {
   actionType: QuickActionType;
   title: string;
-  subtitle: string;
+  icon: typeof Siren;
 }[];
 
 const quickActionFallbackMessages: Record<QuickActionType, string> = {
@@ -100,19 +116,37 @@ const quickActionFallbackMessages: Record<QuickActionType, string> = {
   emergency: 'Emergenza inviata. Allontanati dalla macchina e segui le procedure di sicurezza del reparto.',
 };
 
-const quickActionButtonStyles: Record<QuickActionType, string> = {
-  emergency: 'border-red-400/40 bg-red-500/15 text-red-50 hover:bg-red-500/25 disabled:border-red-500/20 disabled:bg-red-500/10 disabled:text-red-200',
-  maintenance: 'border-amber-400/30 bg-amber-500/10 text-amber-50 hover:bg-amber-500/20 disabled:border-amber-500/20 disabled:bg-amber-500/10 disabled:text-amber-200',
-};
 
-const quickActionTitleStyles: Record<QuickActionType, string> = {
-  emergency: 'text-red-200',
-  maintenance: 'text-amber-200',
-};
-
-const quickActionSubtitleStyles: Record<QuickActionType, string> = {
-  emergency: 'text-white',
-  maintenance: 'text-white',
+const quickActionConfirmationCopy: Record<
+  QuickActionType,
+  {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    confirmLoadingLabel: string;
+    containerClassName: string;
+    iconClassName: string;
+    confirmButtonClassName: string;
+  }
+> = {
+  emergency: {
+    title: 'Conferma emergenza',
+    description: "Invia un segnale critico all'area admin per questa postazione. Non arresta fisicamente il macchinario, se presente.",
+    confirmLabel: 'Conferma emergenza',
+    confirmLoadingLabel: 'Invio emergenza...',
+    containerClassName: 'border-red-400/50 bg-red-500/15',
+    iconClassName: 'text-red-200',
+    confirmButtonClassName: 'bg-red-500 text-white hover:bg-red-600',
+  },
+  maintenance: {
+    title: 'Conferma richiesta manutenzione',
+    description: "Invia una richiesta di intervento tecnico per questa postazione e il macchinario associato, se presente.",
+    confirmLabel: 'Conferma manutenzione',
+    confirmLoadingLabel: 'Invio richiesta...',
+    containerClassName: 'border-amber-400/50 bg-amber-500/15',
+    iconClassName: 'text-amber-200',
+    confirmButtonClassName: 'bg-amber-400 text-slate-950 hover:bg-amber-300',
+  },
 };
 
 function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
@@ -190,13 +224,14 @@ function buildPendingResolutionState(
 export function OperatorInterface() {
   const { 
     isLoggedIn, 
-    isAdmin,
     accessToken, 
     refreshAccessToken,
     user, 
+    workingStation,
+    assignedMachine,
     machine, 
     login, 
-    logout 
+    logout,
   } = useAuth();
   
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
@@ -207,6 +242,8 @@ export function OperatorInterface() {
   const [logoutMessageKey, setLogoutMessageKey] = useState(0);
   const [questionInput, setQuestionInput] = useState('');
   const [currentTranscription, setCurrentTranscription] = useState('');
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[]>([]);
@@ -215,7 +252,7 @@ export function OperatorInterface() {
   const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [quickActionInFlight, setQuickActionInFlight] = useState<QuickActionType | null>(null);
-  const [showEmergencyConfirmation, setShowEmergencyConfirmation] = useState(false);
+  const [pendingQuickActionConfirmation, setPendingQuickActionConfirmation] = useState<QuickActionType | null>(null);
   const [wakeWordMuted, setWakeWordMuted] = useState(false);
   const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null);
   const [resolutionNote, setResolutionNote] = useState('');
@@ -236,24 +273,36 @@ export function OperatorInterface() {
   const logoutMessageTimeoutRef = useRef<number | null>(null);
   const manualLogoutInProgressRef = useRef(false);
   const avatarDisplayRef = useRef<AvatarDisplayHandle | null>(null);
+  const chatScrollAreaRef = useRef<HTMLDivElement | null>(null);
+  const currentWorkingStation = workingStation;
+  const currentMachine = assignedMachine ?? machine;
+
+  const scrollChatToBottom = () => {
+    const scrollAreaRoot = chatScrollAreaRef.current;
+    const viewport = scrollAreaRoot?.querySelector('[data-slot="scroll-area-viewport"]') as HTMLDivElement | null;
+    if (!viewport) {
+      return;
+    }
+    viewport.scrollTop = viewport.scrollHeight;
+  };
 
   // Effetto per mostrare la checklist di startup dopo il login
   useEffect(() => {
-    if (isLoggedIn && !isAdmin && machine && !startupChecklistCompleted) {
+    if (isLoggedIn && currentWorkingStation && !startupChecklistCompleted) {
       setShowStartupChecklist(true);
     }
-  }, [isLoggedIn, isAdmin, machine, startupChecklistCompleted]);
+  }, [currentWorkingStation, isLoggedIn, startupChecklistCompleted]);
 
   useEffect(() => {
     const fetchPendingQuickAction = async () => {
-      if (!isLoggedIn || isAdmin || !machine || !accessToken) {
+      if (!isLoggedIn || !currentWorkingStation || !accessToken) {
         setPendingResolution(null);
         return;
       }
 
       setIsLoadingPendingQuickAction(true);
       try {
-        const response = await fetch(API_ENDPOINTS.INTERACTION_PENDING_QUICK_ACTION(machine.id), {
+        const response = await fetch(API_ENDPOINTS.INTERACTION_PENDING_QUICK_ACTION(currentWorkingStation.id), {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
@@ -280,7 +329,46 @@ export function OperatorInterface() {
     };
 
     void fetchPendingQuickAction();
-  }, [isLoggedIn, isAdmin, machine, accessToken]);
+  }, [accessToken, currentWorkingStation, isLoggedIn]);
+
+  const fetchSessionHistory = async () => {
+    if (!isLoggedIn || !currentWorkingStation || !accessToken) {
+      setChatMessages([]);
+      setCurrentTranscription('');
+      return;
+    }
+
+    try {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_SESSION_HISTORY(currentWorkingStation.id), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(getApiErrorMessage(error, 'Errore nel recupero della cronologia chat'));
+      }
+      const data = (await response.json()) as SessionHistoryResponse;
+      setChatMessages(data.messages);
+      setCurrentTranscription('');
+      window.requestAnimationFrame(() => {
+        scrollChatToBottom();
+      });
+    } catch (error) {
+      console.error('Errore caricamento cronologia chat:', error);
+    }
+  };
+
+  useEffect(() => {
+    void fetchSessionHistory();
+  }, [accessToken, currentWorkingStation?.id, isLoggedIn]);
+
+  useEffect(() => {
+    window.requestAnimationFrame(() => {
+      scrollChatToBottom();
+    });
+  }, [chatMessages, currentTranscription, clarificationOptions.length, pendingResolution, showFollowUp]);
 
   const dismissLogoutMessage = () => {
     if (logoutMessageTimeoutRef.current !== null) {
@@ -376,7 +464,7 @@ export function OperatorInterface() {
   }, [pendingResolution?.resolvedByName]);
 
   useEffect(() => {
-    const sessionKey = machine && user ? `${user.id}:${machine.id}` : null;
+    const sessionKey = currentWorkingStation && user ? `${user.id}:${currentWorkingStation.id}` : null;
 
     const clearPollingTimeout = () => {
       if (pollingTimeoutRef.current !== null) {
@@ -402,12 +490,12 @@ export function OperatorInterface() {
 
     const getLogoutMessage = (reason: SessionStatusReason | string) => {
       switch (reason) {
-        case 'machine_released':
-          return 'Macchina liberata dall\'amministratore';
-        case 'machine_reassigned':
-          return 'Macchina assegnata a un altro operatore';
-        case 'machine_not_found':
-          return 'Macchinario non piu disponibile';
+        case 'working_station_released':
+          return 'Postazione liberata dall\'amministratore';
+        case 'working_station_reassigned':
+          return 'Postazione assegnata a un altro operatore';
+        case 'working_station_not_found':
+          return 'Postazione non piu disponibile';
         default:
           return 'Sessione non piu valida';
       }
@@ -462,8 +550,7 @@ export function OperatorInterface() {
         pollingInFlightRef.current ||
         sseConnectedRef.current ||
         !isLoggedIn ||
-        isAdmin ||
-        !machine ||
+        !currentWorkingStation ||
         !user ||
         !accessToken ||
         (sessionKey !== null && sseForbiddenSessionRef.current === sessionKey) ||
@@ -475,7 +562,7 @@ export function OperatorInterface() {
       pollingInFlightRef.current = true;
 
       try {
-        const response = await fetch(API_ENDPOINTS.SESSION_STATUS(machine.id), {
+        const response = await fetch(API_ENDPOINTS.SESSION_STATUS(currentWorkingStation.id), {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -524,8 +611,7 @@ export function OperatorInterface() {
     const startSseConnection = async () => {
       if (
         !isLoggedIn ||
-        isAdmin ||
-        !machine ||
+        !currentWorkingStation ||
         !user ||
         !accessToken ||
         document.visibilityState !== 'visible'
@@ -543,7 +629,7 @@ export function OperatorInterface() {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ machine_id: machine.id }),
+          body: JSON.stringify({ working_station_id: currentWorkingStation.id }),
         });
 
         if (tokenResponse.status === 401) {
@@ -577,7 +663,7 @@ export function OperatorInterface() {
         }
 
         const { token } = await tokenResponse.json();
-        const eventSource = new EventSource(API_ENDPOINTS.SESSION_EVENTS(machine.id, token));
+        const eventSource = new EventSource(API_ENDPOINTS.SESSION_EVENTS(currentWorkingStation.id, token));
         eventSourceRef.current = eventSource;
 
         eventSource.onopen = () => {
@@ -630,8 +716,7 @@ export function OperatorInterface() {
 
     if (
       isLoggedIn &&
-      !isAdmin &&
-      machine &&
+      currentWorkingStation &&
       user &&
       accessToken &&
       (sessionKey === null || sseForbiddenSessionRef.current !== sessionKey) &&
@@ -649,9 +734,9 @@ export function OperatorInterface() {
       clearPollingTimeout();
       pollingInFlightRef.current = false;
     };
-  }, [isLoggedIn, isAdmin, machine, user, accessToken, refreshAccessToken, logout]);
+  }, [accessToken, currentWorkingStation, isLoggedIn, refreshAccessToken, user]);
 
-  const handleBadgeLogin = async (badgeId: string, machineId: number) => {
+  const handleBadgeLogin = async (badgeId: string, workingStationId: number) => {
     setLoading(true);
     try {
       const response = await fetch(API_ENDPOINTS.BADGE_LOGIN, {
@@ -660,7 +745,7 @@ export function OperatorInterface() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ badge_id: badgeId, machine_id: machineId }),
+        body: JSON.stringify({ badge_id: badgeId, working_station_id: workingStationId }),
       });
       if (!response.ok) {
         const error = await response.json();
@@ -670,7 +755,9 @@ export function OperatorInterface() {
       login(
         data.access_token,
         data.user,
-        data.machine,
+        data.working_station,
+        data.assigned_machine ?? data.machine ?? null,
+        data.chat_session_id ?? null,
         data.expires_in
       );
     } catch (error) {
@@ -681,7 +768,7 @@ export function OperatorInterface() {
     }
   };
 
-  const handleCredentialsLogin = async (username: string, password: string, machineId: number) => {
+  const handleCredentialsLogin = async (username: string, password: string, workingStationId: number) => {
     setLoading(true);
     try {
       const response = await fetch(API_ENDPOINTS.CREDENTIALS_LOGIN, {
@@ -690,17 +777,23 @@ export function OperatorInterface() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username, password, machine_id: machineId }),
+        body: JSON.stringify({ username, password, working_station_id: workingStationId }),
       });
 
       if (!response.ok) {
-        throw new Error('Credenziali non valide');
+        const error = await response.json().catch(() => null);
+        if (response.status === 403) {
+          throw new Error(error?.detail || 'Non hai il permesso per accedere all interfaccia operatore');
+        }
+        throw new Error(error?.detail || 'Credenziali non valide');
       }
       const data = await response.json();
       login(
         data.access_token,
         data.user,
-        data.machine,
+        data.working_station,
+        data.assigned_machine ?? data.machine ?? null,
+        data.chat_session_id ?? null,
         data.expires_in
       );
     } catch (error) {
@@ -790,7 +883,7 @@ export function OperatorInterface() {
     setTrackedActiveInteractionId(null);
     setIsSubmittingFeedback(false);
     setQuickActionInFlight(null);
-    setShowEmergencyConfirmation(false);
+    setPendingQuickActionConfirmation(null);
     setWakeWordMuted(false);
     setPendingResolution(null);
     resetResolutionForm();
@@ -800,7 +893,7 @@ export function OperatorInterface() {
   };
 
   const submitQuestion = async (userQuestion: string, selectedKnowledgeItemId?: number) => {
-    if (!user || !machine || !accessToken || assistantBusy || hasOpenTechnicianRequest) {
+    if (!user || !currentWorkingStation || !accessToken || assistantBusy || hasOpenTechnicianRequest) {
       return;
     }
 
@@ -818,7 +911,7 @@ export function OperatorInterface() {
           'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          machine_id: machine.id,
+          working_station_id: currentWorkingStation.id,
           question: userQuestion,
           selected_knowledge_item_id: selectedKnowledgeItemId,
         }),
@@ -831,6 +924,16 @@ export function OperatorInterface() {
 
       const data = (await response.json()) as AskQuestionApiResponse;
       const interactionId = data.interaction_id ?? null;
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: `user-live-${Date.now()}`,
+          role: 'user',
+          content: userQuestion,
+          timestamp: new Date().toISOString(),
+          interaction_id: interactionId,
+        },
+      ]);
 
       if (interactionId) {
         setTrackedActiveInteractionId(interactionId);
@@ -886,6 +989,7 @@ export function OperatorInterface() {
           try {
             await submitInteractionFeedback(interactionId, 'not_applicable', accessToken);
             setTrackedActiveInteractionId(null);
+            await fetchSessionHistory();
           } catch (feedbackError) {
             console.error('Errore salvataggio feedback non rilevante per risposta fallback:', feedbackError);
           }
@@ -905,6 +1009,7 @@ export function OperatorInterface() {
       setFallbackReasonCode(data.mode === 'fallback' ? data.reason_code : null);
       setTrackedActiveInteractionId(interactionId);
       setShowFollowUp(Boolean(data.interaction_id));
+      await fetchSessionHistory();
     } catch (error) {
       if (manualLogoutInProgressRef.current) {
         return;
@@ -922,7 +1027,7 @@ export function OperatorInterface() {
       return;
     }
 
-    if (questionInput.trim() && user && machine) {
+    if (questionInput.trim() && user && currentWorkingStation) {
       const userQuestion = questionInput.trim();
       setQuestionInput('');
       await submitQuestion(userQuestion);
@@ -990,12 +1095,12 @@ export function OperatorInterface() {
   };
 
   const submitQuickAction = async (actionType: QuickActionType) => {
-    if (!user || !machine || !accessToken || assistantBusy || pendingResolution) {
+    if (!user || !currentWorkingStation || !accessToken || assistantBusy || pendingResolution) {
       return;
     }
 
     setQuickActionInFlight(actionType);
-    setShowEmergencyConfirmation(false);
+    setPendingQuickActionConfirmation(null);
     resetInteractionStateForQuickAction();
 
     try {
@@ -1006,7 +1111,7 @@ export function OperatorInterface() {
           'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          machine_id: machine.id,
+          working_station_id: currentWorkingStation.id,
           user_id: user.id,
           action_type: actionType,
         }),
@@ -1042,6 +1147,7 @@ export function OperatorInterface() {
       });
       resetResolutionForm();
       await playAssistantMessage(data.message || quickActionFallbackMessages[actionType]);
+      await fetchSessionHistory();
     } catch (error) {
       console.error('Errore invio segnalazione rapida:', error);
       setAvatarState('idle');
@@ -1099,6 +1205,7 @@ export function OperatorInterface() {
       } else {
         setCurrentTranscription('');
       }
+      await fetchSessionHistory();
     } catch (error) {
       console.error('Errore invio feedback interazione:', error);
       alert(error instanceof Error ? error.message : 'Errore nel salvataggio del feedback');
@@ -1133,6 +1240,7 @@ export function OperatorInterface() {
         resolutionTimestamp: data.resolution_timestamp,
       });
       resetResolutionForm();
+      await fetchSessionHistory();
     } catch (error) {
       console.error('Errore conferma risoluzione con credenziali:', error);
       alert(error instanceof Error ? error.message : 'Errore nella conferma della risoluzione');
@@ -1187,7 +1295,7 @@ export function OperatorInterface() {
     partialTranscript: voicePartialTranscript,
     error: wakeWordError,
   } = useVoskWakeWord({
-    enabled: isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine),
+    enabled: isLoggedIn && Boolean(user) && Boolean(currentWorkingStation),
     paused: wakeWordPaused,
     wakePhrase: 'ehi holo',
     modelUrl: VOSK_MODEL_URL,
@@ -1213,7 +1321,7 @@ export function OperatorInterface() {
   });
   const wakeWordActive = isWakeWordActive(wakeWordStatus);
   const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
-  const canToggleWakeWord = isLoggedIn && !isAdmin && Boolean(user) && Boolean(machine);
+  const canToggleWakeWord = isLoggedIn && Boolean(user) && Boolean(currentWorkingStation);
   const quickActionsDisabled = assistantBusy || hasOpenTechnicianRequest;
 
   return (
@@ -1233,15 +1341,15 @@ export function OperatorInterface() {
             <X className="h-4 w-4" />
           </button>
           <p className="font-semibold">{logoutMessage}</p>
-          <p className="text-sm text-red-200 mt-1">Sei stato disconnesso dalla macchina</p>
+          <p className="text-sm text-red-200 mt-1">Sei stato disconnesso dalla postazione</p>
         </div>
       )}
 
       {/* Startup Checklist Dialog - viene mostrato dopo il login */}
-      {showStartupChecklist && machine && accessToken && (
+      {showStartupChecklist && currentWorkingStation && accessToken && (
         <StartupChecklistDialog
-          machineId={machine.id}
-          machineName={machine.nome}
+          machineId={currentWorkingStation.id}
+          machineName={currentWorkingStation.name}
           accessToken={accessToken}
           onComplete={() => {
             setStartupChecklistCompleted(true);
@@ -1249,6 +1357,152 @@ export function OperatorInterface() {
           }}
         />
       )}
+
+      {pendingQuickActionConfirmation ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+          <div
+            className={`w-full max-w-lg rounded-3xl border p-6 shadow-2xl backdrop-blur-md ${quickActionConfirmationCopy[pendingQuickActionConfirmation].containerClassName}`}
+          >
+            <div className="flex items-start gap-4">
+              <div className="rounded-full bg-black/15 p-3">
+                <AlertTriangle className={`h-6 w-6 ${quickActionConfirmationCopy[pendingQuickActionConfirmation].iconClassName}`} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-xl font-semibold text-white">
+                  {quickActionConfirmationCopy[pendingQuickActionConfirmation].title}
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-white/90">
+                  {quickActionConfirmationCopy[pendingQuickActionConfirmation].description}
+                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void submitQuickAction(pendingQuickActionConfirmation)}
+                    disabled={quickActionsDisabled}
+                    className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${quickActionConfirmationCopy[pendingQuickActionConfirmation].confirmButtonClassName}`}
+                  >
+                    {quickActionInFlight === pendingQuickActionConfirmation
+                      ? quickActionConfirmationCopy[pendingQuickActionConfirmation].confirmLoadingLabel
+                      : quickActionConfirmationCopy[pendingQuickActionConfirmation].confirmLabel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingQuickActionConfirmation(null)}
+                    disabled={assistantBusy}
+                    className="rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingResolution ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-3xl border border-amber-400/30 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-md">
+            <div className="flex flex-col gap-5">
+              <div>
+                <p className="text-xs uppercase tracking-[0.22em] text-amber-200">In attesa tecnico</p>
+                <h3 className="mt-1 text-xl font-semibold text-white">Conferma intervento tecnico</h3>
+                <p className="mt-2 text-sm leading-6 text-amber-50">{pendingResolution.message}</p>
+                {pendingResolution.resolvedByName ? (
+                  <p className="mt-3 text-sm font-semibold text-emerald-200">
+                    Risolto da {pendingResolution.resolvedByName}
+                    {pendingResolution.resolutionTimestamp
+                      ? ` - ${new Date(pendingResolution.resolutionTimestamp).toLocaleString('it-IT')}`
+                      : ''}
+                  </p>
+                ) : null}
+              </div>
+
+              {!pendingResolution.resolvedByName ? (
+                <>
+                  <textarea
+                    value={resolutionNote}
+                    onChange={(event) => setResolutionNote(event.target.value)}
+                    placeholder="Nota tecnica opzionale..."
+                    disabled={assistantBusy}
+                    className="min-h-24 w-full resize-none rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                  />
+
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <input
+                        type="text"
+                        value={technicianUsername}
+                        onChange={(event) => setTechnicianUsername(event.target.value)}
+                        placeholder="Nome tecnico"
+                        disabled={assistantBusy}
+                        className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      />
+                      <input
+                        type="password"
+                        value={technicianPassword}
+                        onChange={(event) => setTechnicianPassword(event.target.value)}
+                        placeholder="Password tecnico"
+                        disabled={assistantBusy}
+                        className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleTechnicianCredentialsResolution()}
+                      disabled={assistantBusy}
+                      className="rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Conferma con login
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingResolution(null);
+                      resetResolutionForm();
+                    }}
+                    className="rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-white/15"
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <Dialog open={showSessionInfo} onOpenChange={setShowSessionInfo}>
+        <DialogContent className="border-white/10 bg-slate-950/95 text-white sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Dettagli sessione operatore</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Postazione</p>
+              <p className="mt-2 break-words text-sm text-slate-100">
+                {currentWorkingStation ? `${currentWorkingStation.name} - ${currentWorkingStation.station_code}` : 'Nessuna postazione attiva'}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Macchinario in uso</p>
+              <p className="mt-2 break-words text-sm text-slate-100">
+                {currentMachine ? currentMachine.nome : 'Nessun macchinario associato'}
+              </p>
+            </div>
+            {user ? (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Operatore</p>
+                <p className="mt-2 break-words text-sm text-slate-100">{user.nome}</p>
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Background pattern */}
       <div className="absolute inset-0 opacity-10">
@@ -1269,13 +1523,44 @@ export function OperatorInterface() {
 
             <div className="flex flex-wrap items-center justify-end gap-2">
               {isLoggedIn && user && (
-                <button
-                  onClick={handleLogout}
-                  disabled={assistantBusy}
-                  className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${assistantBusy ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
-                >
-                  Logout
-                </button>
+                <>
+                  {quickActions.map((action) => {
+                    const Icon = action.icon;
+                    const isEmergency = action.actionType === 'emergency';
+                    return (
+                      <button
+                        key={action.actionType}
+                        type="button"
+                        onClick={() => setPendingQuickActionConfirmation(action.actionType)}
+                        disabled={quickActionsDisabled}
+                        className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                          isEmergency
+                            ? 'border-red-500/35 bg-red-500/15 text-red-100 hover:bg-red-500/25'
+                            : 'border-amber-400/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20'
+                        }`}
+                        aria-label={action.title}
+                        title={action.title}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setShowSessionInfo(true)}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                    aria-label="Mostra dettagli sessione"
+                  >
+                    <Info className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    disabled={assistantBusy}
+                    className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${assistantBusy ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
+                  >
+                    Logout
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -1358,63 +1643,74 @@ export function OperatorInterface() {
               </section>
 
               <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
-                <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                    <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Console operatore</p>
-                    {machine ? (
-                      <p className="truncate text-sm text-slate-300">
-                        Postazione: {machine.nome} - {machine.id_postazione}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-slate-400">Seleziona una postazione per iniziare la sessione operatore.</p>
-                    )}
-                    {user ? (
-                      <p className="truncate text-sm text-slate-300">
-                        Operatore: {user.nome}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
                 <div className="flex-1 min-h-0 overflow-hidden px-4 py-4 sm:px-5">
-                  <ScrollArea className="h-full md:pr-3">
+                  <ScrollArea ref={chatScrollAreaRef} className="h-full md:pr-3">
                     <div className="space-y-4">
-                      <div className="flex max-h-[min(36dvh,20rem)] min-h-[7.5rem] flex-col rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                          <h3 className="text-sm font-semibold text-slate-200">Risposta assistente</h3>
+                          <h3 className="text-sm font-semibold text-slate-200">Chat operatore</h3>
                           {isTyping && (
                             <span className="rounded-full border border-blue-400/20 bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
                               In scrittura
                             </span>
                           )}
                         </div>
-
-                        {currentTranscription ? (
-                          <>
-                            <ScrollArea className="mt-3 min-h-0 flex-1 pr-2">
-                              <div className="break-words whitespace-pre-line text-sm leading-6 text-slate-100">
-                                {currentTranscription}
-                                {isTyping && <span className="animate-pulse">|</span>}
+                        <div className="mt-4 space-y-3">
+                          {chatMessages.length === 0 && !currentTranscription ? (
+                            <p className="text-sm leading-6 text-slate-400">
+                              Scrivi una domanda tecnica o usa i pulsanti rapidi per iniziare la conversazione.
+                            </p>
+                          ) : null}
+                          {chatMessages.map((message) => (
+                            <div
+                              key={message.id}
+                              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                            >
+                              <div
+                                className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 ${
+                                  message.role === 'user'
+                                    ? 'bg-cyan-500 text-slate-950'
+                                    : message.role === 'system'
+                                      ? 'border border-amber-400/30 bg-amber-500/10 text-amber-50'
+                                      : 'border border-white/10 bg-slate-900/70 text-slate-100'
+                                }`}
+                              >
+                                <div className="whitespace-pre-line break-words">{message.content}</div>
+                                <div className={`mt-1 text-[11px] leading-none ${message.role === 'user' ? 'text-slate-900/70' : 'text-slate-400'}`}>
+                                  {new Date(message.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                                  {message.role === 'user'
+                                    ? (user ? ` • ${user.nome}` : '')
+                                    : message.role === 'assistant'
+                                      ? ' • Holo-Assistant'
+                                      : ' • Sistema'}
+                                </div>
                               </div>
-                            </ScrollArea>
-                            {!isTyping && fallbackReasonCode === 'out_of_scope' && (
-                              <p className="mt-3 text-xs text-amber-200">
-                                Richiesta fuori ambito: posso aiutarti solo con macchine, sicurezza e procedure di reparto.
-                              </p>
-                            )}
-                            {!isTyping && fallbackReasonCode === 'no_match' && (
-                              <p className="mt-3 text-xs text-slate-400">
-                                Non ho trovato una procedura tecnica affidabile per questa richiesta.
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <p className="mt-3 text-sm leading-6 text-slate-400">
-                            Scrivi una domanda tecnica per iniziare.
+                            </div>
+                          ))}
+                          {currentTranscription ? (
+                            <div className="flex justify-start">
+                              <div className="max-w-[85%] rounded-2xl border border-white/10 bg-slate-900/70 px-4 py-3 text-sm leading-6 text-slate-100">
+                                <div className="whitespace-pre-line break-words">
+                                  {currentTranscription}
+                                  {isTyping && <span className="animate-pulse">|</span>}
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                        {!isTyping && fallbackReasonCode === 'out_of_scope' && (
+                          <p className="mt-3 text-xs text-amber-200">
+                            Richiesta fuori ambito: posso aiutarti solo con macchine, sicurezza e procedure di reparto.
+                          </p>
+                        )}
+                        {!isTyping && fallbackReasonCode === 'no_match' && (
+                          <p className="mt-3 text-xs text-slate-400">
+                            Non ho trovato una procedura tecnica affidabile per questa richiesta.
                           </p>
                         )}
                       </div>
 
+                    <div className="space-y-4">
                       {clarificationOptions.length > 0 && (
                         <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
                           <h3 className="text-sm font-semibold text-amber-200">Aiutami a capire meglio</h3>
@@ -1463,100 +1759,8 @@ export function OperatorInterface() {
                         </div>
                       )}
 
-                      {pendingResolution && (
-                        <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
-                          <div className="flex flex-col gap-4">
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.22em] text-amber-200">In attesa tecnico</p>
-                              <h3 className="mt-1 text-lg font-semibold text-white">Conferma intervento tecnico</h3>
-                              <p className="mt-1 text-sm leading-6 text-amber-50">{pendingResolution.message}</p>
-                              {pendingResolution.resolvedByName ? (
-                                <p className="mt-2 text-sm font-semibold text-emerald-200">
-                                  Risolto da {pendingResolution.resolvedByName}
-                                  {pendingResolution.resolutionTimestamp
-                                    ? ` - ${new Date(pendingResolution.resolutionTimestamp).toLocaleString('it-IT')}`
-                                    : ''}
-                                </p>
-                              ) : null}
-                            </div>
-
-                            {!pendingResolution.resolvedByName && (
-                              <>
-                                <textarea
-                                  value={resolutionNote}
-                                  onChange={(event) => setResolutionNote(event.target.value)}
-                                  placeholder="Nota tecnica opzionale..."
-                                  disabled={assistantBusy}
-                                  className="min-h-24 w-full resize-none rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
-                                />
-
-                                <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                                  <div className="grid gap-3 sm:grid-cols-2">
-                                    <input
-                                      type="text"
-                                      value={technicianUsername}
-                                      onChange={(event) => setTechnicianUsername(event.target.value)}
-                                      placeholder="Nome tecnico"
-                                      disabled={assistantBusy}
-                                      className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
-                                    />
-                                    <input
-                                      type="password"
-                                      value={technicianPassword}
-                                      onChange={(event) => setTechnicianPassword(event.target.value)}
-                                      placeholder="Password tecnico"
-                                      disabled={assistantBusy}
-                                      className="min-w-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-300"
-                                    />
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleTechnicianCredentialsResolution()}
-                                    disabled={assistantBusy}
-                                    className="rounded-xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    Conferma con login
-                                  </button>
-                                </div>
-
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {showEmergencyConfirmation && (
-                        <div className="rounded-2xl border border-red-400/50 bg-red-500/15 p-4">
-                          <div className="flex items-start gap-3">
-                            <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-red-200" />
-                            <div className="min-w-0 flex-1">
-                              <h3 className="text-base font-semibold text-red-50">Conferma emergenza</h3>
-                              <p className="mt-1 text-sm leading-6 text-red-100">
-                                Invia un segnale critico all'area admin per questa macchina. Non arresta fisicamente la macchina.
-                              </p>
-                              <div className="mt-4 flex flex-wrap gap-3">
-                                <button
-                                  type="button"
-                                  onClick={() => void submitQuickAction('emergency')}
-                                  disabled={quickActionsDisabled}
-                                  className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {quickActionInFlight === 'emergency' ? 'Invio emergenza...' : 'Conferma emergenza'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setShowEmergencyConfirmation(false)}
-                                  disabled={assistantBusy}
-                                  className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  Annulla
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
+                  </div>
                   </ScrollArea>
                 </div>
 
@@ -1593,29 +1797,6 @@ export function OperatorInterface() {
                       >
                         Invia
                       </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {quickActions.map((action) => (
-                        <button
-                          key={action.title}
-                          type="button"
-                          onClick={() => {
-                            if (action.actionType === 'emergency') {
-                              setShowEmergencyConfirmation(true);
-                              return;
-                            }
-                            void submitQuickAction(action.actionType);
-                          }}
-                          disabled={quickActionsDisabled}
-                          className={`rounded-2xl border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${quickActionButtonStyles[action.actionType]}`}
-                        >
-                          <span className={`block text-xs uppercase tracking-[0.18em] ${quickActionTitleStyles[action.actionType]}`}>{action.title}</span>
-                          <span className={`mt-1 block text-sm font-semibold ${quickActionSubtitleStyles[action.actionType]}`}>
-                            {quickActionInFlight === action.actionType ? 'Invio in corso...' : action.subtitle}
-                          </span>
-                        </button>
-                      ))}
                     </div>
                   </div>
                 </div>

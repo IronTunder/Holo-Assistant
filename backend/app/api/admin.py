@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.auth.auth import (
     get_password_hash,
+    publish_admin_working_station_event,
     publish_admin_machine_event,
     publish_machine_session_event,
     verify_admin,
@@ -21,8 +22,11 @@ from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
+from app.models.working_station import WorkingStation
+from app.models.working_station import WorkingStation
 from app.models.role import (
     ADMIN_ROLE_CODE,
+    ADMIN_DEFAULT_PERMISSIONS,
     ALL_PERMISSIONS,
     Role,
     normalize_permissions,
@@ -36,6 +40,7 @@ from app.api.presenters import (
     serialize_machine,
     serialize_role,
     serialize_user,
+    serialize_working_station,
 )
 from app.services.cache import admin_metadata_cache, cache_stats_payload
 from app.services.admin_settings import SettingsValidationError, get_settings_payload, update_env_file
@@ -78,9 +83,46 @@ def _normalize_startup_checklist(items: List[str]) -> List[str]:
     return normalized_items
 
 
+def _user_has_active_machine_session(db: Session, user_id: int) -> bool:
+    return (
+        db.query(Machine)
+        .filter(
+            Machine.operatore_attuale_id == user_id,
+            Machine.in_uso.is_(True),
+        )
+        .first()
+        is not None
+    )
+
+
+def _ensure_machine_is_not_in_use(machine: Machine) -> None:
+    if machine.in_uso:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Non puoi modificare o eliminare un macchinario mentre e in uso",
+        )
+
+
+def _ensure_working_station_is_not_in_use(working_station: WorkingStation) -> None:
+    if working_station.in_uso:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Non puoi modificare o eliminare una postazione mentre e in uso",
+        )
+
+
+def _ensure_user_has_no_active_machine_session(db: Session, user_id: int) -> None:
+    if _user_has_active_machine_session(db, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Non puoi modificare o eliminare un utente mentre sta usando un macchinario",
+        )
+
+
 class MachineCreateRequest(BaseModel):
     nome: str
     department_id: int
+    working_station_id: Optional[int] = None
     descrizione: Optional[str] = None
     id_postazione: str
     startup_checklist: List[str]
@@ -94,6 +136,7 @@ class MachineCreateRequest(BaseModel):
 class MachineUpdateRequest(BaseModel):
     nome: Optional[str] = None
     department_id: Optional[int] = None
+    working_station_id: Optional[int] = None
     descrizione: Optional[str] = None
     id_postazione: Optional[str] = None
     startup_checklist: Optional[List[str]] = None
@@ -116,6 +159,34 @@ class DepartmentRequest(BaseModel):
     code: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
+
+
+class WorkingStationRequest(BaseModel):
+    name: str
+    department_id: int
+    description: Optional[str] = None
+    station_code: str
+    startup_checklist: List[str]
+
+    @field_validator("startup_checklist")
+    @classmethod
+    def validate_startup_checklist(cls, items: List[str]) -> List[str]:
+        return _normalize_startup_checklist(items)
+
+
+class WorkingStationUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    department_id: Optional[int] = None
+    description: Optional[str] = None
+    station_code: Optional[str] = None
+    startup_checklist: Optional[List[str]] = None
+
+    @field_validator("startup_checklist")
+    @classmethod
+    def validate_startup_checklist(cls, items: Optional[List[str]]) -> Optional[List[str]]:
+        if items is None:
+            return None
+        return _normalize_startup_checklist(items)
 
 
 class RoleRequest(BaseModel):
@@ -149,12 +220,13 @@ class KnowledgeItemRequest(BaseModel):
     example_questions: Optional[str] = None
     is_active: bool = True
     sort_order: int = 0
-    machine_ids: List[int] = Field(default_factory=list)
+    working_station_ids: List[int] = Field(default_factory=list)
 
 
 class DashboardSummaryResponse(BaseModel):
     total_users: int
     total_machines: int
+    total_working_stations: int = 0
     machines_in_use: int
     machines_available: int
     active_departments: int
@@ -303,6 +375,14 @@ def _build_machine_response(machine: Machine, operator: Optional[User] = None, d
     return serialize_machine(machine, operator=operator, deleted=deleted)
 
 
+def _build_working_station_response(
+    working_station: WorkingStation,
+    operator: Optional[User] = None,
+    deleted: bool = False,
+) -> dict:
+    return serialize_working_station(working_station, operator=operator, deleted=deleted)
+
+
 def _load_operator_map(db: Session, machines: List[Machine]) -> dict[int, User]:
     operator_ids = {
         machine.operatore_attuale_id
@@ -323,9 +403,44 @@ def _load_operator_map(db: Session, machines: List[Machine]) -> dict[int, User]:
 def _apply_machine_assignments(
     db: Session,
     knowledge_item: KnowledgeItem,
-    machine_ids: List[int],
-) -> None:
-    unique_machine_ids = sorted(set(machine_ids))
+    working_station_ids: List[int],
+) -> list[int]:
+    unique_working_station_ids = sorted(set(working_station_ids))
+    if unique_working_station_ids:
+        working_stations = (
+            db.query(WorkingStation)
+            .options(joinedload(WorkingStation.assigned_machine))
+            .filter(WorkingStation.id.in_(unique_working_station_ids))
+            .all()
+        )
+        if len(working_stations) != len(unique_working_station_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Una o piu postazioni selezionate non esistono",
+            )
+        missing_machine_stations = [
+            working_station.station_code
+            for working_station in working_stations
+            if working_station.assigned_machine is None
+        ]
+        if missing_machine_stations:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Le seguenti postazioni non hanno un macchinario associato: "
+                    + ", ".join(missing_machine_stations)
+                ),
+            )
+        unique_machine_ids = sorted(
+            {
+                working_station.assigned_machine.id
+                for working_station in working_stations
+                if working_station.assigned_machine is not None
+            }
+        )
+    else:
+        unique_machine_ids = []
+
     if unique_machine_ids:
         machine_count = db.query(Machine).filter(Machine.id.in_(unique_machine_ids)).count()
         if machine_count != len(unique_machine_ids):
@@ -346,6 +461,7 @@ def _apply_machine_assignments(
                 is_enabled=True,
             )
         )
+    return unique_machine_ids
 
 
 def _invalidate_knowledge_cache(machine_ids: List[int] | None = None) -> None:
@@ -422,6 +538,7 @@ async def dashboard_summary(
 
     total_users = db.query(User).count()
     total_machines = db.query(Machine).count()
+    total_working_stations = db.query(WorkingStation).count()
     machines_in_use = db.query(Machine).filter(Machine.in_uso.is_(True)).count()
     active_departments = db.query(Department).filter(Department.is_active.is_(True)).count()
     knowledge_items = db.query(KnowledgeItem).count()
@@ -434,6 +551,7 @@ async def dashboard_summary(
     return _set_admin_metadata_cache(cache_key, DashboardSummaryResponse(
         total_users=total_users,
         total_machines=total_machines,
+        total_working_stations=total_working_stations,
         machines_in_use=machines_in_use,
         machines_available=max(total_machines - machines_in_use, 0),
         active_departments=active_departments,
@@ -488,6 +606,29 @@ async def list_machine_metadata(
 
     machines = db.query(Machine).options(joinedload(Machine.department)).order_by(Machine.nome.asc()).all()
     return _set_admin_metadata_cache(cache_key, [serialize_machine(machine) for machine in machines])
+
+
+@router.get("/metadata/working-stations")
+async def list_working_station_metadata(
+    admin: User = Depends(verify_admin),
+    db: Session = Depends(get_db),
+):
+    del admin
+    cache_key = ("metadata_working_stations",)
+    cached = _get_admin_metadata_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    working_stations = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.department), joinedload(WorkingStation.assigned_machine))
+        .order_by(WorkingStation.name.asc())
+        .all()
+    )
+    return _set_admin_metadata_cache(
+        cache_key,
+        [serialize_working_station(working_station) for working_station in working_stations],
+    )
 
 
 @router.get("/metadata/users")
@@ -584,7 +725,7 @@ async def update_role(
     if role is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ruolo non trovato")
     if role.is_system and role.code == ADMIN_ROLE_CODE:
-        if not request.is_active or set(request.permissions) != set(ALL_PERMISSIONS):
+        if not request.is_active or set(request.permissions) != set(ADMIN_DEFAULT_PERMISSIONS):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Il ruolo Admin di sistema deve restare attivo con tutti i permessi")
     duplicate_name = db.query(Role).filter(Role.name == request.name.strip(), Role.id != role_id).first()
     if duplicate_name:
@@ -596,7 +737,7 @@ async def update_role(
 
     _apply_role_request(role, request)
     if role.is_system and role.code == ADMIN_ROLE_CODE:
-        role.permissions = ALL_PERMISSIONS
+        role.permissions = ADMIN_DEFAULT_PERMISSIONS
         role.is_active = True
     db.commit()
     db.refresh(role)
@@ -801,6 +942,7 @@ async def update_user(
     user = db.query(User).options(joinedload(User.department), joinedload(User.role)).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utente non trovato")
+    _ensure_user_has_no_active_machine_session(db, user_id)
 
     if request.nome is not None:
         user.nome = request.nome
@@ -847,6 +989,7 @@ async def delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utente non trovato")
+    _ensure_user_has_no_active_machine_session(db, user_id)
     _ensure_last_admin_access_is_preserved(db, user=user, next_role=None)
     db.delete(user)
     db.commit()
@@ -927,11 +1070,26 @@ async def create_machine(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Macchinario con questo nome gia esiste")
     if db.query(Machine).filter(Machine.id_postazione == request.id_postazione).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID postazione gia utilizzato")
+    if request.working_station_id is not None:
+        duplicate_station = db.query(Machine).filter(Machine.working_station_id == request.working_station_id).first()
+        if duplicate_station is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione gia associata a un altro macchinario")
 
     department = _require_department(db, request.department_id)
+    working_station = None
+    if request.working_station_id is not None:
+        working_station = (
+            db.query(WorkingStation)
+            .options(joinedload(WorkingStation.assigned_machine))
+            .filter(WorkingStation.id == request.working_station_id)
+            .first()
+        )
+        if working_station is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione non valida")
     machine = Machine(
         nome=request.nome,
         department_id=department.id,
+        working_station_id=working_station.id if working_station else None,
         reparto_legacy=department.name,
         descrizione=request.descrizione,
         id_postazione=request.id_postazione,
@@ -943,6 +1101,8 @@ async def create_machine(
     db.refresh(machine)
     _invalidate_admin_metadata_cache()
     await publish_admin_machine_event(db, machine)
+    if working_station is not None:
+        await publish_admin_working_station_event(db, working_station)
     return _build_machine_response(machine)
 
 
@@ -957,6 +1117,7 @@ async def update_machine(
     machine = db.query(Machine).options(joinedload(Machine.department)).filter(Machine.id == machine_id).first()
     if machine is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Macchinario non trovato")
+    _ensure_machine_is_not_in_use(machine)
 
     if request.nome is not None:
         machine.nome = request.nome
@@ -971,6 +1132,21 @@ async def update_machine(
         if duplicate_station:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ID postazione gia utilizzato")
         machine.id_postazione = request.id_postazione
+    if request.working_station_id is not None:
+        if request.working_station_id:
+            duplicate_station = (
+                db.query(Machine)
+                .filter(Machine.working_station_id == request.working_station_id, Machine.id != machine_id)
+                .first()
+            )
+            if duplicate_station is not None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione gia associata a un altro macchinario")
+            working_station = db.query(WorkingStation).filter(WorkingStation.id == request.working_station_id).first()
+            if working_station is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione non valida")
+            machine.working_station_id = working_station.id
+        else:
+            machine.working_station_id = None
     if request.startup_checklist is not None:
         machine.startup_checklist = request.startup_checklist
     if request.department_id is not None:
@@ -995,6 +1171,7 @@ async def delete_machine(
     machine = db.query(Machine).options(joinedload(Machine.department)).filter(Machine.id == machine_id).first()
     if machine is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Macchinario non trovato")
+    _ensure_machine_is_not_in_use(machine)
 
     deleted_machine_id = machine.id
     deleted_payload_machine = Machine(
@@ -1035,6 +1212,145 @@ async def reset_machine_status(
     _invalidate_admin_metadata_cache()
     await publish_machine_session_event(machine, -1, db=db)
     return {"message": f"Macchinario {machine.nome} liberato"}
+
+
+@router.get("/working-stations")
+async def list_working_stations(
+    department_id: Optional[int] = None,
+    in_use: Optional[bool] = None,
+    admin: User = Depends(verify_permission("machines.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    query = db.query(WorkingStation).options(
+        joinedload(WorkingStation.department),
+        joinedload(WorkingStation.assigned_machine),
+    )
+    if department_id is not None:
+        query = query.filter(WorkingStation.department_id == department_id)
+    if in_use is not None:
+        query = query.filter(WorkingStation.in_uso.is_(in_use))
+    return [
+        _build_working_station_response(working_station)
+        for working_station in query.order_by(WorkingStation.name.asc()).all()
+    ]
+
+
+@router.post("/working-stations", status_code=status.HTTP_201_CREATED)
+async def create_working_station(
+    request: WorkingStationRequest,
+    admin: User = Depends(verify_permission("machines.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    if db.query(WorkingStation).filter(WorkingStation.name == request.name.strip()).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione gia esistente")
+    if db.query(WorkingStation).filter(WorkingStation.station_code == request.station_code.strip()).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Codice postazione gia utilizzato")
+
+    department = _require_department(db, request.department_id)
+    working_station = WorkingStation(
+        name=request.name.strip(),
+        department_id=department.id,
+        description=request.description,
+        station_code=request.station_code.strip(),
+        startup_checklist=request.startup_checklist,
+        in_uso=False,
+    )
+    db.add(working_station)
+    db.commit()
+    db.refresh(working_station)
+    _invalidate_admin_metadata_cache()
+    await publish_admin_working_station_event(db, working_station)
+    return _build_working_station_response(working_station)
+
+
+@router.put("/working-stations/{working_station_id}")
+async def update_working_station(
+    working_station_id: int,
+    request: WorkingStationUpdateRequest,
+    admin: User = Depends(verify_permission("machines.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    if working_station is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Postazione non trovata")
+    _ensure_working_station_is_not_in_use(working_station)
+
+    if request.name is not None:
+        duplicate_name = (
+            db.query(WorkingStation)
+            .filter(WorkingStation.name == request.name.strip(), WorkingStation.id != working_station_id)
+            .first()
+        )
+        if duplicate_name is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione gia esistente")
+        working_station.name = request.name.strip()
+    if request.station_code is not None:
+        duplicate_code = (
+            db.query(WorkingStation)
+            .filter(WorkingStation.station_code == request.station_code.strip(), WorkingStation.id != working_station_id)
+            .first()
+        )
+        if duplicate_code is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Codice postazione gia utilizzato")
+        working_station.station_code = request.station_code.strip()
+    if request.description is not None:
+        working_station.description = request.description
+    if request.startup_checklist is not None:
+        working_station.startup_checklist = request.startup_checklist
+    if request.department_id is not None:
+        department = _require_department(db, request.department_id)
+        working_station.department_id = department.id
+
+    db.commit()
+    db.refresh(working_station)
+    _invalidate_admin_metadata_cache()
+    await publish_admin_working_station_event(db, working_station)
+    return _build_working_station_response(working_station)
+
+
+@router.delete("/working-stations/{working_station_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_working_station(
+    working_station_id: int,
+    admin: User = Depends(verify_permission("machines.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    working_station = (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+    if working_station is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Postazione non trovata")
+    _ensure_working_station_is_not_in_use(working_station)
+    if working_station.assigned_machine is not None:
+        working_station.assigned_machine.working_station_id = None
+
+    payload = WorkingStation(
+        id=working_station.id,
+        name=working_station.name,
+        department_id=working_station.department_id,
+        description=working_station.description,
+        station_code=working_station.station_code,
+        startup_checklist=working_station.startup_checklist,
+        in_uso=working_station.in_uso,
+        operatore_attuale_id=working_station.operatore_attuale_id,
+    )
+    payload.department = working_station.department
+    db.delete(working_station)
+    db.commit()
+    _invalidate_admin_metadata_cache()
+    await publish_admin_working_station_event(db, payload, deleted=True)
+    return None
 
 
 @router.get("/machine-events")
@@ -1139,13 +1455,23 @@ async def list_knowledge_items(
             for assignment in knowledge_item.machine_assignments
             if assignment.is_enabled
         ]
+        assigned_working_station_ids = sorted(
+            {
+                assignment.machine.working_station_id
+                for assignment in knowledge_item.machine_assignments
+                if assignment.is_enabled
+                and assignment.machine is not None
+                and assignment.machine.working_station_id is not None
+            }
+        )
         if machine_id is not None and machine_id not in assigned_machine_ids:
             continue
         payload.append(
             serialize_knowledge_item(
                 knowledge_item,
                 assigned_machine_ids=assigned_machine_ids,
-                assignment_count=len(assigned_machine_ids),
+                assigned_working_station_ids=assigned_working_station_ids,
+                assignment_count=len(assigned_working_station_ids),
             )
         )
     return payload
@@ -1200,10 +1526,10 @@ async def create_knowledge_item(
     )
     db.add(knowledge_item)
     db.flush()
-    _apply_machine_assignments(db, knowledge_item, request.machine_ids)
+    resolved_machine_ids = _apply_machine_assignments(db, knowledge_item, request.working_station_ids)
     db.commit()
     db.refresh(knowledge_item)
-    _invalidate_knowledge_cache(request.machine_ids)
+    _invalidate_knowledge_cache(resolved_machine_ids)
     knowledge_item = (
         db.query(KnowledgeItem)
         .options(joinedload(KnowledgeItem.category), joinedload(KnowledgeItem.machine_assignments))
@@ -1243,9 +1569,9 @@ async def update_knowledge_item(
     knowledge_item.example_questions = request.example_questions.strip() if request.example_questions else None
     knowledge_item.is_active = request.is_active
     knowledge_item.sort_order = request.sort_order
-    _apply_machine_assignments(db, knowledge_item, request.machine_ids)
+    resolved_machine_ids = _apply_machine_assignments(db, knowledge_item, request.working_station_ids)
     db.commit()
-    _invalidate_knowledge_cache(previous_machine_ids + request.machine_ids)
+    _invalidate_knowledge_cache(previous_machine_ids + resolved_machine_ids)
 
     knowledge_item = (
         db.query(KnowledgeItem)

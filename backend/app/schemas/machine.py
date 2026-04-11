@@ -12,6 +12,7 @@ class MachineBase(BaseModel):
 
 class MachineCreate(MachineBase):
     department_id: Optional[int] = None
+    working_station_id: Optional[int] = None
     reparto: Optional[str] = None
 
     @field_validator('startup_checklist')
@@ -30,6 +31,7 @@ class MachineCreate(MachineBase):
 class MachineUpdate(BaseModel):
     nome: Optional[str] = None
     department_id: Optional[int] = None
+    working_station_id: Optional[int] = None
     reparto: Optional[str] = None
     descrizione: Optional[str] = None
     id_postazione: Optional[str] = None
@@ -54,6 +56,7 @@ class MachineUpdate(BaseModel):
 class MachineResponse(MachineBase):
     id: int
     department_id: Optional[int] = None
+    working_station_id: Optional[int] = None
     department_name: Optional[str] = None
     reparto: Optional[str] = None
     startup_checklist: List[str]

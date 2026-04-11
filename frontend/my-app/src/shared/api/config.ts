@@ -30,13 +30,15 @@ export const API_ENDPOINTS = {
   LOGOUT: `${API_BASE_URL}/auth/logout`,
   AUTH_ME: `${API_BASE_URL}/auth/me`,
   SSE_TOKEN: `${API_BASE_URL}/auth/sse-token`,
-  SESSION_EVENTS: (machineId: number, token: string) =>
-    `${API_BASE_URL}/auth/session-events?machine_id=${machineId}&token=${encodeURIComponent(token)}`,
-  SESSION_STATUS: (machineId: number) => `${API_BASE_URL}/auth/session-status?machine_id=${machineId}`,
+  SESSION_EVENTS: (workingStationId: number, token: string) =>
+    `${API_BASE_URL}/auth/session-events?working_station_id=${workingStationId}&token=${encodeURIComponent(token)}`,
+  SESSION_STATUS: (workingStationId: number) => `${API_BASE_URL}/auth/session-status?working_station_id=${workingStationId}`,
   INTERACTION_ASK: `${API_BASE_URL}/api/interactions/ask`,
   INTERACTION_QUICK_ACTION: `${API_BASE_URL}/api/interactions/quick-action`,
-  INTERACTION_PENDING_QUICK_ACTION: (machineId: number) =>
-    `${API_BASE_URL}/api/interactions/pending-quick-action?machine_id=${machineId}`,
+  INTERACTION_PENDING_QUICK_ACTION: (workingStationId: number) =>
+    `${API_BASE_URL}/api/interactions/pending-quick-action?working_station_id=${workingStationId}`,
+  INTERACTION_SESSION_HISTORY: (workingStationId: number) =>
+    `${API_BASE_URL}/api/interactions/session-history?working_station_id=${workingStationId}`,
   INTERACTION_FEEDBACK: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/feedback`,
   INTERACTION_RESOLVE: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/resolve`,
 
@@ -49,12 +51,18 @@ export const API_ENDPOINTS = {
   DELETE_MACHINE: (id: number) => `${API_BASE_URL}/machines/${id}`,
   UPDATE_MACHINE_STATUS: (id: number) => `${API_BASE_URL}/machines/${id}/status`,
 
+  // Working stations endpoints
+  GET_WORKING_STATIONS: `${API_BASE_URL}/working-stations`,
+  GET_AVAILABLE_WORKING_STATIONS: `${API_BASE_URL}/working-stations/available`,
+  GET_WORKING_STATION: (id: number) => `${API_BASE_URL}/working-stations/${id}`,
+
   // Admin endpoints
   ADMIN_DASHBOARD_SUMMARY: `${API_BASE_URL}/admin/dashboard-summary`,
   ADMIN_SETTINGS: `${API_BASE_URL}/admin/settings`,
   ADMIN_METADATA_DEPARTMENTS: `${API_BASE_URL}/admin/metadata/departments`,
   ADMIN_METADATA_CATEGORIES: `${API_BASE_URL}/admin/metadata/categories`,
   ADMIN_METADATA_MACHINES: `${API_BASE_URL}/admin/metadata/machines`,
+  ADMIN_METADATA_WORKING_STATIONS: `${API_BASE_URL}/admin/metadata/working-stations`,
   ADMIN_METADATA_USERS: `${API_BASE_URL}/admin/metadata/users`,
   ADMIN_METADATA_ROLES: `${API_BASE_URL}/admin/metadata/roles`,
 
@@ -82,6 +90,10 @@ export const API_ENDPOINTS = {
   UPDATE_ADMIN_MACHINE: (id: number) => `${API_BASE_URL}/admin/machines/${id}`,
   DELETE_ADMIN_MACHINE: (id: number) => `${API_BASE_URL}/admin/machines/${id}`,
   RESET_MACHINE_STATUS: (id: number) => `${API_BASE_URL}/admin/machines/${id}/reset-status`,
+  LIST_WORKING_STATIONS: `${API_BASE_URL}/admin/working-stations`,
+  CREATE_WORKING_STATION: `${API_BASE_URL}/admin/working-stations`,
+  UPDATE_WORKING_STATION: (id: number) => `${API_BASE_URL}/admin/working-stations/${id}`,
+  DELETE_WORKING_STATION: (id: number) => `${API_BASE_URL}/admin/working-stations/${id}`,
 
   LIST_ADMIN_CATEGORIES: `${API_BASE_URL}/admin/categories`,
   CREATE_ADMIN_CATEGORY: `${API_BASE_URL}/admin/categories`,

@@ -12,9 +12,9 @@ interface StartupChecklistDialogProps {
   onComplete: () => void;
 }
 
-interface MachineResponse {
+interface WorkingStationResponse {
   id: number;
-  nome: string;
+  name: string;
   startup_checklist: string[];
   department_id: number | null;
   department_name: string | null;
@@ -38,7 +38,7 @@ export function StartupChecklistDialog({
   useEffect(() => {
     const fetchChecklist = async () => {
       try {
-        const response = await apiCall(API_ENDPOINTS.GET_MACHINE(machineId), {
+        const response = await apiCall(API_ENDPOINTS.GET_WORKING_STATION(machineId), {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -47,7 +47,7 @@ export function StartupChecklistDialog({
         if (!response.ok) {
           throw new Error('Impossibile caricare la checklist');
         }
-        const data: MachineResponse = await response.json();
+        const data: WorkingStationResponse = await response.json();
         setChecklist(data.startup_checklist || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Errore sconosciuto');

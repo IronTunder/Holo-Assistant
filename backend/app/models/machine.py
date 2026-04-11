@@ -11,6 +11,7 @@ class Machine(Base):
     nome = Column(String, nullable=False, unique=True)
     reparto_legacy = Column("reparto", String, nullable=True)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True, index=True)
+    working_station_id = Column(Integer, ForeignKey("working_stations.id"), nullable=True, unique=True, index=True)
     descrizione = Column(Text, nullable=True)
     id_postazione = Column(String, unique=True, index=True, nullable=False)
     startup_checklist = Column(JSON, nullable=False, default=list)
@@ -18,6 +19,7 @@ class Machine(Base):
     operatore_attuale_id = Column(Integer, nullable=True)
 
     department = relationship("Department", back_populates="machines")
+    working_station = relationship("WorkingStation", back_populates="assigned_machine")
     knowledge_assignments = relationship(
         "MachineKnowledgeItem",
         back_populates="machine",

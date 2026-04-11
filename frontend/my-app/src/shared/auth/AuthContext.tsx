@@ -18,10 +18,11 @@ export interface AuthUser {
   created_at: string;
 }
 
-export interface AuthMachine {
+export interface AuthAssignedMachine {
   id: number;
   nome: string;
   department_id?: number | null;
+  working_station_id?: number | null;
   department_name?: string | null;
   reparto: string;
   descrizione: string;
@@ -30,14 +31,37 @@ export interface AuthMachine {
   startup_checklist: string[];
 }
 
+export interface AuthWorkingStation {
+  id: number;
+  name: string;
+  department_id?: number | null;
+  department_name?: string | null;
+  reparto: string;
+  description?: string | null;
+  station_code: string;
+  in_uso: boolean;
+  startup_checklist: string[];
+  assigned_machine?: AuthAssignedMachine | null;
+}
+
 export interface AuthContextType {
   isLoggedIn: boolean;
   isAdmin: boolean;
   accessToken: string | null;
   user: AuthUser | null;
-  machine: AuthMachine | null;
+  workingStation: AuthWorkingStation | null;
+  assignedMachine: AuthAssignedMachine | null;
+  machine: AuthAssignedMachine | null;
+  chatSessionId: number | null;
   expiresIn: number | null;
-  login: (accessToken: string, user: AuthUser, machine: AuthMachine, expiresIn: number) => void;
+  login: (
+    accessToken: string,
+    user: AuthUser,
+    workingStation: AuthWorkingStation,
+    assignedMachine: AuthAssignedMachine | null,
+    chatSessionId: number | null,
+    expiresIn: number
+  ) => void;
   adminLogin: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   restoreSession: () => Promise<boolean>;
   logout: () => Promise<void>;
@@ -52,7 +76,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isAdmin, setIsAdmin] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [machine, setMachine] = useState<AuthMachine | null>(null);
+  const [workingStation, setWorkingStation] = useState<AuthWorkingStation | null>(null);
+  const [assignedMachine, setAssignedMachine] = useState<AuthAssignedMachine | null>(null);
+  const [chatSessionId, setChatSessionId] = useState<number | null>(null);
   const [expiresIn, setExpiresIn] = useState<number | null>(null);
 
   const clearSession = useCallback(() => {
@@ -60,12 +86,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsAdmin(false);
     setAccessToken(null);
     setUser(null);
-    setMachine(null);
+    setWorkingStation(null);
+    setAssignedMachine(null);
+    setChatSessionId(null);
     setExpiresIn(null);
 
     localStorage.removeItem('accessToken');
     localStorage.removeItem('user');
-    localStorage.removeItem('machine');
+    localStorage.removeItem('workingStation');
+    localStorage.removeItem('assignedMachine');
+    localStorage.removeItem('chatSessionId');
     localStorage.removeItem('expiresIn');
     localStorage.removeItem('loginTimestamp');
     localStorage.removeItem('isAdmin');
@@ -75,19 +105,33 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const login = useCallback((
     nextAccessToken: string,
     nextUser: AuthUser,
-    nextMachine: AuthMachine,
+    nextWorkingStation: AuthWorkingStation,
+    nextAssignedMachine: AuthAssignedMachine | null,
+    nextChatSessionId: number | null,
     nextExpiresIn: number
   ) => {
     setAccessToken(nextAccessToken);
     setUser(nextUser);
-    setMachine(nextMachine);
+    setWorkingStation(nextWorkingStation);
+    setAssignedMachine(nextAssignedMachine);
+    setChatSessionId(nextChatSessionId);
     setExpiresIn(nextExpiresIn);
     setIsLoggedIn(true);
     setIsAdmin(false);
 
     localStorage.removeItem('accessToken');
     localStorage.setItem('user', JSON.stringify(nextUser));
-    localStorage.setItem('machine', JSON.stringify(nextMachine));
+    localStorage.setItem('workingStation', JSON.stringify(nextWorkingStation));
+    if (nextAssignedMachine) {
+      localStorage.setItem('assignedMachine', JSON.stringify(nextAssignedMachine));
+    } else {
+      localStorage.removeItem('assignedMachine');
+    }
+    if (nextChatSessionId) {
+      localStorage.setItem('chatSessionId', String(nextChatSessionId));
+    } else {
+      localStorage.removeItem('chatSessionId');
+    }
     localStorage.setItem('expiresIn', nextExpiresIn.toString());
     localStorage.setItem('loginTimestamp', Date.now().toString());
     localStorage.setItem('isAdmin', 'false');
@@ -114,14 +158,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       setAccessToken(data.access_token);
       setUser(data.user);
-      setMachine(null);
+      setWorkingStation(null);
+      setAssignedMachine(null);
+      setChatSessionId(null);
       setExpiresIn(data.expires_in);
       setIsLoggedIn(true);
       setIsAdmin(Boolean(data.is_admin));
 
       localStorage.removeItem('accessToken');
       localStorage.setItem('user', JSON.stringify(data.user));
-      localStorage.removeItem('machine');
+      localStorage.removeItem('workingStation');
+      localStorage.removeItem('assignedMachine');
+      localStorage.removeItem('chatSessionId');
       localStorage.setItem('expiresIn', data.expires_in.toString());
       localStorage.setItem('loginTimestamp', Date.now().toString());
       localStorage.setItem('isAdmin', data.is_admin ? 'true' : 'false');
@@ -167,7 +215,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const restoreSession = useCallback(async (): Promise<boolean> => {
     const storedUser = localStorage.getItem('user');
     const storedIsAdmin = localStorage.getItem('isAdmin') === 'true';
-    const storedMachine = localStorage.getItem('machine');
+    const storedWorkingStation = localStorage.getItem('workingStation');
+    const storedAssignedMachine = localStorage.getItem('assignedMachine');
+    const storedChatSessionId = localStorage.getItem('chatSessionId');
 
     if (!storedUser) {
       return false;
@@ -175,7 +225,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     try {
       const parsedUser = JSON.parse(storedUser);
-      const parsedMachine = storedMachine ? JSON.parse(storedMachine) : null;
+      const parsedWorkingStation = storedWorkingStation ? JSON.parse(storedWorkingStation) : null;
+      const parsedAssignedMachine = storedAssignedMachine ? JSON.parse(storedAssignedMachine) : null;
       const refreshedAccessToken = await refreshAccessToken();
       if (!refreshedAccessToken) {
         return false;
@@ -203,7 +254,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       setAccessToken(refreshedAccessToken);
       setUser(nextUser);
-      setMachine(parsedMachine);
+      setWorkingStation(parsedWorkingStation);
+      setAssignedMachine(parsedAssignedMachine);
+      setChatSessionId(storedChatSessionId ? parseInt(storedChatSessionId, 10) : null);
       setExpiresIn(refreshedExpiresIn);
       setIsLoggedIn(true);
       setIsAdmin(nextIsAdmin);
@@ -234,7 +287,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         const logoutBody = JSON.stringify({
-          machine_id: machine?.id,
+          working_station_id: workingStation?.id,
         });
 
         let response = await fetch(API_ENDPOINTS.LOGOUT, {
@@ -268,27 +321,31 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     clearSession();
-  }, [accessToken, clearSession, machine, refreshAccessToken, user]);
+  }, [accessToken, clearSession, refreshAccessToken, user, workingStation]);
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (!['user', 'machine', 'isAdmin'].includes(e.key || '')) {
+      if (!['user', 'workingStation', 'assignedMachine', 'chatSessionId', 'isAdmin'].includes(e.key || '')) {
         return;
       }
 
-      if (e.newValue === null && e.key !== 'machine') {
+      if (e.newValue === null && !['workingStation', 'assignedMachine', 'chatSessionId'].includes(e.key || '')) {
         clearSession();
         return;
       }
 
       const storedUser = localStorage.getItem('user');
-      const storedMachine = localStorage.getItem('machine');
+      const storedWorkingStation = localStorage.getItem('workingStation');
+      const storedAssignedMachine = localStorage.getItem('assignedMachine');
+      const storedChatSessionId = localStorage.getItem('chatSessionId');
       const storedIsAdmin = localStorage.getItem('isAdmin') === 'true';
       const storedExpiresIn = parseInt(localStorage.getItem('expiresIn') || '0', 10);
 
       if (storedUser) {
         setUser(JSON.parse(storedUser));
-        setMachine(storedMachine ? JSON.parse(storedMachine) : null);
+        setWorkingStation(storedWorkingStation ? JSON.parse(storedWorkingStation) : null);
+        setAssignedMachine(storedAssignedMachine ? JSON.parse(storedAssignedMachine) : null);
+        setChatSessionId(storedChatSessionId ? parseInt(storedChatSessionId, 10) : null);
         setExpiresIn(storedExpiresIn || null);
         setIsAdmin(storedIsAdmin);
         setIsLoggedIn(true);
@@ -304,7 +361,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isAdmin,
     accessToken,
     user,
-    machine,
+    workingStation,
+    assignedMachine,
+    machine: assignedMachine,
+    chatSessionId,
     expiresIn,
     login,
     adminLogin,

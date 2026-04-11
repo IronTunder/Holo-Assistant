@@ -39,14 +39,16 @@ class PresetResponseResponse(PresetResponseBase):
 
 
 class AskQuestionRequest(BaseModel):
-    machine_id: int
+    working_station_id: int
+    machine_id: Optional[int] = None
     user_id: Optional[int] = None
     question: str
     selected_knowledge_item_id: Optional[int] = None
 
 
 class QuickActionRequest(BaseModel):
-    machine_id: int
+    working_station_id: int
+    machine_id: Optional[int] = None
     user_id: int
     action_type: QuickActionType
 
@@ -117,3 +119,20 @@ class PendingQuickActionResponse(BaseModel):
     resolved_by_user_id: Optional[int] = None
     resolved_by_user_name: Optional[str] = None
     resolution_timestamp: Optional[datetime] = None
+
+
+class OperatorChatMessage(BaseModel):
+    id: str
+    role: Literal["user", "assistant", "system"]
+    content: str
+    timestamp: datetime
+    interaction_id: Optional[int] = None
+    action_type: Optional[InteractionActionType] = None
+    feedback_status: Optional[FeedbackStatus] = None
+
+
+class OperatorChatSessionResponse(BaseModel):
+    chat_session_id: Optional[int] = None
+    working_station_id: int
+    machine_id: Optional[int] = None
+    messages: list[OperatorChatMessage] = Field(default_factory=list)

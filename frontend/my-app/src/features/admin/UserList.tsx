@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import API_ENDPOINTS from '@/shared/api/config';
 import { useApiClient } from '@/shared/api/apiClient';
@@ -8,20 +8,59 @@ import { Card } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { Edit2, Key, Plus, Trash2, UsersRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
-import type { AdminUser, DepartmentOption, RoleOption } from './adminTypes';
+import type { AdminMachine, AdminUser, DepartmentOption, RoleOption } from './adminTypes';
 import { ResetPasswordDialog } from './ResetPasswordDialog';
 import { UserForm } from './UserForm';
 
 interface UserListProps {
   departments: DepartmentOption[];
   roles: RoleOption[];
+  machines: AdminMachine[];
   onMetadataRefresh: () => Promise<void>;
 }
 
-export const UserList = ({ departments, roles, onMetadataRefresh }: UserListProps) => {
+function ActionButton({
+  label,
+  disabled = false,
+  destructive = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  destructive?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  const button = (
+    <span className="inline-flex">
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={disabled}
+        className={destructive ? 'text-red-600 hover:bg-red-50 hover:text-red-800 disabled:text-red-300' : undefined}
+        onClick={onClick}
+      >
+        {children}
+      </Button>
+    </span>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export const UserList = ({ departments, roles, machines, onMetadataRefresh }: UserListProps) => {
   const { apiCall } = useApiClient();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,6 +107,16 @@ export const UserList = ({ departments, roles, onMetadataRefresh }: UserListProp
       return matchesSearch && matchesDepartment && matchesRole && matchesShift;
     });
   }, [departmentFilter, roleFilter, searchTerm, shiftFilter, users]);
+
+  const activeMachineByUserId = useMemo(
+    () =>
+      new Map(
+        machines
+          .filter((machine) => machine.in_uso && machine.operatore_attuale_id != null)
+          .map((machine) => [machine.operatore_attuale_id as number, machine])
+      ),
+    [machines]
+  );
 
   const handleDeleteUser = async (userId: number) => {
     try {
@@ -192,6 +241,11 @@ export const UserList = ({ departments, roles, onMetadataRefresh }: UserListProp
                       <div className="space-y-1">
                         <p className="font-medium text-slate-900">{user.nome}</p>
                         <p className="text-xs text-slate-500">{user.badge_id}</p>
+                        {activeMachineByUserId.get(user.id) ? (
+                          <p className="text-xs text-amber-700">
+                            In sessione su {activeMachineByUserId.get(user.id)?.nome}
+                          </p>
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -207,29 +261,44 @@ export const UserList = ({ departments, roles, onMetadataRefresh }: UserListProp
                     <TableCell className="capitalize">{user.turno}</TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => {
-                          setEditingUser(user);
-                          setIsFormOpen(true);
-                        }}>
+                        <ActionButton
+                          label={
+                            activeMachineByUserId.get(user.id)
+                              ? 'Non modificabile mentre usa un macchinario'
+                              : 'Modifica utente'
+                          }
+                          disabled={Boolean(activeMachineByUserId.get(user.id))}
+                          onClick={() => {
+                            setEditingUser(user);
+                            setIsFormOpen(true);
+                          }}
+                        >
                           <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => {
-                          setSelectedUser(user);
-                          setIsResetPasswordOpen(true);
-                        }}>
+                        </ActionButton>
+                        <ActionButton
+                          label="Reimposta password"
+                          onClick={() => {
+                            setSelectedUser(user);
+                            setIsResetPasswordOpen(true);
+                          }}
+                        >
                           <Key className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-red-600 hover:bg-red-50 hover:text-red-800"
+                        </ActionButton>
+                        <ActionButton
+                          label={
+                            activeMachineByUserId.get(user.id)
+                              ? 'Non eliminabile mentre usa un macchinario'
+                              : 'Elimina utente'
+                          }
+                          disabled={Boolean(activeMachineByUserId.get(user.id))}
+                          destructive
                           onClick={() => {
                             setSelectedUser(user);
                             setIsDeleteOpen(true);
                           }}
                         >
                           <Trash2 className="h-4 w-4" />
-                        </Button>
+                        </ActionButton>
                       </div>
                     </TableCell>
                   </TableRow>

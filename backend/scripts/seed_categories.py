@@ -70,6 +70,29 @@ LEGACY_ITEM_UPDATES = (
     },
 )
 
+KNOWLEDGE_ASSIGNMENTS = {
+    "Sequenza di avvio macchina": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+    "Parametri standard ciclo macchina": {"STP-01", "CNC-02", "CNC-03"},
+    "Macchina non si avvia": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+    "Regolazione velocita dal pannello": {"STP-01", "CNC-02", "CNC-03"},
+    "Per la manutenzione ordinaria:\n1. Spegnere la macchina\n2. Controllare il livello dell'olio\n3. Verificare lo stato delle cinghie\n4. Pulire i filtri\n5. Ungere i punti di articolazione": {"STP-01", "CNC-02", "CNC-03"},
+    "Manutenzione periodica consigliata: sostituzione olio ogni 500 ore, cambio filtri ogni 250 ore, verifica cuscinetti ogni 100 ore": {"STP-01", "CNC-02", "CNC-03"},
+    "Se la macchina produce rumori anomali: verificare l'usura dei cuscinetti, controllare i bulloni di fissaggio, lubrificare gli assi": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+    "Per sostituire le cinghie di trasmissione:\n1. Allentare il motore\n2. Rimuovere la cinghia vecchia\n3. Montare quella nuova\n4. Tensionare correttamente": {"STP-01", "ASM-01"},
+    "Dispositivi di protezione individuale obbligatori:\n- Mascherina FFP2\n- Occhiali di protezione\n- Guanti in nitrile\n- Scarpe antinfortunistiche\n- Casco": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+    "Prima di avviare la macchina verificare:\n- Assenza di ostruzioni\n- Bloccaggi delle protezioni\n- Integrita dei cavi\n- Corretto posizionamento del materiale": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+    "In caso di emergenza: schiacciare il pulsante di arresto di emergenza, allontanarsi dalla macchina, avvertire un supervisor": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+    "Non toccare mai parti in movimento della macchina. Utilizzare sempre le protezioni. In caso di incastro, fermare immediatamente la macchina": {"STP-01", "CNC-02", "CNC-03", "ASM-01"},
+}
+
+
+def resolve_target_machines(question_title: str | None, answer_text: str, machines: list[Machine]) -> list[Machine]:
+    assignment_key = question_title or answer_text
+    target_station_codes = KNOWLEDGE_ASSIGNMENTS.get(assignment_key)
+    if not target_station_codes:
+        return machines
+    return [machine for machine in machines if machine.id_postazione in target_station_codes]
+
 
 def align_existing_seed_data(db) -> int:
     updated_items = 0
@@ -145,7 +168,12 @@ def seed_database():
                 db.flush()
                 total_items += 1
 
-                for machine in machines:
+                target_machines = resolve_target_machines(
+                    knowledge_item.question_title,
+                    knowledge_item.answer_text,
+                    machines,
+                )
+                for machine in target_machines:
                     db.add(
                         MachineKnowledgeItem(
                             machine_id=machine.id,

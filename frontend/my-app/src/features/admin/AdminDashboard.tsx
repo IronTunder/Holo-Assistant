@@ -8,12 +8,13 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card } from '@/shared/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import { Activity, BookText, Cpu, LayoutDashboard, LogOut, ScrollText, Settings, ShieldCheck, Users } from 'lucide-react';
+import { Activity, BookText, Cpu, LayoutDashboard, LogOut, MapPinned, ScrollText, Settings, ShieldCheck, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DashboardSummary, InteractionLogEntry } from './adminTypes';
 import { KnowledgeManager } from './KnowledgeManager';
 import { LogViewer } from './LogViewer';
 import { MachineList } from './MachineList';
+import { WorkingStationList } from './WorkingStationList';
 import { DepartmentManager } from './DepartmentManager';
 import { RoleManager } from './RoleManager';
 import { SettingsPanel } from './SettingsPanel';
@@ -53,7 +54,7 @@ type InteractionResolutionResponse = {
 export const AdminDashboard = () => {
   const { accessToken, isAdmin, logout, refreshAccessToken, user } = useAuth();
   const { apiCall } = useApiClient();
-  const { departments, categories, machines, users, roles, refresh } = useAdminMetadata();
+  const { departments, categories, machines, workingStations, users, roles, refresh } = useAdminMetadata();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -138,11 +139,27 @@ export const AdminDashboard = () => {
     }
   }, [activeTab, loadOverview]);
 
+  useEffect(() => {
+    if (!accessToken || !isAdmin) {
+      return;
+    }
+
+    window.history.pushState({ adminDashboard: true }, '', window.location.href);
+
+    const handlePopState = () => {
+      window.history.pushState({ adminDashboard: true }, '', window.location.href);
+      navigate('/admin', { replace: true });
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [accessToken, isAdmin, navigate]);
+
   const headerSubtitle = useMemo(() => {
     if (!summary) {
       return 'Controlla utenti, macchinari e knowledge da un unico punto.';
     }
-    return `${summary.total_users} utenti, ${summary.total_machines} macchinari, ${summary.knowledge_items} template knowledge.`;
+    return `${summary.total_users} utenti, ${summary.total_machines} macchinari, ${summary.total_working_stations} postazioni, ${summary.knowledge_items} template knowledge.`;
   }, [summary]);
 
   const recentCriticalEmergencyLogs = useMemo(
@@ -403,7 +420,7 @@ export const AdminDashboard = () => {
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3 lg:grid-cols-7">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3 lg:grid-cols-8">
             <TabsTrigger value="overview" className="gap-2">
               <LayoutDashboard className="h-4 w-4" />
               <span>Panoramica</span>
@@ -418,6 +435,12 @@ export const AdminDashboard = () => {
               <TabsTrigger value="organization" className="gap-2">
                 <ShieldCheck className="h-4 w-4" />
                 <span>Organizzazione</span>
+              </TabsTrigger>
+            ) : null}
+            {hasPermission('machines.manage') ? (
+              <TabsTrigger value="working-stations" className="gap-2">
+                <MapPinned className="h-4 w-4" />
+                <span>Postazioni</span>
               </TabsTrigger>
             ) : null}
             {hasPermission('machines.manage') ? (
@@ -625,6 +648,11 @@ export const AdminDashboard = () => {
                       Gestisci macchinari e stato
                     </Button>
                   ) : null}
+                  {hasPermission('machines.manage') ? (
+                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('working-stations')}>
+                      Crea o modifica postazioni
+                    </Button>
+                  ) : null}
                   {hasPermission('knowledge.manage') ? (
                     <Button variant="outline" className="justify-start" onClick={() => setActiveTab('knowledge')}>
                       Aggiorna knowledge e assegnazioni
@@ -641,24 +669,12 @@ export const AdminDashboard = () => {
           </TabsContent>
 
           <TabsContent value="users" className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-950">Gestione utenti</h2>
-              <p className="text-sm text-slate-500">
-                Crea utenti con dati coerenti e filtra rapidamente per reparto, ruolo e turno.
-              </p>
-            </div>
             {hasPermission('users.manage') ? (
-              <UserList departments={departments} roles={roles} onMetadataRefresh={refreshAll} />
+              <UserList departments={departments} roles={roles} machines={machines} onMetadataRefresh={refreshAll} />
             ) : null}
           </TabsContent>
 
           <TabsContent value="organization" className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-950">Organizzazione</h2>
-              <p className="text-sm text-slate-500">
-                Mantieni ruoli, permessi e reparti allineati al lavoro reale.
-              </p>
-            </div>
             {hasPermission('roles.manage') ? <RoleManager onMetadataRefresh={refreshAll} /> : null}
             {hasPermission('departments.manage') ? <DepartmentManager onMetadataRefresh={refreshAll} /> : null}
             {!hasPermission('roles.manage') && !hasPermission('departments.manage') ? (
@@ -669,26 +685,26 @@ export const AdminDashboard = () => {
           </TabsContent>
 
           <TabsContent value="machines" className="space-y-4">
+            {hasPermission('machines.manage') ? (
+              <MachineList departments={departments} workingStations={workingStations} onMetadataRefresh={refreshAll} />
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="working-stations" className="space-y-4">
             <div>
-              <h2 className="text-xl font-semibold text-slate-950">Gestione macchinari</h2>
+              <h2 className="text-xl font-semibold text-slate-950">Gestione postazioni</h2>
               <p className="text-sm text-slate-500">
-                Monitora lo stato in tempo reale, aggiorna i reparti e gestisci le postazioni.
+                Crea postazioni operative autonome e collega facoltativamente un macchinario.
               </p>
             </div>
             {hasPermission('machines.manage') ? (
-              <MachineList departments={departments} onMetadataRefresh={refreshAll} />
+              <WorkingStationList departments={departments} onMetadataRefresh={refreshAll} />
             ) : null}
           </TabsContent>
 
           <TabsContent value="knowledge" className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-950">Knowledge base modulare</h2>
-              <p className="text-sm text-slate-500">
-                Le categorie restano globali, mentre i template vengono assegnati ai singoli macchinari.
-              </p>
-            </div>
             {hasPermission('knowledge.manage') ? (
-              <KnowledgeManager categories={categories} machines={machines} onMetadataRefresh={refreshAll} />
+              <KnowledgeManager categories={categories} workingStations={workingStations} onMetadataRefresh={refreshAll} />
             ) : null}
           </TabsContent>
 
@@ -706,12 +722,6 @@ export const AdminDashboard = () => {
 
           {hasPermission('settings.view') ? (
             <TabsContent value="settings" className="space-y-4">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-950">Impostazioni</h2>
-                <p className="text-sm text-slate-500">
-                  Mantieni le configurazioni di sistema sotto controllo.
-                </p>
-              </div>
               <SettingsPanel canEdit={hasPermission('settings.edit')} />
             </TabsContent>
           ) : null}

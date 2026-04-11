@@ -178,3 +178,4 @@ printf '[INFO] In sviluppo le chiamate API passano dal frontend tramite proxy Vi
 printf '[INFO] Su browser desktop o mobile di solito basta accettare il certificato del frontend.\n'
 printf '[INFO] Se apri il backend direttamente e il browser lo blocca, accetta anche: https://%s:%s/health\n\n' "$IP" "$HOLO_ASSISTANT_DEFAULT_BACKEND_PORT"
 printf 'Per fermare il sistema, chiudi le finestre del terminale oppure esegui: cd docker && %s down\n' "${HOLO_ASSISTANT_DOCKER_COMPOSE_CMD[*]}"
+read -n 1 -s -r -p "Premi un tasto per chiudere questa finestra..." && printf '\n'

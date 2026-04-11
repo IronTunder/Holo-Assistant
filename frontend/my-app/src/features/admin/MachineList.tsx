@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import API_ENDPOINTS from '@/shared/api/config';
 import { useAuth } from '@/shared/auth/AuthContext';
@@ -9,18 +9,57 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { Cpu, Edit2, Eye, Plus, RotateCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AdminMachine, DepartmentOption } from './adminTypes';
+import type { AdminMachine, AdminWorkingStation, DepartmentOption } from './adminTypes';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { MachineForm } from './MachineForm';
 
 interface MachineListProps {
   departments: DepartmentOption[];
+  workingStations: AdminWorkingStation[];
   onMetadataRefresh: () => Promise<void>;
 }
 
-export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps) => {
+function ActionButton({
+  label,
+  disabled = false,
+  destructive = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  destructive?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  const button = (
+    <span className="inline-flex">
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={disabled}
+        className={destructive ? 'text-red-600 hover:bg-red-50 hover:text-red-800 disabled:text-red-300' : undefined}
+        onClick={onClick}
+      >
+        {children}
+      </Button>
+    </span>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export const MachineList = ({ departments, workingStations, onMetadataRefresh }: MachineListProps) => {
   const { accessToken, isAdmin, refreshAccessToken } = useAuth();
   const [machines, setMachines] = useState<AdminMachine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -443,42 +482,41 @@ export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
+                        <ActionButton
+                          label={machine.in_uso ? 'Non modificabile mentre e in uso' : 'Modifica macchinario'}
+                          disabled={machine.in_uso}
                           onClick={() => {
                             setEditingMachine(machine);
                             setIsFormOpen(true);
                           }}
                         >
                           <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
+                        </ActionButton>
+                        <ActionButton
+                          label="Apri dettagli"
                           onClick={() => {
                             setDetailsMachineId(machine.id);
                             setIsDetailsOpen(true);
                           }}
                         >
                           <Eye className="h-4 w-4" />
-                        </Button>
+                        </ActionButton>
                         {machine.in_uso ? (
-                          <Button size="sm" variant="ghost" onClick={() => handleResetStatus(machine.id)}>
+                          <ActionButton label="Resetta stato macchinario" onClick={() => handleResetStatus(machine.id)}>
                             <RotateCw className="h-4 w-4" />
-                          </Button>
+                          </ActionButton>
                         ) : null}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-red-600 hover:bg-red-50 hover:text-red-800"
+                        <ActionButton
+                          label={machine.in_uso ? 'Non eliminabile mentre e in uso' : 'Elimina macchinario'}
+                          disabled={machine.in_uso}
+                          destructive
                           onClick={() => {
                             setSelectedMachine(machine);
                             setIsDeleteOpen(true);
                           }}
                         >
                           <Trash2 className="h-4 w-4" />
-                        </Button>
+                        </ActionButton>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -497,6 +535,7 @@ export const MachineList = ({ departments, onMetadataRefresh }: MachineListProps
         }}
         machine={editingMachine}
         departments={departments}
+        workingStations={workingStations}
         onSuccess={() => {
           void fetchMachines();
           void onMetadataRefresh();

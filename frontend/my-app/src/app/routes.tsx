@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "re
 import { createBrowserRouter } from "react-router";
 import { Root } from "./Root";
 import { NotFound } from "./NotFound";
+import { OperatorRoute } from "./OperatorRoute";
 import { ProtectedRoute } from "./ProtectedRoute";
 
 const OperatorInterface = lazy(() =>
@@ -48,7 +49,12 @@ export const router = createBrowserRouter([
     path: "/",
     Component: Root,
     children: [
-      { index: true, Component: withSuspense(OperatorInterface) },
+      {
+        Component: OperatorRoute,
+        children: [
+          { index: true, Component: withSuspense(OperatorInterface) },
+        ],
+      },
       {
         path: "admin-login",
         Component: withSuspense(AdminLogin),

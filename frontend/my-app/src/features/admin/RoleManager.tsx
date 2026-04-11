@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import type { RoleOption } from './adminTypes';
 
 const permissionOptions = [
+  { value: 'operator.interface.access', label: 'Accesso interfaccia operatore' },
   { value: 'backoffice.access', label: 'Accesso backoffice' },
   { value: 'users.manage', label: 'Gestione utenti' },
   { value: 'roles.manage', label: 'Gestione ruoli' },

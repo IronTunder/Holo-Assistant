@@ -158,10 +158,11 @@ printf '   - Backend API: https://%s:%s\n' "$IP" "$HOLO_ASSISTANT_DEFAULT_BACKEN
 printf '   - API Docs:    https://%s:%s/docs\n' "$IP" "$HOLO_ASSISTANT_DEFAULT_BACKEND_PORT"
 printf '   - Adminer DB:  http://localhost:8080\n\n'
 printf 'Credenziali di test:\n'
-printf '   - Username: Mario Rossi / Luigi Verdi / Anna Bianchi / Marco Neri\n'
+printf '   - Username: luca.ferri,matteo.villa,sara.galli (Operatori) davide.rinaldi (Manutentore) e elisa.conti (Admin)\n'
 printf '   - Password: password123\n\n'
 printf '[INFO] In sviluppo le chiamate API passano dal frontend tramite proxy Vite.\n'
 printf '[INFO] Su browser desktop o mobile di solito basta accettare il certificato del frontend.\n'
 printf '[INFO] Se apri il backend direttamente e il browser lo blocca, accetta anche: https://%s:%s/health\n\n' "$IP" "$HOLO_ASSISTANT_DEFAULT_BACKEND_PORT"
 printf 'Per fermare il sistema, chiudi le finestre del terminale o premi Ctrl+C.\n'
 printf '========================================\n'
+read -n 1 -s -r -p "Premi un tasto per chiudere questa finestra..." && printf '\n'

@@ -50,12 +50,29 @@ export interface AdminMachine {
   department_id?: number | null;
   department_name?: string | null;
   reparto?: string | null;
+  working_station_id?: number | null;
   descrizione?: string | null;
   id_postazione?: string | null;
   startup_checklist: string[];
   in_uso: boolean;
   operatore_attuale_id?: number | null;
   operator?: AdminMachineOperator | null;
+  deleted?: boolean;
+}
+
+export interface AdminWorkingStation {
+  id: number;
+  name: string;
+  department_id?: number | null;
+  department_name?: string | null;
+  reparto?: string | null;
+  description?: string | null;
+  station_code: string;
+  startup_checklist: string[];
+  in_uso: boolean;
+  operatore_attuale_id?: number | null;
+  operator?: AdminMachineOperator | null;
+  assigned_machine?: AdminMachine | null;
   deleted?: boolean;
 }
 
@@ -76,12 +93,14 @@ export interface KnowledgeItem {
   is_active: boolean;
   sort_order: number;
   assigned_machine_ids: number[];
+  assigned_working_station_ids: number[];
   assignment_count: number;
 }
 
 export interface DashboardSummary {
   total_users: number;
   total_machines: number;
+  total_working_stations: number;
   machines_in_use: number;
   machines_available: number;
   active_departments: number;
