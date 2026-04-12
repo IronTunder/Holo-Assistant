@@ -1,10 +1,11 @@
 # Frontend Holo-Assistant
 
-Ultimo aggiornamento: 8 aprile 2026
+Ultimo aggiornamento: 12 aprile 2026
 
 Frontend React/Vite del progetto Holo-Assistant. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
-- area amministrativa su `/admin-login` e `/admin`.
+- area amministrativa su `/admin-login` e `/admin`;
+- informativa pubblica su cookie e tecnologie locali su `/cookie-policy`.
 
 ## Stack
 
@@ -71,17 +72,18 @@ Routing attuale:
 - `/` interfaccia operatore
 - `/admin-login` login amministratore
 - `/admin` dashboard protetta
+- `/cookie-policy` informativa cookie e tecnologie locali
 
 ## Flusso operatore
 
 L'interfaccia operatore e pensata per schermi orizzontali e uso rapido in postazione.
 
 Passi principali:
-- caricamento macchine disponibili tramite `GET /machines/available`;
-- selezione della macchina dal pannello di accesso;
+- caricamento postazioni disponibili tramite `GET /working-stations/available`;
+- selezione della postazione dal pannello di accesso;
 - login via `POST /auth/badge-login` oppure `POST /auth/credentials-login`;
 - apertura della console operatore con avatar, stato sessione e box domanda;
-- ascolto wake-word locale nel browser con frase `Holo`;
+- ascolto wake-word locale nel browser con frase `ehi holo`;
 - invio domande a `POST /api/interactions/ask`;
 - eventuale riproduzione TTS tramite `POST /tts/synthesize`.
 
@@ -90,7 +92,8 @@ Comportamenti utente rilevanti:
 - risposta digitata progressivamente nella console senza far scorrere la pagina intera;
 - opzioni di chiarimento quando la knowledge base richiede disambiguazione;
 - follow-up finale per chiedere se il problema e stato risolto;
-- azioni rapide sempre visibili nella parte bassa della console.
+- azioni rapide sempre visibili nella parte bassa della console;
+- pannello impostazioni operatore con toggle persistenti per ologramma, wakeword e grafica legacy forzata.
 
 ## Sessione operatore e protezione macchina
 
@@ -102,9 +105,9 @@ Protezione attuale:
 - fallback automatico su `GET /auth/session-status` quando SSE non e disponibile.
 
 Eventi o motivi di invalidazione gestiti lato frontend:
-- `machine_released`
-- `machine_reassigned`
-- `machine_not_found`
+- `working_station_released`
+- `working_station_reassigned`
+- `working_station_not_found`
 
 Quando la sessione diventa invalida il frontend:
 - chiude la connessione attiva;
@@ -142,8 +145,10 @@ Comportamento attuale:
 - `src/shared/api/config.ts` centralizza endpoint e base URL.
 - `src/features/operator/OperatorInterface.tsx` contiene il flusso principale operatore.
 - `src/features/operator/voice/useVoskWakeWord.ts` gestisce wake-word e trascrizione locale.
-- `src/features/operator/BadgeReader.tsx` gestisce selezione macchina e accesso.
+- `src/features/operator/BadgeReader.tsx` gestisce selezione postazione e accesso.
 - `src/features/operator/CredentialsLogin.tsx` gestisce il modal di login credenziali.
+- `src/features/operator/operatorDisplayPreferences.ts` gestisce le preferenze locali dell'interfaccia operatore.
+- `src/features/legal/CookiePolicyPage.tsx` contiene l'informativa cookie e tecnologie locali.
 
 ## Note operative
 
@@ -160,3 +165,10 @@ Il frontend viene avviato dagli script correnti tramite `vite dev`. Per un host 
 - generare una build con `npm run build`
 - servire gli asset statici da un web server o reverse proxy
 - lasciare `VITE_API_URL` puntare al backend pubblicato sulla rete interna
+
+## Note recenti
+
+- la dashboard admin e stata riallineata sulle sezioni `Utenti`, `Macchinari`, `Postazioni` e `Impostazioni`;
+- il form macchinari ora associa la postazione da un elenco di postazioni libere, evitando inserimenti manuali del codice;
+- la pagina impostazioni admin separa consultazione normale e configurazione avanzata, con indicatori di riavvio per singola voce;
+- l'app espone un link pubblico all'informativa cookie sia dalla schermata operatore pre-login sia dal login admin.

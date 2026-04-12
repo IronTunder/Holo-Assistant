@@ -1,7 +1,7 @@
 // frontend/my-app/src/features/admin/AdminLogin.tsx
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
@@ -161,15 +161,23 @@ export const AdminLogin = () => {
                 </div>
 
                 <div className="border-t border-white/10 pt-4">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-11 w-full border-white/12 bg-white/5 text-white hover:bg-white/10 hover:text-white"
-                    onClick={() => navigate('/', { replace: true })}
-                  >
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    Torna alla pagina operatore
-                  </Button>
+                  <div className="flex flex-col gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 w-full border-white/12 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+                      onClick={() => navigate('/', { replace: true })}
+                    >
+                      <ArrowLeft className="mr-2 h-4 w-4" />
+                      Torna alla pagina operatore
+                    </Button>
+                    <Link
+                      to="/cookie-policy"
+                      className="text-center text-xs text-slate-400 transition-colors hover:text-white hover:underline"
+                    >
+                      Informativa cookie e tecnologie locali
+                    </Link>
+                  </div>
                 </div>
               </div>
             </CardContent>

@@ -23,6 +23,12 @@ const AdminDashboard = lazy(() =>
   }))
 );
 
+const CookiePolicyPage = lazy(() =>
+  import("@/features/legal/CookiePolicyPage").then((module) => ({
+    default: module.CookiePolicyPage,
+  }))
+);
+
 function RouteFallback() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -65,6 +71,10 @@ export const router = createBrowserRouter([
         children: [
           { index: true, Component: withSuspense(AdminDashboard) },
         ],
+      },
+      {
+        path: "cookie-policy",
+        Component: withSuspense(CookiePolicyPage),
       },
       { path: "*", Component: NotFound },
     ],

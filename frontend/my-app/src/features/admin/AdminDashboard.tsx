@@ -691,12 +691,6 @@ export const AdminDashboard = () => {
           </TabsContent>
 
           <TabsContent value="working-stations" className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-950">Gestione postazioni</h2>
-              <p className="text-sm text-slate-500">
-                Crea postazioni operative autonome e collega facoltativamente un macchinario.
-              </p>
-            </div>
             {hasPermission('machines.manage') ? (
               <WorkingStationList departments={departments} onMetadataRefresh={refreshAll} />
             ) : null}
@@ -709,12 +703,6 @@ export const AdminDashboard = () => {
           </TabsContent>
 
           <TabsContent value="logs" className="space-y-4">
-            <div>
-              <h2 className="text-xl font-semibold text-slate-950">Log di audit</h2>
-              <p className="text-sm text-slate-500">
-                Consulta le interazioni con nomi umani, categorie e template effettivamente usati.
-              </p>
-            </div>
             {hasPermission('logs.view') ? (
               <LogViewer departments={departments} categories={categories} machines={machines} users={users} />
             ) : null}

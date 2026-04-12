@@ -7,6 +7,8 @@
       <link rel="icon" type="image/png" href="/holo-mark.png" />
       <link id="legacy-css" rel="stylesheet" href="/legacy.css" />
       <script>
+        var OPERATOR_DISPLAY_PREFERENCES_KEY = "holo-assistant.operator-display-preferences";
+
         function supportsCssLayers() {
           var testId = "holo-assistant-css-layer-test";
           var style = document.createElement("style");
@@ -25,7 +27,21 @@
           return color === "rgb(1, 2, 3)";
         }
 
-        if (supportsCssLayers()) {
+        function shouldForceLegacyGraphics() {
+          try {
+            var rawPreferences = window.localStorage.getItem(OPERATOR_DISPLAY_PREFERENCES_KEY);
+            if (!rawPreferences) {
+              return false;
+            }
+
+            var parsedPreferences = JSON.parse(rawPreferences);
+            return Boolean(parsedPreferences && parsedPreferences.forceLegacyGraphics);
+          } catch (_error) {
+            return false;
+          }
+        }
+
+        if (supportsCssLayers() && !shouldForceLegacyGraphics()) {
           var legacyCss = document.getElementById("legacy-css");
           if (legacyCss) {
             legacyCss.disabled = true;

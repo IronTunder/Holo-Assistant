@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Info, Mic, MicOff, Radio, Siren, Wrench, X } from 'lucide-react';
+import { AlertTriangle, Info, Mic, MicOff, Radio, Settings, Siren, Wrench, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
+import { OperatorSettingsDialog } from './OperatorSettingsDialog';
 import { StartupChecklistDialog } from './StartupChecklistDialog';
+import {
+  applyLegacyGraphicsPreference,
+  readOperatorDisplayPreferences,
+  writeOperatorDisplayPreferences,
+  type OperatorDisplayPreferences,
+} from './operatorDisplayPreferences';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { playTtsAudio, synthesizeTts, type TtsPlayback, type TtsSpeechPayload } from '@/shared/api/ttsClient';
 import { API_ENDPOINTS } from '@/shared/api/config';
@@ -167,6 +174,7 @@ function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): str
     case 'ready':
       return 'In pausa';
     case 'disabled':
+      return 'Disattivata';
     default:
       return 'Non disponibile';
   }
@@ -254,6 +262,8 @@ export function OperatorInterface() {
   const [quickActionInFlight, setQuickActionInFlight] = useState<QuickActionType | null>(null);
   const [pendingQuickActionConfirmation, setPendingQuickActionConfirmation] = useState<QuickActionType | null>(null);
   const [wakeWordMuted, setWakeWordMuted] = useState(false);
+  const [showOperatorSettings, setShowOperatorSettings] = useState(false);
+  const [displayPreferences, setDisplayPreferences] = useState<OperatorDisplayPreferences>(() => readOperatorDisplayPreferences());
   const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null);
   const [resolutionNote, setResolutionNote] = useState('');
   const [technicianUsername, setTechnicianUsername] = useState('');
@@ -276,6 +286,8 @@ export function OperatorInterface() {
   const chatScrollAreaRef = useRef<HTMLDivElement | null>(null);
   const currentWorkingStation = workingStation;
   const currentMachine = assignedMachine ?? machine;
+  const hologramEnabled = displayPreferences.hologramEnabled;
+  const wakeWordFeatureEnabled = displayPreferences.wakeWordEnabled;
 
   const scrollChatToBottom = () => {
     const scrollAreaRoot = chatScrollAreaRef.current;
@@ -287,6 +299,19 @@ export function OperatorInterface() {
   };
 
   // Effetto per mostrare la checklist di startup dopo il login
+  useEffect(() => {
+    applyLegacyGraphicsPreference(displayPreferences.forceLegacyGraphics);
+    writeOperatorDisplayPreferences(displayPreferences);
+  }, [displayPreferences]);
+
+  useEffect(() => {
+    if (wakeWordFeatureEnabled) {
+      return;
+    }
+
+    setWakeWordMuted(false);
+  }, [wakeWordFeatureEnabled]);
+
   useEffect(() => {
     if (isLoggedIn && currentWorkingStation && !startupChecklistCompleted) {
       setShowStartupChecklist(true);
@@ -1295,7 +1320,7 @@ export function OperatorInterface() {
     partialTranscript: voicePartialTranscript,
     error: wakeWordError,
   } = useVoskWakeWord({
-    enabled: isLoggedIn && Boolean(user) && Boolean(currentWorkingStation),
+    enabled: wakeWordFeatureEnabled && isLoggedIn && Boolean(user) && Boolean(currentWorkingStation),
     paused: wakeWordPaused,
     wakePhrase: 'ehi holo',
     modelUrl: VOSK_MODEL_URL,
@@ -1321,7 +1346,8 @@ export function OperatorInterface() {
   });
   const wakeWordActive = isWakeWordActive(wakeWordStatus);
   const wakeWordLabel = getWakeWordLabel(wakeWordStatus, wakeWordError);
-  const canToggleWakeWord = isLoggedIn && Boolean(user) && Boolean(currentWorkingStation);
+  const canToggleWakeWord =
+    wakeWordFeatureEnabled && isLoggedIn && Boolean(user) && Boolean(currentWorkingStation);
   const quickActionsDisabled = assistantBusy || hasOpenTechnicianRequest;
 
   return (
@@ -1357,6 +1383,13 @@ export function OperatorInterface() {
           }}
         />
       )}
+
+      <OperatorSettingsDialog
+        open={showOperatorSettings}
+        onOpenChange={setShowOperatorSettings}
+        preferences={displayPreferences}
+        onPreferencesChange={setDisplayPreferences}
+      />
 
       {pendingQuickActionConfirmation ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
@@ -1522,6 +1555,15 @@ export function OperatorInterface() {
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowOperatorSettings(true)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                aria-label="Apri impostazioni operatore"
+                title="Impostazioni"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
               {isLoggedIn && user && (
                 <>
                   {quickActions.map((action) => {
@@ -1587,6 +1629,7 @@ export function OperatorInterface() {
                 <div className="flex min-h-0 flex-1 items-center justify-center">
                   <AvatarDisplay
                     ref={avatarDisplayRef}
+                    disabled={!hologramEnabled}
                     state={avatarState}
                     overlay={
                       <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-slate-950/68 px-4 py-2 text-center text-sm text-slate-100 backdrop-blur-md">

@@ -10,7 +10,7 @@ import { Card } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Switch } from '@/shared/ui/switch';
 import { Textarea } from '@/shared/ui/textarea';
-import { Activity, CheckCircle2, Info, RefreshCw, Save, Server, ShieldCheck, Volume2, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Gauge, Info, RefreshCw, Save, Server, ShieldCheck, Volume2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface TtsHealthResponse {
@@ -85,6 +85,14 @@ const formatSeconds = (seconds: number | null) => {
 };
 
 const getEndpointPath = (endpoint: string) => endpoint.replace(API_BASE_URL, '');
+
+const ADVANCED_GROUP_DESCRIPTIONS: Record<string, string> = {
+  Database: 'Connessione al database applicativo e credenziali di accesso backend.',
+  'AI / Ollama': 'Runtime del modello, timeouts e parametri avanzati di inferenza.',
+  TTS: 'Configurazione persistente della sintesi vocale Piper.',
+  Cache: 'Strategie di caching backend e limiti memoria.',
+  'Sessioni / CORS': 'Durate token, cookie e origini consentite per accesso e refresh.',
+};
 
 const getTtsBadge = (ttsHealth: TtsHealthResponse | null, hasError: boolean) => {
   if (hasError) {
@@ -416,6 +424,8 @@ export const SettingsPanel = ({ canEdit }: SettingsPanelProps) => {
     );
   };
 
+  const advancedSettingsGroups = settingsGroups;
+
   const ttsBadge = getTtsBadge(ttsHealth, Boolean(ttsHealthError));
   const TtsBadgeIcon = ttsBadge.Icon;
   const runtimeRows = [
@@ -428,14 +438,6 @@ export const SettingsPanel = ({ canEdit }: SettingsPanelProps) => {
 
   return (
     <div className="space-y-6">
-      <Alert className="border-amber-200 bg-amber-50 text-amber-900">
-        <Info className="h-4 w-4" />
-        <AlertTitle>Riavvio necessario</AlertTitle>
-        <AlertDescription>
-          Le impostazioni salvate aggiornano backend/.env e vengono applicate al prossimo riavvio del backend o dello stack.
-        </AlertDescription>
-      </Alert>
-
       {!canEdit ? (
         <Alert className="border-slate-200 bg-slate-50 text-slate-700">
           <ShieldCheck className="h-4 w-4" />
@@ -444,83 +446,14 @@ export const SettingsPanel = ({ canEdit }: SettingsPanelProps) => {
         </Alert>
       ) : null}
 
-      {pendingRestart ? (
-        <Alert className="border-sky-200 bg-sky-50 text-sky-900">
-          <RefreshCw className="h-4 w-4" />
-          <AlertTitle>Modifiche in attesa</AlertTitle>
-          <AlertDescription>Le ultime modifiche sono state salvate. Riavvia il backend per renderle operative.</AlertDescription>
-        </Alert>
-      ) : null}
-
       <Card className="border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-slate-900">
-              <Server className="h-5 w-5 text-sky-600" />
-              <h3 className="text-lg font-semibold">Configurazione ambiente</h3>
-            </div>
-            <p className="text-sm text-slate-500">Configura le impostazioni dell'ambiente di esecuzione.</p>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              disabled={isLoadingSettings || isSavingSettings}
-              onClick={() => void loadSettings({ silent: true })}
-            >
-              <RefreshCw className={`h-4 w-4 ${isLoadingSettings ? 'animate-spin' : ''}`} />
-              Aggiorna
-            </Button>
-            {canEdit ? (
-              <Button
-                type="button"
-                className="gap-2"
-                disabled={!hasChanges || isSavingSettings || Object.keys(settingsErrors).length > 0}
-                onClick={() => void handleSaveSettings()}
-              >
-                <Save className="h-4 w-4" />
-                {isSavingSettings ? 'Salvataggio...' : 'Salva modifiche'}
-              </Button>
-            ) : null}
-          </div>
+        <div className="flex items-center gap-2 text-slate-900">
+          <Gauge className="h-5 w-5 text-emerald-600" />
+          <h3 className="text-lg font-semibold">Impostazioni normali</h3>
         </div>
-
-        <div className="mt-5 space-y-5">
-          {isLoadingSettings ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-              Caricamento impostazioni...
-            </div>
-          ) : settingsGroups.map((group) => (
-            <section key={group.name} className="rounded-lg border border-slate-200 p-4">
-              <h4 className="font-semibold text-slate-900">{group.name}</h4>
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                {group.settings.map((setting) => (
-                  <div key={setting.key} className="space-y-2 rounded-lg border border-slate-100 bg-slate-50 p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <label className="text-sm font-medium text-slate-900">{setting.label}</label>
-                        <p className="text-xs text-slate-500">{setting.key}</p>
-                      </div>
-                      {setting.requires_restart ? <Badge variant="outline">Riavvio</Badge> : null}
-                    </div>
-                    <p className="text-xs text-slate-500">{setting.description}</p>
-                    {renderSettingControl(setting)}
-                    {settingsErrors[setting.key] ? (
-                      <p className="text-xs font-medium text-red-600">{settingsErrors[setting.key]}</p>
-                    ) : null}
-                    {setting.sensitive && setting.has_value && !settingsValues[setting.key] ? (
-                      <p className="text-xs text-slate-500">Valore gia configurato e non mostrato.</p>
-                    ) : null}
-                    {settingByKey.get(setting.key)?.value !== settingsValues[setting.key] ? (
-                      <p className="text-xs text-amber-700">Modifica non salvata</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
+        <p className="mt-0.5 text-sm text-slate-500">
+          Area di consultazione rapida per gli aspetti visibili e operativi: sintesi vocale, sessione amministratore e runtime frontend.
+        </p>
       </Card>
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -629,6 +562,116 @@ export const SettingsPanel = ({ canEdit }: SettingsPanelProps) => {
               <p className="text-xs uppercase tracking-wide text-slate-500">{row.label}</p>
               <p className="mt-1 break-all text-sm font-medium text-slate-900">{row.value}</p>
             </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-slate-900">
+              <Server className="h-5 w-5 text-sky-600" />
+              <h3 className="text-lg font-semibold">Impostazioni avanzate</h3>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              Parametri persistenti del backend e dell’ambiente applicativo.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              disabled={isLoadingSettings || isSavingSettings}
+              onClick={() => void loadSettings({ silent: true })}
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoadingSettings ? 'animate-spin' : ''}`} />
+              Aggiorna
+            </Button>
+            {canEdit ? (
+              <Button
+                type="button"
+                className="gap-2"
+                disabled={!hasChanges || isSavingSettings || Object.keys(settingsErrors).length > 0}
+                onClick={() => void handleSaveSettings()}
+              >
+                <Save className="h-4 w-4" />
+                {isSavingSettings ? 'Salvataggio...' : 'Salva modifiche'}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        <Alert className="mt-5 border-red-200 bg-red-50 text-red-900">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Modifica solo se sai cosa stai facendo</AlertTitle>
+          <AlertDescription>
+            Queste impostazioni agiscono su backend, runtime, database e sicurezza. Vanno modificate solo se conosci con precisione l’effetto del cambiamento.
+          </AlertDescription>
+        </Alert>
+
+        {pendingRestart ? (
+          <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            Alcune modifiche sono gia state salvate e verranno applicate al prossimo riavvio del backend o dello stack.
+          </div>
+        ) : null}
+
+        <div className="mt-5 space-y-5">
+          {isLoadingSettings ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+              Caricamento impostazioni...
+            </div>
+          ) : advancedSettingsGroups.map((group) => (
+            <section key={group.name} className="rounded-xl border border-slate-200 p-4">
+              <div className="flex flex-col gap-1 border-b border-slate-100 pb-3">
+                <h4 className="font-semibold text-slate-900">{group.name}</h4>
+                <p className="text-sm text-slate-500">
+                  {ADVANCED_GROUP_DESCRIPTIONS[group.name] || 'Configurazione avanzata del sistema.'}
+                </p>
+              </div>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                {group.settings.map((setting) => {
+                  const isDirty = settingByKey.get(setting.key)?.value !== settingsValues[setting.key];
+
+                  return (
+                    <div key={setting.key} className="space-y-3 rounded-xl border border-slate-100 bg-slate-50 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="text-sm font-medium text-slate-900">{setting.label}</label>
+                            {setting.requires_restart ? (
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium ${
+                                  pendingRestart
+                                    ? 'border-sky-200 bg-sky-50 text-sky-800'
+                                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                                }`}
+                                title="La modifica viene applicata al riavvio del backend o dello stack"
+                              >
+                                <RefreshCw className={`h-3 w-3 ${pendingRestart ? 'animate-pulse' : ''}`} />
+                                Riavvio richiesto
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">{setting.key}</p>
+                        </div>
+                        {isDirty ? <Badge className="bg-amber-100 text-amber-900 hover:bg-amber-100">Non salvata</Badge> : null}
+                      </div>
+
+                      <p className="text-sm leading-6 text-slate-600">{setting.description}</p>
+                      {renderSettingControl(setting)}
+                      {settingsErrors[setting.key] ? (
+                        <p className="text-xs font-medium text-red-600">{settingsErrors[setting.key]}</p>
+                      ) : null}
+                      {setting.sensitive && setting.has_value && !settingsValues[setting.key] ? (
+                        <p className="text-xs text-slate-500">Valore gia configurato e non mostrato.</p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           ))}
         </div>
       </Card>

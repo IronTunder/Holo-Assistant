@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router';
 import { UserCircle, ChevronDown, Search, Lock, User } from 'lucide-react';
 import { motion } from 'motion/react';
 import { ScrollArea } from '@/shared/ui/scroll-area';
@@ -316,6 +317,12 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   <UserCircle className="h-5 w-5" />
                   {scanning ? 'Scansione in corso...' : 'Simula scansione badge'}
                 </button>
+                <Link
+                  to="/cookie-policy"
+                  className="text-center text-xs text-slate-400 transition-colors hover:text-white hover:underline"
+                >
+                  Informativa cookie e tecnologie locali
+                </Link>
               </div>
             </div>
           </section>

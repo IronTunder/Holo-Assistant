@@ -1,6 +1,6 @@
 # Progetto Holo-Assistant
 
-Ultimo aggiornamento documentazione: 10 aprile 2026
+Ultimo aggiornamento documentazione: 12 aprile 2026
 
 Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
@@ -8,13 +8,15 @@ Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali 
 - backend FastAPI;
 - database PostgreSQL;
 - servizi AI locali con retrieval deterministico, chiarimenti guidati e fallback controllati;
-- sintesi vocale TTS e avatar operatore.
+- sintesi vocale TTS e avatar operatore;
+- pagina informativa pubblica su cookie e tecnologie locali disponibile su `/cookie-policy`.
 
 ## Architettura in breve
 
 - `frontend/my-app` contiene l'applicazione web.
 - `frontend/my-app/src/features/operator` gestisce login operatore, console assistente, avatar e sessione macchina.
 - `frontend/my-app/src/features/admin` contiene dashboard e strumenti di amministrazione.
+- `frontend/my-app/src/features/legal` contiene la pagina informativa cookie e tecnologie locali.
 - `frontend/my-app/src/shared` raccoglie API client, auth e componenti UI condivisi.
 - `backend/app` contiene API, modelli, servizi AI e logica applicativa.
 - `backend/scripts` contiene bootstrap database e utility operative.
@@ -158,6 +160,7 @@ Configurazioni GPU consigliate:
 - Backend API: `https://{server-ip}:8000`
 - Swagger: `https://{server-ip}:8000/docs`
 - Admin login: `https://localhost:5173/admin-login`
+- Informativa cookie: `https://localhost:5173/cookie-policy`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
 
@@ -195,12 +198,13 @@ Se l'IP statico cambia, rigenera il certificato includendo il nuovo IP, ad esemp
 ### Esperienza operatore
 
 Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
-- selezione macchina tra quelle disponibili;
+- selezione postazione tra quelle disponibili;
 - login con badge o credenziali;
 - area avatar con stati `idle`, `listening`, `thinking`, `speaking`;
-- wake-word locale con Vosk in browser: di' `Holo`, poi pronuncia la domanda tecnica;
+- wake-word locale con Vosk in browser: di' `ehi holo`, poi pronuncia la domanda tecnica;
 - console laterale per domanda, risposta, chiarimenti e follow-up;
-- azioni rapide visibili senza scroll dell'intera pagina.
+- azioni rapide visibili senza scroll dell'intera pagina;
+- icona impostazioni nella barra operatore, disponibile sia prima del login sia durante la sessione, per gestire ologramma, wakeword e grafica legacy forzata.
 
 Endpoint principali usati dal frontend operatore:
 - `POST /auth/badge-login`
@@ -218,13 +222,19 @@ La sessione macchina viene monitorata in tempo reale:
 - se SSE non e disponibile, usa fallback su `GET /auth/session-status`.
 
 I motivi di logout remoto gestiti lato frontend sono:
-- `machine_released`
-- `machine_reassigned`
-- `machine_not_found`
+- `working_station_released`
+- `working_station_reassigned`
+- `working_station_not_found`
 
 ### Dashboard admin
 
-L'area admin gestisce autenticazione dedicata, macchine, utenti, metadati e knowledge base tecnica. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
+L'area admin gestisce autenticazione dedicata, macchine, utenti, postazioni, metadati e knowledge base tecnica. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
+
+Aggiornamenti UI rilevanti:
+- la sezione impostazioni e stata separata in `Impostazioni normali` e `Impostazioni avanzate`;
+- ogni voce che richiede riavvio mostra l'indicatore direttamente sulla card dell'impostazione;
+- il form macchinari associa la postazione tramite dropdown delle postazioni libere, evitando inserimenti manuali incoerenti;
+- la sezione postazioni e stata riallineata visivamente agli altri pannelli admin.
 
 ## AI, retrieval e TTS
 
@@ -387,7 +397,7 @@ Note pratiche:
 Per la build frontend attuale:
 - `npm run build` esegue prima `npm run build:legacy-css` e poi `vite build`;
 - `frontend/my-app/scripts/build-legacy-css.mjs` genera `frontend/my-app/public/legacy.css`;
-- `index.html` carica `legacy.css` come fallback iniziale e lo disabilita subito nei browser che supportano i CSS layers;
+- `index.html` carica `legacy.css` come fallback iniziale e lo disabilita subito nei browser che supportano i CSS layers, salvo preferenza operatore che forza la grafica legacy;
 - questo mantiene compatibile l'interfaccia anche su browser enterprise o postazioni aggiornate lentamente.
 
 ## Troubleshooting rapido
@@ -442,9 +452,10 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 - README frontend: [frontend/my-app/README.md](frontend/my-app/README.md)
 - Backend entrypoint: [backend/app/main.py](backend/app/main.py)
 - Config API frontend: [frontend/my-app/src/shared/api/config.ts](frontend/my-app/src/shared/api/config.ts)
+- Informativa cookie frontend: [frontend/my-app/src/features/legal/CookiePolicyPage.tsx](frontend/my-app/src/features/legal/CookiePolicyPage.tsx)
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 10 aprile 2026
+- ultimo aggiornamento documentazione: 12 aprile 2026
 - script pubblici supportati: `setup.bat`, `start.bat`, `./setup.sh`, `./start.sh`
 - controlli non distruttivi Unix: `./setup.sh --check-only`, `./start.sh --check-only`

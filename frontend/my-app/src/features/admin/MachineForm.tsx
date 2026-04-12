@@ -52,19 +52,29 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, workingStat
     setStartupChecklist(['']);
   }, [departments, isOpen, machine]);
 
+  const availableWorkingStations = useMemo(() => {
+    return workingStations.filter((workingStation) => {
+      if (workingStation.assigned_machine == null) {
+        return true;
+      }
+
+      return workingStation.id === machine?.working_station_id;
+    });
+  }, [machine?.working_station_id, workingStations]);
+
   const inlineError = useMemo(() => {
     const checklistItems = startupChecklist.map((item) => item.trim());
     if (!departmentId) {
       return 'Seleziona un reparto per il macchinario.';
     }
-    if (!idPostazione.trim()) {
-      return 'L ID postazione e obbligatorio.';
+    if (workingStationId === 'none' || !idPostazione.trim()) {
+      return 'Seleziona una postazione disponibile.';
     }
     if (!checklistItems.length || checklistItems.some((item) => !item)) {
       return 'Aggiungi almeno un controllo checklist e compila tutte le voci.';
     }
     return null;
-  }, [departmentId, idPostazione, startupChecklist]);
+  }, [departmentId, idPostazione, startupChecklist, workingStationId]);
 
   const updateChecklistItem = (index: number, value: string) => {
     setStartupChecklist((currentItems) =>
@@ -96,7 +106,7 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, workingStat
         nome,
         department_id: Number(departmentId),
         descrizione: descrizione.trim() || null,
-        id_postazione: idPostazione.trim(),
+        id_postazione: idPostazione.trim() || null,
         working_station_id: workingStationId !== 'none' ? Number(workingStationId) : null,
         startup_checklist: startupChecklist.map((item) => item.trim()),
       };
@@ -141,11 +151,6 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, workingStat
               <Input value={nome} onChange={(event) => setNome(event.target.value)} required />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">ID postazione</label>
-              <Input value={idPostazione} onChange={(event) => setIdPostazione(event.target.value)} required />
-            </div>
-
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium">Reparto</label>
               <Select value={departmentId} onValueChange={setDepartmentId}>
@@ -169,19 +174,38 @@ export const MachineForm = ({ isOpen, onClose, machine, departments, workingStat
 
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium">Postazione associata</label>
-              <Select value={workingStationId} onValueChange={setWorkingStationId}>
+              <Select
+                value={workingStationId}
+                onValueChange={(value) => {
+                  setWorkingStationId(value);
+                  if (value === 'none') {
+                    setIdPostazione('');
+                    return;
+                  }
+
+                  const selectedWorkingStation = availableWorkingStations.find(
+                    (workingStation) => String(workingStation.id) === value
+                  );
+                  setIdPostazione(selectedWorkingStation?.station_code || '');
+                }}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="Nessuna postazione" />
+                  <SelectValue placeholder="Seleziona una postazione disponibile" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Nessuna postazione</SelectItem>
-                  {workingStations.map((workingStation) => (
+                  {availableWorkingStations.map((workingStation) => (
                     <SelectItem key={workingStation.id} value={String(workingStation.id)}>
                       {workingStation.name} - {workingStation.station_code}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-sm font-medium">Codice postazione</label>
+              <Input value={idPostazione} readOnly className="bg-slate-50 text-slate-600" placeholder="Seleziona una postazione disponibile" />
             </div>
           </div>
 

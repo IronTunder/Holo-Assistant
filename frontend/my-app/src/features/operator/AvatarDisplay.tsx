@@ -19,6 +19,7 @@ import {
 
 interface AvatarDisplayProps {
   state: AvatarState;
+  disabled?: boolean;
   overlay?: ReactNode;
 }
 
@@ -107,7 +108,7 @@ function disposeTalkingHeadSafely(head: TalkingHead | null): void {
 }
 
 export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>(
-  function AvatarDisplay({ state, overlay }, ref) {
+  function AvatarDisplay({ state, disabled = false, overlay }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const headRef = useRef<TalkingHead | null>(null);
     const stateRef = useRef<AvatarState>(state);
@@ -139,6 +140,15 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
     }, [isActivated]);
 
     useEffect(() => {
+      if (disabled) {
+        setIsLoading(false);
+        setErrorMessage(null);
+        setLoadProgress(0);
+        disposeTalkingHeadSafely(headRef.current);
+        headRef.current = null;
+        return;
+      }
+
       let cancelled = false;
 
       const initializeAvatar = async () => {
@@ -209,16 +219,16 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
         disposeTalkingHeadSafely(headRef.current);
         headRef.current = null;
       };
-    }, [isActivated]);
+    }, [disabled, isActivated]);
 
     useEffect(() => {
       const head = headRef.current;
-      if (!head || isLoading || errorMessage) {
+      if (!head || disabled || isLoading || errorMessage) {
         return;
       }
 
       applyStatePreset(head, state);
-    }, [errorMessage, isLoading, state]);
+    }, [disabled, errorMessage, isLoading, state]);
 
     useImperativeHandle(
       ref,
@@ -282,7 +292,7 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
       [errorMessage, isActivated, isLoading],
     );
 
-    const showOverlay = !isActivated || isLoading || errorMessage;
+    const showOverlay = disabled || !isActivated || isLoading || errorMessage;
 
     return (
       <motion.div
@@ -305,7 +315,17 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
 
             {showOverlay && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-8 text-center">
-                {!isActivated ? (
+                {disabled ? (
+                  <>
+                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-slate-300/20 bg-white/5">
+                      <div className="h-12 w-12 rounded-full border-2 border-slate-200/70" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-100">Ologramma disattivato</p>
+                      <p className="mt-1 text-sm text-slate-300">Puoi riattivarlo dalle impostazioni della postazione.</p>
+                    </div>
+                  </>
+                ) : !isActivated ? (
                   <>
                     <div className="flex h-24 w-24 items-center justify-center rounded-full border border-cyan-400/30 bg-cyan-500/10">
                       <div className="h-12 w-12 rounded-full border-2 border-cyan-300/70" />

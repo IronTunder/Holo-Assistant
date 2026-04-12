@@ -2,7 +2,7 @@
 
 Guida pratica per avviare Holo-Assistant con il flusso attuale degli script.
 
-Ultimo aggiornamento: 10 aprile 2026
+Ultimo aggiornamento: 12 aprile 2026
 
 ## Script supportati
 
@@ -155,6 +155,7 @@ Per la build statica:
 - Backend API: `https://{server-ip}:8000`
 - Swagger: `https://{server-ip}:8000/docs`
 - Admin login: `https://localhost:5173/admin-login`
+- Informativa cookie: `https://localhost:5173/cookie-policy`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
 
@@ -250,11 +251,19 @@ Il frontend operatore protegge la sessione macchina con due livelli:
 Se la sessione non e piu valida, il frontend forza il logout e mostra un messaggio locale.
 
 Motivi principali gestiti dal frontend:
-- `machine_released`
-- `machine_reassigned`
-- `machine_not_found`
+- `working_station_released`
+- `working_station_reassigned`
+- `working_station_not_found`
 
 Questo copre i casi in cui un amministratore libera la macchina, la assegna a un altro operatore oppure la postazione non e piu disponibile.
+
+## Note UI aggiornate
+
+- la barra operatore espone azioni rapide di emergenza e manutenzione prima di info e impostazioni;
+- il pannello impostazioni operatore permette di disattivare ologramma, wakeword e forzare la grafica legacy;
+- la dashboard admin mostra le impostazioni separate tra `normali` e `avanzate`;
+- il form macchinari usa un dropdown delle postazioni libere per associare la postazione in modo coerente;
+- l'informativa cookie e tecnologie locali e disponibile pubblicamente su `/cookie-policy`.
 
 ## Troubleshooting
 
@@ -353,4 +362,4 @@ Dopo `setup` o `start` controlla:
 - backend raggiungibile su `https://{server-ip}:8000`;
 - frontend raggiungibile su `https://{server-ip}:5173`;
 - accesso admin disponibile su `/admin-login`;
-- selezione macchina e login operatore funzionanti dal frontend.
+- selezione postazione e login operatore funzionanti dal frontend.
