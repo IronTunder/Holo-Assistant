@@ -6,8 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.auth.auth import ADMIN_MACHINE_EVENTS_CHANNEL, get_current_user, user_has_permission
-from app.api.auth.auth import verify_password
+from app.api.auth.auth import (
+    ADMIN_MACHINE_EVENTS_CHANNEL,
+    get_current_user,
+    resolve_requested_session_target,
+    user_has_permission,
+    verify_password,
+)
 from app.core.database import get_db
 from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
@@ -116,8 +121,27 @@ def _is_technician(user: User) -> bool:
 def _get_open_quick_action(
     db: Session,
     user_id: int,
-    working_station_id: int,
+    working_station_id: int | None = None,
+    machine_id: int | None = None,
 ) -> InteractionLog | None:
+    if working_station_id is None and machine_id is None:
+        return None
+
+    filters = [
+        InteractionLog.user_id == user_id,
+        InteractionLog.action_type.in_(("maintenance", "emergency")),
+        InteractionLog.feedback_status == "unresolved",
+    ]
+    if working_station_id is not None:
+        filters.append(InteractionLog.working_station_id == working_station_id)
+    else:
+        filters.extend(
+            [
+                InteractionLog.working_station_id.is_(None),
+                InteractionLog.machine_id == machine_id,
+            ]
+        )
+
     return (
         db.query(InteractionLog)
         .options(
@@ -128,12 +152,7 @@ def _get_open_quick_action(
             joinedload(InteractionLog.knowledge_item),
             joinedload(InteractionLog.resolved_by_user),
         )
-        .filter(
-            InteractionLog.user_id == user_id,
-            InteractionLog.working_station_id == working_station_id,
-            InteractionLog.action_type.in_(("maintenance", "emergency")),
-            InteractionLog.feedback_status == "unresolved",
-        )
+        .filter(*filters)
         .order_by(InteractionLog.timestamp.desc(), InteractionLog.id.desc())
         .first()
     )
@@ -217,6 +236,32 @@ def _load_active_chat_session(
     )
 
 
+def _resolve_operator_session_target(
+    db: Session,
+    current_user_id: int,
+    working_station_id: int | None = None,
+    machine_id: int | None = None,
+) -> tuple[WorkingStation | None, Machine | None, OperatorChatSession | None]:
+    working_station, machine = resolve_requested_session_target(
+        db,
+        working_station_id=working_station_id,
+        machine_id=machine_id,
+    )
+
+    if working_station is not None:
+        if not working_station.in_uso or working_station.operatore_attuale_id != current_user_id:
+            raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
+        machine = working_station.assigned_machine or machine
+        chat_session = _load_active_chat_session(db, current_user_id, working_station.id)
+        return working_station, machine, chat_session
+
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Macchina non trovata")
+    if not machine.in_uso or machine.operatore_attuale_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Macchina non assegnata all'utente corrente")
+    return None, machine, None
+
+
 def _build_chat_messages(interactions: list[InteractionLog]) -> list[OperatorChatMessage]:
     messages: list[OperatorChatMessage] = []
     for interaction in interactions:
@@ -278,15 +323,12 @@ async def ask_question(
             if current_user is None:
                 raise HTTPException(status_code=401, detail="Utente non valido")
 
-        working_station = _load_working_station(db, request.working_station_id)
-        if working_station is None:
-            logger.warning("Working station %s not found", request.working_station_id)
-            raise HTTPException(status_code=404, detail="Working station not found")
-        if not working_station.in_uso or working_station.operatore_attuale_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
-
-        machine = working_station.assigned_machine
-        chat_session = _load_active_chat_session(db, current_user.id, working_station.id)
+        working_station, machine, chat_session = _resolve_operator_session_target(
+            db,
+            current_user.id,
+            working_station_id=request.working_station_id,
+            machine_id=request.machine_id,
+        )
 
         if machine is None:
             response_text = (
@@ -295,7 +337,7 @@ async def ask_question(
             )
             interaction = InteractionLog(
                 user_id=current_user.id,
-                working_station_id=working_station.id,
+                working_station_id=working_station.id if working_station else None,
                 chat_session_id=chat_session.id if chat_session else None,
                 domanda=request.question,
                 risposta=response_text,
@@ -334,7 +376,7 @@ async def ask_question(
         logger.info(
             "interaction route=%s working_station_id=%s machine_id=%s user_id=%s confidence=%.3f latency_ms=%.2f ollama_latency_ms=%s top_candidates=%s",
             retrieval_result.route,
-            working_station.id,
+            working_station.id if working_station is not None else None,
             machine.id,
             current_user.id,
             retrieval_result.confidence,
@@ -360,7 +402,7 @@ async def ask_question(
         interaction = InteractionLog(
             user_id=current_user.id,
             machine_id=machine.id,
-            working_station_id=working_station.id,
+            working_station_id=working_station.id if working_station else None,
             chat_session_id=chat_session.id if chat_session else None,
             category_id=selected_response.get("category_id") if selected_response else None,
             knowledge_item_id=selected_response.get("knowledge_item_id") if selected_response else None,
@@ -433,22 +475,32 @@ async def submit_quick_action(
         raise HTTPException(status_code=403, detail="Non puoi creare una segnalazione per un altro utente")
 
     try:
-        working_station = _load_working_station(db, request.working_station_id)
-        if working_station is None:
-            raise HTTPException(status_code=404, detail="Postazione non trovata")
-        if not working_station.in_uso or working_station.operatore_attuale_id != request.user_id:
-            raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
+        working_station, machine, chat_session = _resolve_operator_session_target(
+            db,
+            request.user_id,
+            working_station_id=request.working_station_id,
+            machine_id=request.machine_id,
+        )
 
         user = db.query(User).filter(User.id == request.user_id).first()
         if user is None:
             raise HTTPException(status_code=404, detail="Utente non trovato")
 
-        existing_open_quick_action = _get_open_quick_action(db, request.user_id, request.working_station_id)
+        existing_open_quick_action = _get_open_quick_action(
+            db,
+            request.user_id,
+            working_station_id=working_station.id if working_station else None,
+            machine_id=machine.id if machine else None,
+        )
         if existing_open_quick_action is not None:
             raise HTTPException(
                 status_code=409,
                 detail={
-                    "message": "Esiste gia una segnalazione aperta per questa postazione",
+                    "message": (
+                        "Esiste gia una segnalazione aperta per questa postazione"
+                        if working_station is not None
+                        else "Esiste gia una segnalazione aperta per questa macchina"
+                    ),
                     "interaction_id": existing_open_quick_action.id,
                     "action_type": existing_open_quick_action.action_type,
                     "feedback_status": existing_open_quick_action.feedback_status,
@@ -456,11 +508,10 @@ async def submit_quick_action(
             )
 
         quick_action = QUICK_ACTION_COPY[request.action_type]
-        chat_session = _load_active_chat_session(db, request.user_id, request.working_station_id)
         interaction = InteractionLog(
             user_id=request.user_id,
-            machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
-            working_station_id=working_station.id,
+            machine_id=machine.id if machine else None,
+            working_station_id=working_station.id if working_station else None,
             chat_session_id=chat_session.id if chat_session else None,
             domanda=quick_action["domanda"],
             risposta=quick_action["risposta"],
@@ -520,11 +571,22 @@ async def submit_quick_action(
 
 @router.get("/pending-quick-action", response_model=PendingQuickActionResponse | None)
 async def get_pending_quick_action(
-    working_station_id: int,
+    working_station_id: int | None = None,
+    machine_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    interaction = _get_open_quick_action(db, current_user.id, working_station_id)
+    working_station, machine = resolve_requested_session_target(
+        db,
+        working_station_id=working_station_id,
+        machine_id=machine_id,
+    )
+    interaction = _get_open_quick_action(
+        db,
+        current_user.id,
+        working_station_id=working_station.id if working_station else None,
+        machine_id=machine.id if machine else None,
+    )
     if interaction is None:
         return None
     return _build_pending_quick_action_response(interaction)
@@ -532,38 +594,51 @@ async def get_pending_quick_action(
 
 @router.get("/session-history", response_model=OperatorChatSessionResponse)
 async def get_session_history(
-    working_station_id: int,
+    working_station_id: int | None = None,
+    machine_id: int | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    working_station = _load_working_station(db, working_station_id)
-    if working_station is None:
-        raise HTTPException(status_code=404, detail="Postazione non trovata")
-    if working_station.operatore_attuale_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Postazione non assegnata all'utente corrente")
-
-    chat_session = _load_active_chat_session(db, current_user.id, working_station_id)
-    if chat_session is None:
+    working_station, machine, chat_session = _resolve_operator_session_target(
+        db,
+        current_user.id,
+        working_station_id=working_station_id,
+        machine_id=machine_id,
+    )
+    resolved_working_station_id = working_station.id if working_station else None
+    if chat_session is None and working_station is not None:
         return OperatorChatSessionResponse(
             chat_session_id=None,
-            working_station_id=working_station_id,
-            machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+            working_station_id=resolved_working_station_id,
+            machine_id=machine.id if machine else None,
             messages=[],
         )
 
-    interactions = (
+    interactions_query = (
         db.query(InteractionLog)
         .options(
             joinedload(InteractionLog.resolved_by_user),
         )
-        .filter(InteractionLog.chat_session_id == chat_session.id)
         .order_by(InteractionLog.timestamp.asc(), InteractionLog.id.asc())
-        .all()
     )
+    if chat_session is not None:
+        interactions_query = interactions_query.filter(InteractionLog.chat_session_id == chat_session.id)
+    elif working_station is not None:
+        interactions_query = interactions_query.filter(
+            InteractionLog.user_id == current_user.id,
+            InteractionLog.working_station_id == working_station.id,
+        )
+    else:
+        interactions_query = interactions_query.filter(
+            InteractionLog.user_id == current_user.id,
+            InteractionLog.working_station_id.is_(None),
+            InteractionLog.machine_id == machine.id,
+        )
+    interactions = interactions_query.all()
     return OperatorChatSessionResponse(
-        chat_session_id=chat_session.id,
-        working_station_id=working_station_id,
-        machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
+        chat_session_id=chat_session.id if chat_session else None,
+        working_station_id=resolved_working_station_id,
+        machine_id=machine.id if machine else None,
         messages=_build_chat_messages(interactions),
     )
 

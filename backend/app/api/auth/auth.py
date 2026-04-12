@@ -82,6 +82,7 @@ REFRESH_TOKEN_COOKIE_NAME = os.getenv("REFRESH_TOKEN_COOKIE_NAME", "holo_assista
 REFRESH_TOKEN_COOKIE_SECURE = os.getenv("REFRESH_TOKEN_COOKIE_SECURE", "false").lower() == "true"
 REFRESH_TOKEN_COOKIE_SAMESITE = os.getenv("REFRESH_TOKEN_COOKIE_SAMESITE", "lax")
 OPERATOR_INTERFACE_PERMISSION = "operator.interface.access"
+LEGACY_MACHINE_SESSION_CHANNEL_OFFSET = 1_000_000
 
 class BadgeLoginRequest(BaseModel):
     badge_id: str
@@ -121,7 +122,7 @@ class LoginResponse(BaseModel):
     token_type: str
     expires_in: int  # secondi fino a scadenza access token
     user: UserResponse
-    working_station: WorkingStationResponse
+    working_station: Optional[WorkingStationResponse] = None
     assigned_machine: Optional[MachineResponse] = None
     chat_session_id: Optional[int] = None
     machine: Optional[MachineResponse] = None
@@ -274,17 +275,99 @@ def build_working_station_response_model(working_station: WorkingStation) -> Wor
     )
 
 
-def resolve_requested_working_station_id(
+def build_optional_working_station_response_model(
+    working_station: Optional[WorkingStation],
+) -> Optional[WorkingStationResponse]:
+    if working_station is None:
+        return None
+    return build_working_station_response_model(working_station)
+
+
+def _load_machine(
+    db: Session,
+    machine_id: int,
+) -> Optional[Machine]:
+    return (
+        db.query(Machine)
+        .options(joinedload(Machine.working_station), joinedload(Machine.department))
+        .filter(Machine.id == machine_id)
+        .first()
+    )
+
+
+def _load_working_station(
+    db: Session,
+    working_station_id: int,
+) -> Optional[WorkingStation]:
+    return (
+        db.query(WorkingStation)
+        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
+        .filter(WorkingStation.id == working_station_id)
+        .first()
+    )
+
+
+def resolve_requested_session_target(
+    db: Session,
     working_station_id: Optional[int] = None,
     machine_id: Optional[int] = None,
-) -> int:
-    resolved_id = working_station_id or machine_id
-    if resolved_id is None:
+) -> tuple[Optional[WorkingStation], Optional[Machine]]:
+    if working_station_id is None and machine_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="working_station_id obbligatorio",
+            detail="working_station_id o machine_id obbligatorio",
         )
-    return resolved_id
+
+    working_station = None
+    machine = None
+
+    if working_station_id is not None:
+        working_station = _load_working_station(db, working_station_id)
+        if working_station is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Postazione non trovata",
+            )
+        machine = working_station.assigned_machine
+
+    if machine_id is not None:
+        machine = _load_machine(db, machine_id)
+        if machine is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Macchina non trovata",
+            )
+        if working_station is not None:
+            if machine.working_station_id is not None and machine.working_station_id != working_station.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="machine_id e working_station_id non concordano",
+                )
+            if (
+                working_station.assigned_machine is not None
+                and working_station.assigned_machine.id != machine.id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="machine_id e working_station_id non concordano",
+                )
+        elif machine.working_station is not None:
+            working_station = machine.working_station
+
+    return working_station, machine
+
+
+def resolve_requested_working_station_id(
+    db: Session,
+    working_station_id: Optional[int] = None,
+    machine_id: Optional[int] = None,
+) -> Optional[int]:
+    working_station, _ = resolve_requested_session_target(
+        db,
+        working_station_id=working_station_id,
+        machine_id=machine_id,
+    )
+    return working_station.id if working_station is not None else None
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -298,14 +381,33 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-def create_sse_token(user_id: int, working_station_id: int) -> str:
+def _session_event_channel_id(
+    working_station_id: Optional[int] = None,
+    machine_id: Optional[int] = None,
+) -> int:
+    if working_station_id is not None:
+        return working_station_id
+    if machine_id is not None:
+        return LEGACY_MACHINE_SESSION_CHANNEL_OFFSET + machine_id
+    raise ValueError("working_station_id o machine_id obbligatorio per il canale SSE")
+
+
+def create_sse_token(
+    user_id: int,
+    working_station_id: Optional[int] = None,
+    machine_id: Optional[int] = None,
+) -> str:
     expire = utc_now() + timedelta(minutes=SSE_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user_id),
-        "working_station_id": working_station_id,
         "type": "sse",
         "exp": expire,
+        "channel_id": _session_event_channel_id(working_station_id, machine_id),
     }
+    if working_station_id is not None:
+        payload["working_station_id"] = working_station_id
+    if machine_id is not None:
+        payload["machine_id"] = machine_id
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -490,8 +592,89 @@ def build_session_status_payload(
     expected_user_id: int,
 ) -> SessionStatusResponse:
     working_station = machine if isinstance(machine, WorkingStation) else None
-    if working_station is None and isinstance(machine, Machine):
-        working_station = machine.working_station
+    legacy_machine = machine if isinstance(machine, Machine) else None
+    if working_station is None and legacy_machine is not None:
+        working_station = legacy_machine.working_station
+
+    if working_station is not None:
+        if not working_station.in_uso:
+            return SessionStatusResponse(
+                session_valid=True,
+                working_station_assigned=False,
+                working_station_in_use=False,
+                operator_matches=False,
+                should_logout=True,
+                reason="working_station_released",
+            )
+
+        if working_station.operatore_attuale_id is None:
+            return SessionStatusResponse(
+                session_valid=True,
+                working_station_assigned=False,
+                working_station_in_use=True,
+                operator_matches=False,
+                should_logout=True,
+                reason="working_station_released",
+            )
+
+        if working_station.operatore_attuale_id != expected_user_id:
+            return SessionStatusResponse(
+                session_valid=True,
+                working_station_assigned=True,
+                working_station_in_use=True,
+                operator_matches=False,
+                should_logout=True,
+                reason="working_station_reassigned",
+            )
+
+        return SessionStatusResponse(
+            session_valid=True,
+            working_station_assigned=True,
+            working_station_in_use=True,
+            operator_matches=True,
+            should_logout=False,
+            reason="ok",
+        )
+
+    if legacy_machine is not None:
+        if not legacy_machine.in_uso:
+            return SessionStatusResponse(
+                session_valid=True,
+                working_station_assigned=False,
+                working_station_in_use=False,
+                operator_matches=False,
+                should_logout=True,
+                reason="working_station_released",
+            )
+
+        if legacy_machine.operatore_attuale_id is None:
+            return SessionStatusResponse(
+                session_valid=True,
+                working_station_assigned=False,
+                working_station_in_use=True,
+                operator_matches=False,
+                should_logout=True,
+                reason="working_station_released",
+            )
+
+        if legacy_machine.operatore_attuale_id != expected_user_id:
+            return SessionStatusResponse(
+                session_valid=True,
+                working_station_assigned=False,
+                working_station_in_use=True,
+                operator_matches=False,
+                should_logout=True,
+                reason="working_station_reassigned",
+            )
+
+        return SessionStatusResponse(
+            session_valid=True,
+            working_station_assigned=False,
+            working_station_in_use=True,
+            operator_matches=True,
+            should_logout=False,
+            reason="ok",
+        )
 
     if not working_station:
         return SessionStatusResponse(
@@ -503,45 +686,6 @@ def build_session_status_payload(
             reason="working_station_not_found",
         )
 
-    if not working_station.in_uso:
-        return SessionStatusResponse(
-            session_valid=True,
-            working_station_assigned=False,
-            working_station_in_use=False,
-            operator_matches=False,
-            should_logout=True,
-            reason="working_station_released",
-        )
-
-    if working_station.operatore_attuale_id is None:
-        return SessionStatusResponse(
-            session_valid=True,
-            working_station_assigned=False,
-            working_station_in_use=True,
-            operator_matches=False,
-            should_logout=True,
-            reason="working_station_released",
-        )
-
-    if working_station.operatore_attuale_id != expected_user_id:
-        return SessionStatusResponse(
-            session_valid=True,
-            working_station_assigned=True,
-            working_station_in_use=True,
-            operator_matches=False,
-            should_logout=True,
-            reason="working_station_reassigned",
-        )
-
-    return SessionStatusResponse(
-        session_valid=True,
-        working_station_assigned=True,
-        working_station_in_use=True,
-        operator_matches=True,
-        should_logout=False,
-        reason="ok",
-    )
-
 
 async def publish_machine_session_event(
     machine: Optional[Machine],
@@ -550,6 +694,7 @@ async def publish_machine_session_event(
     db: Optional[Session] = None,
 ) -> None:
     working_station = machine if isinstance(machine, WorkingStation) else None
+    legacy_machine = machine if isinstance(machine, Machine) else None
     if working_station is None and machine is not None:
         working_station = machine.working_station
     if working_station is None and machine_id is not None and db is not None:
@@ -561,8 +706,17 @@ async def publish_machine_session_event(
         )
         if resolved_machine is not None:
             working_station = resolved_machine.working_station
+            legacy_machine = resolved_machine
 
     if working_station is None:
+        if legacy_machine is None:
+            return
+        payload = build_session_status_payload(legacy_machine, expected_user_id).model_dump()
+        await session_event_bus.publish(
+            _session_event_channel_id(machine_id=legacy_machine.id),
+            "session_status",
+            payload,
+        )
         return
 
     payload = build_session_status_payload(working_station, expected_user_id).model_dump()
@@ -668,28 +822,47 @@ def _create_operator_chat_session(
 async def release_user_machine_sessions(
     db: Session,
     user_id: int,
+    requested_working_station_id: Optional[int] = None,
     requested_machine_id: Optional[int] = None,
 ) -> None:
-    query = db.query(WorkingStation).options(joinedload(WorkingStation.assigned_machine)).filter(
+    working_station_query = db.query(WorkingStation).options(joinedload(WorkingStation.assigned_machine)).filter(
         WorkingStation.operatore_attuale_id == user_id
     )
-    if requested_machine_id is not None:
-        query = query.filter((WorkingStation.id == requested_machine_id) | (WorkingStation.in_uso.is_(True)))
+    if requested_working_station_id is not None:
+        working_station_query = working_station_query.filter(
+            (WorkingStation.id == requested_working_station_id) | (WorkingStation.in_uso.is_(True))
+        )
     else:
-        query = query.filter(WorkingStation.in_uso.is_(True))
+        working_station_query = working_station_query.filter(WorkingStation.in_uso.is_(True))
 
-    working_stations = query.all()
-    if not working_stations:
+    working_stations = working_station_query.all()
+    legacy_machine_query = db.query(Machine).filter(
+        Machine.operatore_attuale_id == user_id,
+        Machine.in_uso.is_(True),
+        Machine.working_station_id.is_(None),
+    )
+    if requested_machine_id is not None:
+        legacy_machine_query = legacy_machine_query.filter(
+            (Machine.id == requested_machine_id) | (Machine.in_uso.is_(True))
+        )
+    legacy_machines = legacy_machine_query.all()
+    if not working_stations and not legacy_machines:
         return
 
-    released_ids: list[int] = []
     for working_station in working_stations:
-        released_ids.append(working_station.id)
         working_station.in_uso = False
         working_station.operatore_attuale_id = None
         _sync_working_station_machine_state(working_station)
 
-    _close_active_chat_sessions(db, user_id, None if requested_machine_id is None else requested_machine_id)
+    for legacy_machine in legacy_machines:
+        legacy_machine.in_uso = False
+        legacy_machine.operatore_attuale_id = None
+
+    _close_active_chat_sessions(
+        db,
+        user_id,
+        None if requested_working_station_id is None else requested_working_station_id,
+    )
 
     db.commit()
 
@@ -710,7 +883,11 @@ def decode_sse_token(token: str) -> dict:
     if payload.get("type") != "sse":
         raise credentials_exception
 
-    if payload.get("sub") is None or payload.get("working_station_id") is None:
+    if (
+        payload.get("sub") is None
+        or payload.get("channel_id") is None
+        or (payload.get("working_station_id") is None and payload.get("machine_id") is None)
+    ):
         raise credentials_exception
 
     return payload
@@ -803,24 +980,23 @@ async def create_operator_sse_token(
             detail="Accesso interfaccia operatore non consentito",
         )
 
-    working_station_id = resolve_requested_working_station_id(
+    working_station, machine = resolve_requested_session_target(
+        db,
         request.working_station_id,
         request.machine_id,
     )
-    working_station = (
-        db.query(WorkingStation)
-        .options(joinedload(WorkingStation.assigned_machine))
-        .filter(WorkingStation.id == working_station_id)
-        .first()
-    )
-    session_status_payload = build_session_status_payload(working_station, current_user.id)
+    session_target = working_station or machine
+    session_status_payload = build_session_status_payload(session_target, current_user.id)
     if session_status_payload.should_logout:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="La sessione postazione non e valida per aprire SSE",
         )
-
-    token = create_sse_token(current_user.id, working_station_id)
+    token = create_sse_token(
+        current_user.id,
+        working_station_id=working_station.id if working_station is not None else None,
+        machine_id=machine.id if machine is not None else None,
+    )
     return SSETokenResponse(
         token=token,
         expires_in=SSE_TOKEN_EXPIRE_MINUTES * 60,
@@ -830,30 +1006,38 @@ async def create_operator_sse_token(
 @router.get("/session-events")
 async def session_events(
     request: Request,
-    working_station_id: int,
     token: str,
+    working_station_id: Optional[int] = None,
+    machine_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     token_payload = decode_sse_token(token)
-    token_working_station_id = int(token_payload["working_station_id"])
     token_user_id = int(token_payload["sub"])
+    token_working_station_id = token_payload.get("working_station_id")
+    token_machine_id = token_payload.get("machine_id")
+    token_channel_id = int(token_payload["channel_id"])
 
-    if token_working_station_id != working_station_id:
+    if token_working_station_id is not None:
+        if working_station_id != int(token_working_station_id):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Working station ID SSE non valido",
+            )
+    elif machine_id != int(token_machine_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Working station ID SSE non valido",
+            detail="Machine ID SSE non valido",
         )
 
-    working_station = (
-        db.query(WorkingStation)
-        .options(joinedload(WorkingStation.assigned_machine))
-        .filter(WorkingStation.id == working_station_id)
-        .first()
+    working_station, machine = resolve_requested_session_target(
+        db,
+        working_station_id=working_station_id or (int(token_working_station_id) if token_working_station_id is not None else None),
+        machine_id=machine_id or (int(token_machine_id) if token_machine_id is not None else None),
     )
-    initial_payload = build_session_status_payload(working_station, token_user_id).model_dump()
+    initial_payload = build_session_status_payload(working_station or machine, token_user_id).model_dump()
 
     async def event_generator():
-        stream = session_event_bus.stream(working_station_id, initial_payload)
+        stream = session_event_bus.stream(token_channel_id, initial_payload)
         async for message in stream:
             if await request.is_disconnected():
                 break
@@ -876,21 +1060,11 @@ async def badge_login(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    working_station_id = resolve_requested_working_station_id(
+    working_station, machine = resolve_requested_session_target(
+        db,
         request.working_station_id,
         request.machine_id,
     )
-    working_station = (
-        db.query(WorkingStation)
-        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
-        .filter(WorkingStation.id == working_station_id)
-        .first()
-    )
-    if not working_station:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Postazione non trovata"
-        )
 
     user = db.query(User).options(joinedload(User.role)).filter(User.badge_id == request.badge_id).first()
     if not user:
@@ -905,25 +1079,47 @@ async def badge_login(
             detail="Accesso interfaccia operatore non consentito",
         )
 
-    if (
-        working_station.in_uso
-        and working_station.operatore_attuale_id is not None
-        and working_station.operatore_attuale_id != user.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Postazione gia in uso da un altro operatore"
-        )
+    if working_station is not None:
+        if (
+            working_station.in_uso
+            and working_station.operatore_attuale_id is not None
+            and working_station.operatore_attuale_id != user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Postazione gia in uso da un altro operatore"
+            )
+    elif machine is not None:
+        if (
+            machine.in_uso
+            and machine.operatore_attuale_id is not None
+            and machine.operatore_attuale_id != user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Macchina gia in uso da un altro operatore"
+            )
 
     user_response = build_user_response_model(user)
-    await release_user_machine_sessions(db, user.id, working_station.id)
+    await release_user_machine_sessions(
+        db,
+        user.id,
+        requested_working_station_id=working_station.id if working_station is not None else None,
+        requested_machine_id=machine.id if machine is not None else None,
+    )
 
-    db.refresh(working_station)
-    working_station.in_uso = True
-    working_station.operatore_attuale_id = user.id
-    _sync_working_station_machine_state(working_station)
+    if working_station is not None:
+        db.refresh(working_station)
+        working_station.in_uso = True
+        working_station.operatore_attuale_id = user.id
+        _sync_working_station_machine_state(working_station)
+        machine = working_station.assigned_machine
+    elif machine is not None:
+        db.refresh(machine)
+        machine.in_uso = True
+        machine.operatore_attuale_id = user.id
     db.commit()
-    await publish_machine_session_event(working_station, user.id, db=db)
+    await publish_machine_session_event(working_station or machine, user.id, machine_id=machine.id if machine else None, db=db)
 
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome}
@@ -934,22 +1130,26 @@ async def badge_login(
         user.id,
         db,
         expires_delta=refresh_token_expires_delta,
-        machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
-        working_station_id=working_station.id,
+        machine_id=machine.id if machine else None,
+        working_station_id=working_station.id if working_station else None,
     )
     set_refresh_token_cookie(response, refresh_token_value, refresh_token_expires_delta)
     refresh_token_db = db.query(RefreshToken).filter(RefreshToken.token == refresh_token_value).first()
-    chat_session = _create_operator_chat_session(
-        db,
-        user.id,
-        working_station.id,
-        refresh_token_id=refresh_token_db.id if refresh_token_db else None,
+    chat_session = (
+        _create_operator_chat_session(
+            db,
+            user.id,
+            working_station.id,
+            refresh_token_id=refresh_token_db.id if refresh_token_db else None,
+        )
+        if working_station is not None
+        else None
     )
     db.commit()
 
     assigned_machine_response = (
-        build_machine_response_model(working_station.assigned_machine)
-        if working_station.assigned_machine is not None
+        build_machine_response_model(machine)
+        if machine is not None
         else None
     )
     return LoginResponse(
@@ -957,9 +1157,9 @@ async def badge_login(
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=user_response,
-        working_station=build_working_station_response_model(working_station),
+        working_station=build_optional_working_station_response_model(working_station),
         assigned_machine=assigned_machine_response,
-        chat_session_id=chat_session.id,
+        chat_session_id=chat_session.id if chat_session else None,
         machine=assigned_machine_response,
         message=f"Benvenuto {user_response.nome}!"
     )
@@ -970,21 +1170,11 @@ async def credentials_login(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    working_station_id = resolve_requested_working_station_id(
+    working_station, machine = resolve_requested_session_target(
+        db,
         request.working_station_id,
         request.machine_id,
     )
-    working_station = (
-        db.query(WorkingStation)
-        .options(joinedload(WorkingStation.assigned_machine), joinedload(WorkingStation.department))
-        .filter(WorkingStation.id == working_station_id)
-        .first()
-    )
-    if not working_station:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Postazione non trovata"
-        )
 
     user = db.query(User).options(joinedload(User.role)).filter(User.nome == request.username).first()
     if not user:
@@ -1012,25 +1202,47 @@ async def credentials_login(
             detail="Credenziali non valide"
         )
 
-    if (
-        working_station.in_uso
-        and working_station.operatore_attuale_id is not None
-        and working_station.operatore_attuale_id != user.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Postazione gia in uso da un altro operatore"
-        )
+    if working_station is not None:
+        if (
+            working_station.in_uso
+            and working_station.operatore_attuale_id is not None
+            and working_station.operatore_attuale_id != user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Postazione gia in uso da un altro operatore"
+            )
+    elif machine is not None:
+        if (
+            machine.in_uso
+            and machine.operatore_attuale_id is not None
+            and machine.operatore_attuale_id != user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Macchina gia in uso da un altro operatore"
+            )
 
     user_response = build_user_response_model(user)
-    await release_user_machine_sessions(db, user.id, working_station.id)
+    await release_user_machine_sessions(
+        db,
+        user.id,
+        requested_working_station_id=working_station.id if working_station is not None else None,
+        requested_machine_id=machine.id if machine is not None else None,
+    )
 
-    db.refresh(working_station)
-    working_station.in_uso = True
-    working_station.operatore_attuale_id = user.id
-    _sync_working_station_machine_state(working_station)
+    if working_station is not None:
+        db.refresh(working_station)
+        working_station.in_uso = True
+        working_station.operatore_attuale_id = user.id
+        _sync_working_station_machine_state(working_station)
+        machine = working_station.assigned_machine
+    elif machine is not None:
+        db.refresh(machine)
+        machine.in_uso = True
+        machine.operatore_attuale_id = user.id
     db.commit()
-    await publish_machine_session_event(working_station, user.id, db=db)
+    await publish_machine_session_event(working_station or machine, user.id, machine_id=machine.id if machine else None, db=db)
 
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.nome}
@@ -1041,22 +1253,26 @@ async def credentials_login(
         user.id,
         db,
         expires_delta=refresh_token_expires_delta,
-        machine_id=working_station.assigned_machine.id if working_station.assigned_machine else None,
-        working_station_id=working_station.id,
+        machine_id=machine.id if machine else None,
+        working_station_id=working_station.id if working_station else None,
     )
     set_refresh_token_cookie(response, refresh_token_value, refresh_token_expires_delta)
     refresh_token_db = db.query(RefreshToken).filter(RefreshToken.token == refresh_token_value).first()
-    chat_session = _create_operator_chat_session(
-        db,
-        user.id,
-        working_station.id,
-        refresh_token_id=refresh_token_db.id if refresh_token_db else None,
+    chat_session = (
+        _create_operator_chat_session(
+            db,
+            user.id,
+            working_station.id,
+            refresh_token_id=refresh_token_db.id if refresh_token_db else None,
+        )
+        if working_station is not None
+        else None
     )
     db.commit()
 
     assigned_machine_response = (
-        build_machine_response_model(working_station.assigned_machine)
-        if working_station.assigned_machine is not None
+        build_machine_response_model(machine)
+        if machine is not None
         else None
     )
     return LoginResponse(
@@ -1064,9 +1280,9 @@ async def credentials_login(
         token_type="bearer",
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=user_response,
-        working_station=build_working_station_response_model(working_station),
+        working_station=build_optional_working_station_response_model(working_station),
         assigned_machine=assigned_machine_response,
-        chat_session_id=chat_session.id,
+        chat_session_id=chat_session.id if chat_session else None,
         machine=assigned_machine_response,
         message=f"Benvenuto {user_response.nome}!"
     )
@@ -1144,20 +1360,27 @@ async def logout(
 
     refresh_token_value = refresh_token_cookie or request.refresh_token
     refresh_token_working_station_id = None
+    refresh_token_machine_id = None
     refresh_token_db = None
     if refresh_token_value:
         refresh_token_db = db.query(RefreshToken).filter(
             RefreshToken.token == refresh_token_value
         ).first()
         if refresh_token_db and refresh_token_db.user_id == current_user.id:
-            refresh_token_working_station_id = refresh_token_db.working_station_id or refresh_token_db.machine_id
+            refresh_token_working_station_id = refresh_token_db.working_station_id
+            refresh_token_machine_id = refresh_token_db.machine_id
 
     requested_working_station_id = (
         request.working_station_id
-        or request.machine_id
         or refresh_token_working_station_id
     )
-    await release_user_machine_sessions(db, current_user.id, requested_working_station_id)
+    requested_machine_id = request.machine_id or refresh_token_machine_id
+    await release_user_machine_sessions(
+        db,
+        current_user.id,
+        requested_working_station_id=requested_working_station_id,
+        requested_machine_id=requested_machine_id,
+    )
     
     cleanup_refresh_tokens(db, user_id=current_user.id)
 

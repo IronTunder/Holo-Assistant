@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from datetime import timedelta
 
 from fastapi import HTTPException, Response
@@ -39,6 +39,7 @@ from app.api.auth.auth import (
 from app.database import Base
 from app.models.department import Department
 from app.models.machine import Machine
+from app.models.working_station import WorkingStation
 from app.models.role import (
     ADMIN_DEFAULT_PERMISSIONS,
     ADMIN_ROLE_CODE,
@@ -330,6 +331,44 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(target_machine.in_uso)
         self.assertEqual(target_machine.operatore_attuale_id, self.operator.id)
 
+    async def test_badge_login_accepts_working_station_id(self) -> None:
+        target_machine = Machine(
+            nome="Trapano Canonico",
+            department_id=self.department_id,
+            reparto_legacy="Manutenzione",
+            id_postazione="POST-WS-1",
+            startup_checklist=["Controllo visivo iniziale"],
+            in_uso=False,
+            operatore_attuale_id=None,
+        )
+        self.db.add(target_machine)
+        self.db.flush()
+        working_station = WorkingStation(
+            name="Postazione Canonica",
+            department_id=self.department_id,
+            description="Postazione assegnata al trapano",
+            station_code="WS-CAN-1",
+            startup_checklist=["Controllo visivo iniziale"],
+            in_uso=False,
+            operatore_attuale_id=None,
+        )
+        self.db.add(working_station)
+        self.db.flush()
+        target_machine.working_station_id = working_station.id
+        self.db.commit()
+
+        response = await badge_login(
+            BadgeLoginRequest(badge_id=self.operator.badge_id, working_station_id=working_station.id),
+            Response(),
+            db=self.db,
+        )
+
+        self.db.refresh(working_station)
+        self.db.refresh(target_machine)
+        self.assertTrue(working_station.in_uso)
+        self.assertEqual(working_station.operatore_attuale_id, self.operator.id)
+        self.assertTrue(target_machine.in_uso)
+        self.assertEqual(response.working_station.id, working_station.id)
     async def test_operator_system_role_defaults_to_operator_interface_permission(self) -> None:
         self.assertEqual(self.operator_role.permissions, OPERATOR_DEFAULT_PERMISSIONS)
         self.assertEqual(self.tech_role.permissions, MAINTENANCE_TECH_DEFAULT_PERMISSIONS)
@@ -574,3 +613,5 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

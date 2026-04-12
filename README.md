@@ -1,4 +1,4 @@
-# Progetto Holo-Assistant
+﻿# Holo-Assistant
 
 Ultimo aggiornamento documentazione: 12 aprile 2026
 
@@ -84,6 +84,16 @@ Controllo non distruttivo Unix:
 ```bash
 ./setup.sh --check-only
 ./start.sh --check-only
+```
+
+Verifica rapida repository:
+```bat
+check.bat
+```
+
+oppure su Unix:
+```bash
+./check.sh
 ```
 
 Lo script di start:
@@ -331,7 +341,7 @@ SECRET_KEY=<genera-almeno-32-caratteri-casuali>
 ALGORITHM=HS256
 
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=&IZE07$r&W7wO!2w?j2S
+ADMIN_PASSWORD=<genera-una-password-sicura>
 
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 ADMIN_TOKEN_EXPIRE_MINUTES=120
@@ -402,9 +412,12 @@ Note pratiche:
 
 Per la build frontend attuale:
 - `npm run build` esegue prima `npm run build:legacy-css` e poi `vite build`;
+- `cd frontend/my-app && npm run smoke:build` esegue lo smoke check frontend oggi disponibile;
 - `frontend/my-app/scripts/build-legacy-css.mjs` genera `frontend/my-app/public/legacy.css`;
 - `index.html` carica `legacy.css` come fallback iniziale e lo disabilita subito nei browser che supportano i CSS layers, salvo preferenza operatore che forza la grafica legacy;
 - questo mantiene compatibile l'interfaccia anche su browser enterprise o postazioni aggiornate lentamente.
+
+Al momento il repository non include ancora test frontend dedicati: la baseline automatizzabile lato web e la smoke build.
 
 ## Troubleshooting rapido
 
@@ -463,5 +476,10 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 ## Stato attuale
 
 - ultimo aggiornamento documentazione: 12 aprile 2026
-- script pubblici supportati: `setup.bat`, `start.bat`, `./setup.sh`, `./start.sh`
+- script pubblici supportati: `setup.bat`, `start.bat`, `check.bat`, `./setup.sh`, `./start.sh`, `./check.sh`
 - controlli non distruttivi Unix: `./setup.sh --check-only`, `./start.sh --check-only`
+
+
+
+
+

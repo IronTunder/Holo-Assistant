@@ -1,4 +1,4 @@
-# Security Policy
+﻿# Security Policy
 
 ## Supported Versions
 
@@ -7,7 +7,7 @@ Al momento il supporto di sicurezza e limitato alla versione corrente del branch
 
 | Versione | Supporto sicurezza |
 | ------- | ------------------ |
-| `main` | Sì |
+| `main` | Si |
 | release, tag o fork precedenti | No |
 | copie modificate distribuite fuori dal repository ufficiale | No |
 
@@ -19,12 +19,12 @@ In pratica:
 
 ## Scope
 
-Questa policy copre vulnerabilita che impattano il progetto Holo-Assistant / Progetto-Ditto, in particolare:
+Questa policy copre vulnerabilita che impattano il progetto Holo-Assistant, in particolare:
 
 - backend FastAPI e autenticazione;
 - frontend React/Vite;
 - configurazione PostgreSQL e script di bootstrap;
-- script di setup e start per Windows e Unix;
+- script di setup, start e check per Windows e Unix;
 - esposizione accidentale di credenziali, token, chiavi o dati sensibili;
 - configurazioni insicure che rendono il sistema esposto oltre l'ambiente locale previsto.
 
@@ -36,8 +36,7 @@ Se trovi una vulnerabilita, non aprire subito una issue pubblica con i dettagli 
 
 Canale preferito:
 
-1. Apri una segnalazione privata tramite **GitHub Security Advisories** del repository:
-   `https://github.com/IronTunder/Progetto-Ditto/security/advisories/new`
+1. Apri una segnalazione privata tramite **GitHub Security Advisories** del repository ufficiale.
 
 Se il form privato non e disponibile:
 

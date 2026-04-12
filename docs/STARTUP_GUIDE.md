@@ -1,4 +1,4 @@
-# STARTUP_GUIDE
+﻿# STARTUP_GUIDE
 
 Guida pratica per avviare Holo-Assistant con il flusso attuale degli script.
 
@@ -19,6 +19,10 @@ Questi comandi restano i punti di ingresso pubblici. Su Windows i `.bat` chiaman
 - avvio successivo: `./start.sh`
 
 Gli script Windows e Unix sono allineati nelle funzionalita principali: `setup` esegue il bootstrap completo, `start` fa avvio quotidiano con riparazione minima, e su Unix sono disponibili anche `./setup.sh --check-only` e `./start.sh --check-only`.
+
+Controllo repository supportato:
+- Windows: `check.bat`
+- Unix: `./check.sh`
 
 ## Prerequisiti
 
@@ -363,3 +367,4 @@ Dopo `setup` o `start` controlla:
 - frontend raggiungibile su `https://{server-ip}:5173`;
 - accesso admin disponibile su `/admin-login`;
 - selezione postazione e login operatore funzionanti dal frontend.
+

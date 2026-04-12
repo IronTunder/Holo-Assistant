@@ -1,4 +1,4 @@
-# Frontend Holo-Assistant
+﻿# Frontend Holo-Assistant
 
 Ultimo aggiornamento: 12 aprile 2026
 
@@ -37,11 +37,18 @@ Crea la build:
 npm run build
 ```
 
+Esegui lo smoke check frontend:
+```bash
+npm run smoke:build
+```
+
 La build frontend ora esegue due passi:
 - `npm run build:legacy-css` genera `public/legacy.css` con Tailwind CLI e `lightningcss`;
 - `vite build` produce gli asset finali.
 
 `index.html` collega sempre `legacy.css` all'avvio, poi lo disabilita subito nei browser che supportano i CSS layers. In questo modo i browser moderni usano gli stili principali, mentre quelli piu vecchi hanno un fallback dedicato.
+
+Al momento il repository non include ancora test frontend dedicati: lo smoke check automatizzato disponibile e `npm run smoke:build`.
 
 ## Configurazione ambiente
 
@@ -172,3 +179,8 @@ Il frontend viene avviato dagli script correnti tramite `vite dev`. Per un host 
 - il form macchinari ora associa la postazione da un elenco di postazioni libere, evitando inserimenti manuali del codice;
 - la pagina impostazioni admin separa consultazione normale e configurazione avanzata, con indicatori di riavvio per singola voce;
 - l'app espone un link pubblico all'informativa cookie sia dalla schermata operatore pre-login sia dal login admin.
+
+
+
+
+

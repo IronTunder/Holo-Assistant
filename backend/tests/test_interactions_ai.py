@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
@@ -20,6 +20,7 @@ from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
+from app.models.working_station import WorkingStation
 from app.schemas.interaction import AskQuestionRequest, InteractionResolutionRequest, QuickActionRequest
 from app.services.knowledge_retrieval import (
     IndexedKnowledgeItem,
@@ -237,6 +238,34 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
         self.assertGreater(response.confidence, 0.7)
 
+    async def test_ask_question_accepts_working_station_id(self) -> None:
+        machine = self.db.query(Machine).filter(Machine.id == self.machine_id).first()
+        working_station = WorkingStation(
+            name="Postazione A7",
+            department_id=machine.department_id,
+            description="Postazione collegata alla pressa",
+            station_code="WS-A7",
+            startup_checklist=["Controllo visivo iniziale"],
+            in_uso=True,
+            operatore_attuale_id=self.user_id,
+        )
+        self.db.add(working_station)
+        self.db.flush()
+        machine.working_station_id = working_station.id
+        self.db.commit()
+
+        request = AskQuestionRequest(
+            working_station_id=working_station.id,
+            user_id=self.user_id,
+            question="Come faccio il cambio olio della pressa?",
+        )
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await ask_question(request, db=self.db)
+
+        self.assertEqual(response.mode, "answer")
+        self.assertEqual(response.reason_code, "matched")
+        self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
     async def test_ask_question_rejects_unassigned_machine(self) -> None:
         request = AskQuestionRequest(
             machine_id=self.machine_id,
@@ -820,3 +849,5 @@ class IndexedKnowledgeItemTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 FeedbackStatus = Literal["resolved", "unresolved", "not_applicable"]
 InteractionActionType = Literal["question", "maintenance", "emergency"]
@@ -38,17 +38,24 @@ class PresetResponseResponse(PresetResponseBase):
         from_attributes = True
 
 
-class AskQuestionRequest(BaseModel):
-    working_station_id: int
+class InteractionTargetRequest(BaseModel):
+    working_station_id: Optional[int] = None
     machine_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def validate_target(self):
+        if self.working_station_id is None and self.machine_id is None:
+            raise ValueError("working_station_id o machine_id obbligatorio")
+        return self
+
+
+class AskQuestionRequest(InteractionTargetRequest):
     user_id: Optional[int] = None
     question: str
     selected_knowledge_item_id: Optional[int] = None
 
 
-class QuickActionRequest(BaseModel):
-    working_station_id: int
-    machine_id: Optional[int] = None
+class QuickActionRequest(InteractionTargetRequest):
     user_id: int
     action_type: QuickActionType
 
@@ -133,6 +140,6 @@ class OperatorChatMessage(BaseModel):
 
 class OperatorChatSessionResponse(BaseModel):
     chat_session_id: Optional[int] = None
-    working_station_id: int
+    working_station_id: Optional[int] = None
     machine_id: Optional[int] = None
     messages: list[OperatorChatMessage] = Field(default_factory=list)
