@@ -80,6 +80,14 @@ SETTINGS: tuple[SettingDefinition, ...] = (
     SettingDefinition("REFRESH_TOKEN_COOKIE_SAMESITE", "Sessioni / CORS", "Cookie SameSite", "Policy SameSite del refresh cookie.", "enum", "lax", True, options=("lax", "strict", "none")),
     SettingDefinition("REFRESH_TOKEN_COOKIE_NAME", "Sessioni / CORS", "Nome cookie refresh", "Nome del cookie HTTP-only del refresh token.", "string", "holo_assistant_refresh_token", True),
     SettingDefinition("ALLOWED_ORIGINS", "Sessioni / CORS", "Origini CORS", "Origini HTTP/HTTPS abilitate, separate da virgola.", "csv", "https://localhost:5173", False),
+    SettingDefinition("HOLO_ASSISTANT_RATE_LIMIT_ENABLED", "Sicurezza API", "Rate limit abilitato", "Abilita il limite di richieste per ridurre abusi e bot.", "boolean", "true"),
+    SettingDefinition("HOLO_ASSISTANT_RATE_LIMIT_TRUST_PROXY", "Sicurezza API", "Fidati di X-Forwarded-For", "Usa il primo IP in X-Forwarded-For come client solo dietro proxy affidabili.", "boolean", "false"),
+    SettingDefinition("HOLO_ASSISTANT_RATE_LIMIT_MAX_REQUESTS", "Sicurezza API", "Limite API generale", "Numero massimo di richieste generiche consentite per finestra temporale.", "integer", "120", True, 1, 100000),
+    SettingDefinition("HOLO_ASSISTANT_RATE_LIMIT_WINDOW_SECONDS", "Sicurezza API", "Finestra API generale", "Durata in secondi della finestra per il limite generale.", "integer", "60", True, 1, 86400),
+    SettingDefinition("HOLO_ASSISTANT_AUTH_RATE_LIMIT_MAX_REQUESTS", "Sicurezza API", "Limite autenticazione", "Numero massimo di richieste ai login/refresh per finestra temporale.", "integer", "10", True, 1, 100000),
+    SettingDefinition("HOLO_ASSISTANT_AUTH_RATE_LIMIT_WINDOW_SECONDS", "Sicurezza API", "Finestra autenticazione", "Durata in secondi della finestra per login e refresh token.", "integer", "60", True, 1, 86400),
+    SettingDefinition("HOLO_ASSISTANT_AI_RATE_LIMIT_MAX_REQUESTS", "Sicurezza API", "Limite endpoint costosi", "Numero massimo di richieste agli endpoint AI/TTS per finestra temporale.", "integer", "30", True, 1, 100000),
+    SettingDefinition("HOLO_ASSISTANT_AI_RATE_LIMIT_WINDOW_SECONDS", "Sicurezza API", "Finestra endpoint costosi", "Durata in secondi della finestra per ask, quick-action e synthesize.", "integer", "60", True, 1, 86400),
 )
 
 SETTINGS_BY_KEY = {definition.key: definition for definition in SETTINGS}

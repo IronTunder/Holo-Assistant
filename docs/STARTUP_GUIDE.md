@@ -88,14 +88,14 @@ Passi principali:
 DATABASE_HOST=<ip-raggiungibile-dal-backend>
 DATABASE_PORT=5432
 DATABASE_USER=postgres
-DATABASE_PASSWORD=postgres
+DATABASE_PASSWORD=<genera-un-valore-casuale-lungo>
 DATABASE_NAME=holo_assistant_db
 
-SECRET_KEY=your-super-secret-key-change-this-in-production
+SECRET_KEY=<genera-almeno-32-caratteri-casuali>
 ALGORITHM=HS256
 
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=tuapasswordsicura
+ADMIN_PASSWORD=<genera-una-password-sicura>
 
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 ADMIN_TOKEN_EXPIRE_MINUTES=120

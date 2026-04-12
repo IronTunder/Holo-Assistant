@@ -15,6 +15,7 @@ from app.api.tts import router as tts_router
 from app.api.working_stations import router as working_stations_router
 from app.core.database import apply_compatible_migrations
 from app.services.ollama_service import warmup_model
+from app.services.rate_limit import RateLimitMiddleware, load_rate_limit_rules
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -118,6 +119,27 @@ app.add_middleware(
 )
 
 logger.info("[CORS] Initialized with explicit origins: %s", allowed_origins)
+
+rate_limit_enabled, rate_limit_trust_proxy, rate_limit_rules = load_rate_limit_rules()
+app.add_middleware(
+    RateLimitMiddleware,
+    enabled=rate_limit_enabled,
+    trust_proxy=rate_limit_trust_proxy,
+    rules=rate_limit_rules,
+)
+logger.info(
+    "[rate-limit] enabled=%s trust_proxy=%s rules=%s",
+    rate_limit_enabled,
+    rate_limit_trust_proxy,
+    [
+        {
+            "name": rule.name,
+            "max_requests": rule.max_requests,
+            "window_seconds": rule.window_seconds,
+        }
+        for rule in rate_limit_rules
+    ],
+)
 
 # Includi i router
 app.include_router(auth_router, prefix="/auth", tags=["auth"])

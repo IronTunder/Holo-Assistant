@@ -404,13 +404,28 @@ def cleanup_refresh_tokens(
     if not unique_tokens:
         return
 
+    _detach_refresh_token_references(db, list(unique_tokens))
     for token in unique_tokens.values():
         db.delete(token)
 
     db.commit()
 
 
+def _detach_refresh_token_references(db: Session, refresh_token_ids: list[int]) -> None:
+    if not refresh_token_ids:
+        return
+
+    db.query(OperatorChatSession).filter(
+        OperatorChatSession.refresh_token_id.in_(refresh_token_ids)
+    ).update(
+        {OperatorChatSession.refresh_token_id: None},
+        synchronize_session=False,
+    )
+    db.flush()
+
+
 def delete_refresh_token(db: Session, refresh_token_db: RefreshToken) -> None:
+    _detach_refresh_token_references(db, [refresh_token_db.id])
     db.delete(refresh_token_db)
     db.commit()
 
