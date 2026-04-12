@@ -29,6 +29,14 @@ type MachineSelectorRect = {
   maxHeight: number;
 };
 
+const DEMO_BADGE_BY_STATION_CODE: Record<string, string> = {
+  'STP-01': 'STP-3184',
+  'CNC-02': 'CNC-5277',
+  'CNC-03': 'CNC-5277',
+  'ASM-01': 'ASM-4421',
+  'HALL-01': 'STP-3184',
+};
+
 export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReaderProps) {
   const badgeIcon = '/holo-mark.png';
   const [scanning, setScanning] = useState(false);
@@ -115,7 +123,9 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
 
     setScanning(true);
     setTimeout(() => {
-      const badgeId = `NFT-00${Math.floor(Math.random() * 4) + 1}`;
+      const badgeId =
+        DEMO_BADGE_BY_STATION_CODE[selectedWorkingStation.station_code] ??
+        'STP-3184';
       onBadgeDetected(badgeId, selectedWorkingStation.id);
       setScanning(false);
     }, 1500);
