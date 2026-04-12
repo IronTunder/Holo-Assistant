@@ -11,6 +11,12 @@ Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali 
 - sintesi vocale TTS e avatar operatore;
 - pagina informativa pubblica su cookie e tecnologie locali disponibile su `/cookie-policy`.
 
+## Licenza e copyright
+
+- Il codice originale del repository e distribuito sotto licenza [MIT](./LICENSE).
+- Le attribuzioni e le note relative a componenti e asset di terze parti sono raccolte in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+- Alcuni materiali inclusi o integrati dal progetto, come componenti UI derivati, dipendenze frontend e modelli vocali, mantengono le rispettive licenze upstream.
+
 ## Architettura in breve
 
 - `frontend/my-app` contiene l'applicazione web.
