@@ -768,11 +768,12 @@ def _sync_working_station_machine_state(working_station: WorkingStation) -> None
     assigned_machine.operatore_attuale_id = working_station.operatore_attuale_id
 
 
-def _delete_chat_session_logs(db: Session, chat_session_ids: list[int]) -> None:
+def _detach_chat_session_logs(db: Session, chat_session_ids: list[int]) -> None:
     if not chat_session_ids:
         return
-    db.query(InteractionLog).filter(InteractionLog.chat_session_id.in_(chat_session_ids)).delete(
-        synchronize_session=False
+    db.query(InteractionLog).filter(InteractionLog.chat_session_id.in_(chat_session_ids)).update(
+        {InteractionLog.chat_session_id: None},
+        synchronize_session=False,
     )
 
 
@@ -797,7 +798,7 @@ def _close_active_chat_sessions(
         session.is_active = False
         session.ended_at = utc_now()
 
-    _delete_chat_session_logs(db, chat_session_ids)
+    _detach_chat_session_logs(db, chat_session_ids)
     db.flush()
 
 

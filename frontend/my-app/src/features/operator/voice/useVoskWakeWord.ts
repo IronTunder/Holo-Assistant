@@ -32,6 +32,7 @@ type VoskWakeWordControls = {
 
 const COMMAND_TIMEOUT_MS = 8000;
 const COMMAND_SILENCE_TIMEOUT_MS = 2200;
+const START_IDLE_TIMEOUT_MS = 1500;
 const MIN_MODEL_BYTES = 10 * 1024 * 1024;
 const MODEL_LOAD_TIMEOUT_MS = 120_000;
 const VOSK_AUDIO_WORKLET_URL = '/assets/speech-audio-processor.js';
@@ -42,6 +43,7 @@ const WAKE_VARIANTS = [
   'ei holo',
   'e i holo',
   'ehy holo',
+  'ehi paolo',
   'ehi olo',
   'ei olo',
   'e i olo',
@@ -62,6 +64,7 @@ const VOSK_BROWSER_SCRIPT_URL = `${import.meta.env.BASE_URL}vendor/vosk-browser.
 const VOSK_BROWSER_SCRIPT_ID = 'holo-assistant-vosk-browser-script';
 
 let voskBrowserLoadPromise: Promise<VoskBrowserGlobal> | null = null;
+const modelAssetAvailabilityPromises = new Map<string, Promise<void>>();
 
 function getVoskBrowserGlobal(): VoskBrowserGlobal | null {
   const globalScope = globalThis as typeof globalThis & { Vosk?: VoskBrowserGlobal };
@@ -202,20 +205,36 @@ function debugVosk(message: string, details?: unknown): void {
 }
 
 async function assertModelAssetAvailable(modelUrl: string): Promise<void> {
-  const response = await fetch(modelUrl, { method: 'HEAD', cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Modello Vosk non trovato: ${modelUrl} (${response.status})`);
+  const existingCheck = modelAssetAvailabilityPromises.get(modelUrl);
+  if (existingCheck) {
+    return existingCheck;
   }
 
-  const contentLength = Number(response.headers.get('content-length') ?? 0);
-  if (contentLength > 0 && contentLength < MIN_MODEL_BYTES) {
-    throw new Error(`Il file modello Vosk sembra incompleto: ${modelUrl}`);
-  }
+  const availabilityPromise = (async () => {
+    const response = await fetch(modelUrl, { method: 'HEAD' });
+    if (!response.ok) {
+      throw new Error(`Modello Vosk non trovato: ${modelUrl} (${response.status})`);
+    }
 
-  debugVosk('model asset available', {
-    modelUrl,
-    contentLength: contentLength || 'unknown',
-  });
+    const contentLength = Number(response.headers.get('content-length') ?? 0);
+    if (contentLength > 0 && contentLength < MIN_MODEL_BYTES) {
+      throw new Error(`Il file modello Vosk sembra incompleto: ${modelUrl}`);
+    }
+
+    debugVosk('model asset available', {
+      modelUrl,
+      contentLength: contentLength || 'unknown',
+    });
+  })();
+
+  modelAssetAvailabilityPromises.set(modelUrl, availabilityPromise);
+
+  try {
+    await availabilityPromise;
+  } catch (error) {
+    modelAssetAvailabilityPromises.delete(modelUrl);
+    throw error;
+  }
 }
 
 async function loadVoskModel(modelUrl: string): Promise<Model> {
@@ -271,6 +290,8 @@ export function useVoskWakeWord({
   const recognizerRef = useRef<KaldiRecognizer | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const startDelayTimeoutRef = useRef<number | null>(null);
+  const startIdleCallbackRef = useRef<number | null>(null);
   const commandPartialRef = useRef('');
   const modeRef = useRef<'wake' | 'command'>('wake');
   const startTokenRef = useRef(0);
@@ -295,6 +316,18 @@ export function useVoskWakeWord({
     if (silenceTimeoutRef.current !== null) {
       window.clearTimeout(silenceTimeoutRef.current);
       silenceTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearScheduledStart = useCallback(() => {
+    if (startDelayTimeoutRef.current !== null) {
+      window.clearTimeout(startDelayTimeoutRef.current);
+      startDelayTimeoutRef.current = null;
+    }
+
+    if (startIdleCallbackRef.current !== null && 'cancelIdleCallback' in window) {
+      window.cancelIdleCallback(startIdleCallbackRef.current);
+      startIdleCallbackRef.current = null;
     }
   }, []);
 
@@ -377,6 +410,7 @@ export function useVoskWakeWord({
   const stop = useCallback(() => {
     startTokenRef.current += 1;
     debugVosk('stop');
+    clearScheduledStart();
     resetCommandMode();
     removeRecognizer();
 
@@ -406,7 +440,7 @@ export function useVoskWakeWord({
     }
 
     setStatus(enabled ? 'ready' : 'disabled');
-  }, [enabled, removeRecognizer, resetCommandMode]);
+  }, [clearScheduledStart, enabled, removeRecognizer, resetCommandMode]);
 
   const start = useCallback(async () => {
     if (!enabled || paused || recognizerRef.current) {
@@ -590,8 +624,29 @@ export function useVoskWakeWord({
       return;
     }
 
-    void start();
-  }, [enabled, paused, start, stop]);
+    clearScheduledStart();
+
+    startDelayTimeoutRef.current = window.setTimeout(() => {
+      startDelayTimeoutRef.current = null;
+
+      if ('requestIdleCallback' in window) {
+        startIdleCallbackRef.current = window.requestIdleCallback(
+          () => {
+            startIdleCallbackRef.current = null;
+            void start();
+          },
+          { timeout: START_IDLE_TIMEOUT_MS },
+        );
+        return;
+      }
+
+      void start();
+    }, 150);
+
+    return () => {
+      clearScheduledStart();
+    };
+  }, [clearScheduledStart, enabled, paused, start, stop]);
 
   useEffect(() => {
     return () => {

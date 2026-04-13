@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.api.auth.auth import (
     ADMIN_MACHINE_EVENTS_CHANNEL,
+    _create_operator_chat_session,
     get_current_user,
     resolve_requested_session_target,
     user_has_permission,
@@ -24,6 +25,7 @@ from app.schemas.interaction import (
     AskQuestionResponse,
     InteractionFeedbackRequest,
     InteractionFeedbackResponse,
+    InteractionTargetRequest,
     OperatorChatMessage,
     OperatorChatSessionResponse,
     InteractionResolutionRequest,
@@ -640,6 +642,33 @@ async def get_session_history(
         working_station_id=resolved_working_station_id,
         machine_id=machine.id if machine else None,
         messages=_build_chat_messages(interactions),
+    )
+
+
+@router.post("/clear-session-history", response_model=OperatorChatSessionResponse)
+async def clear_session_history(
+    request: InteractionTargetRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    working_station, machine, _chat_session = _resolve_operator_session_target(
+        db,
+        current_user.id,
+        working_station_id=request.working_station_id,
+        machine_id=request.machine_id,
+    )
+
+    if working_station is None:
+        raise HTTPException(status_code=400, detail="La chat operatore richiede una postazione attiva")
+
+    new_chat_session = _create_operator_chat_session(db, current_user.id, working_station.id, refresh_token_id=None)
+    db.commit()
+
+    return OperatorChatSessionResponse(
+        chat_session_id=new_chat_session.id,
+        working_station_id=working_station.id,
+        machine_id=machine.id if machine else None,
+        messages=[],
     )
 
 

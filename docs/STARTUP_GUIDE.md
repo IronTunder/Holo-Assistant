@@ -2,7 +2,7 @@
 
 Guida pratica per avviare Holo-Assistant con il flusso attuale degli script.
 
-Ultimo aggiornamento: 12 aprile 2026
+Ultimo aggiornamento: 13 aprile 2026
 
 ## Script supportati
 
@@ -159,7 +159,7 @@ Per la build statica:
 - Backend API: `https://{server-ip}:8000`
 - Swagger: `https://{server-ip}:8000/docs`
 - Admin login: `https://localhost:5173/admin-login`
-- Informativa cookie: `https://localhost:5173/cookie-policy`
+- Informativa cookie/privacy: `https://localhost:5173/cookie-policy`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
 
@@ -265,9 +265,11 @@ Questo copre i casi in cui un amministratore libera la macchina, la assegna a un
 
 - la barra operatore espone azioni rapide di emergenza e manutenzione prima di info e impostazioni;
 - il pannello impostazioni operatore permette di disattivare ologramma, wakeword e forzare la grafica legacy;
+- dopo la wake-word l'operatore puo anche pronunciare comandi rapidi come `emergenza`, `chiama emergenza`, `manutenzione` o `chiama tecnico`; il frontend apre comunque la conferma visiva prima dell'invio;
+- su mobile la UI operatore aggiorna l'altezza utile con `visualViewport`, cosi il layout si riallinea quando cambia la tastiera o quando il login avviene nella stessa view;
 - la dashboard admin mostra le impostazioni separate tra `normali` e `avanzate`;
 - il form macchinari usa un dropdown delle postazioni libere per associare la postazione in modo coerente;
-- l'informativa cookie e tecnologie locali e disponibile pubblicamente su `/cookie-policy`.
+- l'informativa cookie, tecnologie utilizzate e privacy e disponibile pubblicamente su `/cookie-policy`.
 
 ## Troubleshooting
 
@@ -351,6 +353,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ../certs
 - il refresh token attivo viene mantenuto nel cookie HTTP-only del backend;
 - il frontend non persiste piu il refresh token in `localStorage`;
 - il logout revoca il refresh token della sessione corrente e libera la macchina associata quando presente;
+- la chiusura di una chat session operatore non elimina piu i record dalla lista log admin: i log restano persistenti e vengono solo scollegati dalla sessione chiusa;
 - per testare una scadenza completa bisogna ridurre anche i refresh token;
 - il frontend prova il refresh prima di considerare scaduta la sessione.
 

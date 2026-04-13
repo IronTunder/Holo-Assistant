@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Info, Mic, MicOff, Radio, Settings, Siren, Wrench, X } from 'lucide-react';
+import { AlertTriangle, Info, Mic, MicOff, Radio, Settings, Siren, Trash2, Wrench, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
 import { OperatorSettingsDialog } from './OperatorSettingsDialog';
@@ -155,6 +155,54 @@ const quickActionConfirmationCopy: Record<
     confirmButtonClassName: 'bg-amber-400 text-slate-950 hover:bg-amber-300',
   },
 };
+
+function normalizeVoiceCommand(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolveVoiceQuickActionCommand(transcript: string): QuickActionType | null {
+  const normalizedTranscript = normalizeVoiceCommand(transcript);
+
+  if (!normalizedTranscript) {
+    return null;
+  }
+
+  const emergencyCommands = [
+    'emergenza',
+    'chiama emergenza',
+    'invia emergenza',
+    'segnala emergenza',
+    'apri emergenza',
+    'allarme emergenza',
+  ];
+  const maintenanceCommands = [
+    'manutenzione',
+    'chiama manutenzione',
+    'richiedi manutenzione',
+    'invia manutenzione',
+    'segnala manutenzione',
+    'apri manutenzione',
+    'chiama tecnico',
+    'richiedi tecnico',
+    'serve manutenzione',
+  ];
+
+  if (emergencyCommands.some((command) => normalizedTranscript === command || normalizedTranscript.startsWith(`${command} `))) {
+    return 'emergency';
+  }
+
+  if (maintenanceCommands.some((command) => normalizedTranscript === command || normalizedTranscript.startsWith(`${command} `))) {
+    return 'maintenance';
+  }
+
+  return null;
+}
 
 function getWakeWordLabel(status: VoskWakeWordStatus, error: string | null): string {
   switch (status) {
@@ -917,6 +965,56 @@ export function OperatorInterface() {
     await logout();
   };
 
+  const handleClearChat = async () => {
+    if (!accessToken || !currentWorkingStation || assistantBusy) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Vuoi svuotare la chat operatore di questa sessione?',
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    avatarDisplayRef.current?.stopSpeech();
+    setAvatarState('idle');
+    setTranscript('');
+    setQuestionInput('');
+    setCurrentTranscription('');
+    setChatMessages([]);
+    setShowFollowUp(false);
+    setClarificationOptions([]);
+    setPendingQuestion(null);
+    setFallbackReasonCode(null);
+    setTrackedActiveInteractionId(null);
+    setPendingQuickActionConfirmation(null);
+    setIsTyping(false);
+    setShowSubtitles(false);
+
+    try {
+      const response = await fetch(API_ENDPOINTS.INTERACTION_CLEAR_SESSION_HISTORY, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          working_station_id: currentWorkingStation.id,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(getApiErrorMessage(error, 'Errore durante lo svuotamento della chat'));
+      }
+    } catch (error) {
+      console.error('Errore svuotamento chat operatore:', error);
+      alert(error instanceof Error ? error.message : 'Errore durante lo svuotamento della chat');
+      void fetchSessionHistory();
+    }
+  };
+
   const submitQuestion = async (userQuestion: string, selectedKnowledgeItemId?: number) => {
     if (!user || !currentWorkingStation || !accessToken || assistantBusy || hasOpenTechnicianRequest) {
       return;
@@ -1184,6 +1282,20 @@ export function OperatorInterface() {
     }
   };
 
+  const handleVoiceTranscript = async (transcript: string) => {
+    const quickActionType = resolveVoiceQuickActionCommand(transcript);
+    if (quickActionType) {
+      setQuestionInput('');
+      setAvatarState('idle');
+      setPendingQuickActionConfirmation(quickActionType);
+      return;
+    }
+
+    setQuestionInput('');
+    setAvatarState('idle');
+    await submitQuestion(transcript);
+  };
+
   const handleFollowUpResponse = async (feedbackStatus: InteractionFeedbackStatus) => {
     if (!activeInteractionId || !accessToken || assistantBusy) {
       return;
@@ -1335,9 +1447,7 @@ export function OperatorInterface() {
       setTrackedActiveInteractionId(null);
     },
     onTranscriptFinal: (transcript) => {
-      setQuestionInput('');
-      setAvatarState('idle');
-      void submitQuestion(transcript);
+      void handleVoiceTranscript(transcript);
     },
     onError: (voiceError) => {
       console.error('Wake word Vosk error:', voiceError);
@@ -1351,7 +1461,14 @@ export function OperatorInterface() {
   const quickActionsDisabled = assistantBusy || hasOpenTechnicianRequest;
 
   return (
-    <div className="relative h-[100dvh] max-h-[100dvh] overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <div
+      className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white"
+      style={{
+        height: 'var(--app-viewport-height, 100dvh)',
+        maxHeight: 'var(--app-viewport-height, 100dvh)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}
+    >
       {/* Logout notification */}
       {logoutMessage && (
         <div
@@ -1596,6 +1713,16 @@ export function OperatorInterface() {
                     <Info className="h-4 w-4" />
                   </button>
                   <button
+                    type="button"
+                    onClick={() => void handleClearChat()}
+                    disabled={assistantBusy || (chatMessages.length === 0 && !currentTranscription)}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="Svuota chat"
+                    title="Svuota chat"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                  <button
                     onClick={handleLogout}
                     disabled={assistantBusy}
                     className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${assistantBusy ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
@@ -1610,7 +1737,7 @@ export function OperatorInterface() {
 
         <main className="flex-1 min-h-0 overflow-hidden px-3 py-3 sm:px-6 sm:py-5">
           {!isLoggedIn ? (
-            <div className="h-full min-h-0 overflow-hidden">
+            <div className="h-full min-h-0 overflow-y-auto overscroll-contain md:overflow-hidden">
               <BadgeReader
                 onBadgeDetected={handleBadgeLogin}
                 onCredentialsLogin={handleCredentialsLogin}
@@ -1638,7 +1765,9 @@ export function OperatorInterface() {
                             <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-400'}`} />
                             <span>
                               {wakeWordMuted ? 'In pausa' : wakeWordLabel}
-                              {!wakeWordMuted && wakeWordStatus === 'wake-listening' ? ' - Di\' "ehi holo" per iniziare' : ''}
+                              {!wakeWordMuted && wakeWordStatus === 'wake-listening'
+                                ? ' - Di\' "ehi holo" per iniziare'
+                                : ''}
                             </span>
                             {canToggleWakeWord && (
                               <button
@@ -1807,7 +1936,10 @@ export function OperatorInterface() {
                   </ScrollArea>
                 </div>
 
-                <div className="shrink-0 border-t border-white/10 px-4 py-4 sm:px-5">
+                <div
+                  className="shrink-0 border-t border-white/10 px-4 py-4 sm:px-5"
+                  style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+                >
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <input

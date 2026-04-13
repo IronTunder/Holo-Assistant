@@ -12,6 +12,8 @@ type TtsSynthesisApiResponse = {
   vdurations?: number[];
 };
 
+type TtsSynthesisMetadata = Omit<TtsSynthesisApiResponse, 'audio_base64'>;
+
 export type TtsSpeechPayload = {
   audio: ArrayBuffer;
   mimeType: string;
@@ -38,6 +40,40 @@ function base64ToArrayBuffer(base64: string) {
   }
 
   return bytes.buffer;
+}
+
+function isMultipartTtsResponse(response: Response) {
+  const contentType = response.headers.get('content-type') || '';
+  return contentType.toLowerCase().includes('multipart/form-data');
+}
+
+async function parseMultipartTtsResponse(response: Response): Promise<TtsSpeechPayload> {
+  const formData = await response.formData();
+  const metadataField = formData.get('metadata');
+  const audioField = formData.get('audio');
+
+  if (typeof metadataField !== 'string') {
+    throw new Error('Metadati TTS mancanti nella risposta multipart');
+  }
+
+  if (!(audioField instanceof Blob)) {
+    throw new Error('Audio TTS mancante nella risposta multipart');
+  }
+
+  const metadata = JSON.parse(metadataField) as TtsSynthesisMetadata;
+  const audio = await audioField.arrayBuffer();
+
+  return {
+    audio,
+    mimeType: metadata.mime_type,
+    durationMs: metadata.duration_ms,
+    words: metadata.words,
+    wtimes: metadata.wtimes,
+    wdurations: metadata.wdurations,
+    visemes: metadata.visemes,
+    vtimes: metadata.vtimes,
+    vdurations: metadata.vdurations,
+  };
 }
 
 function waitForAudioMetadata(audio: HTMLAudioElement): Promise<void> {
@@ -84,6 +120,7 @@ export async function synthesizeTts(text: string, token?: string): Promise<TtsSp
   const response = await fetch(API_ENDPOINTS.TTS_SYNTHESIZE, {
     method: 'POST',
     headers: {
+      'Accept': 'multipart/form-data, application/json',
       'Content-Type': 'application/json',
       'X-Browser-Language': browserLanguage,
       ...headers,
@@ -94,6 +131,10 @@ export async function synthesizeTts(text: string, token?: string): Promise<TtsSp
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(errorText || 'Errore durante la sintesi vocale');
+  }
+
+  if (isMultipartTtsResponse(response)) {
+    return parseMultipartTtsResponse(response);
   }
 
   const payload = (await response.json()) as TtsSynthesisApiResponse;
@@ -114,9 +155,15 @@ export async function synthesizeTts(text: string, token?: string): Promise<TtsSp
 export async function playTtsAudio(payload: TtsSpeechPayload): Promise<TtsPlayback> {
   const audioBlob = new Blob([payload.audio], { type: payload.mimeType });
   const audioUrl = URL.createObjectURL(audioBlob);
+  const audio = new Audio(audioUrl);
+  const releaseAudioResources = () => {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    window.setTimeout(() => URL.revokeObjectURL(audioUrl), 1000);
+  };
 
   try {
-    const audio = new Audio(audioUrl);
     const finished = new Promise<void>((resolve, reject) => {
       const onEnded = () => {
         cleanup();
@@ -140,13 +187,18 @@ export async function playTtsAudio(payload: TtsSpeechPayload): Promise<TtsPlayba
     await waitForAudioMetadata(audio);
     await audio.play();
 
+    void finished.finally(() => {
+      releaseAudioResources();
+    });
+
     return {
       durationMs:
         payload.durationMs ||
         (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration * 1000 : 0),
       finished,
     };
-  } finally {
-    window.setTimeout(() => URL.revokeObjectURL(audioUrl), 1000);
+  } catch (error) {
+    releaseAudioResources();
+    throw error;
   }
 }

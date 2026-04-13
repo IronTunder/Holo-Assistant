@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app import models  # noqa: F401
 from app.api.interactions import (
     ask_question,
+    clear_session_history,
     get_pending_quick_action,
     resolve_interaction,
     submit_quick_action,
@@ -19,9 +20,10 @@ from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
 from app.models.machine import Machine
+from app.models.operator_chat_session import OperatorChatSession
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
 from app.models.working_station import WorkingStation
-from app.schemas.interaction import AskQuestionRequest, InteractionResolutionRequest, QuickActionRequest
+from app.schemas.interaction import AskQuestionRequest, InteractionResolutionRequest, InteractionTargetRequest, QuickActionRequest
 from app.services.knowledge_retrieval import (
     IndexedKnowledgeItem,
     RetrievalResult,
@@ -822,6 +824,59 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated_items, 1)
         self.assertEqual(legacy_item.question_title, "Regolazione velocita dal pannello")
         self.assertIn("pannello macchina", legacy_item.example_questions.lower())
+
+    async def test_clear_session_history_reopens_empty_chat_session_without_deleting_logs(self) -> None:
+        machine = self.db.query(Machine).filter(Machine.id == self.machine_id).first()
+        current_user = self.db.query(User).filter(User.id == self.user_id).first()
+        working_station = WorkingStation(
+            name="Postazione Clear Chat",
+            station_code="CLR-01",
+            description="Postazione usata per il test di svuotamento chat",
+            assigned_machine=machine,
+            startup_checklist=[],
+            in_uso=True,
+            operatore_attuale_id=self.user_id,
+        )
+        self.db.add(working_station)
+        self.db.flush()
+
+        chat_session = OperatorChatSession(
+            user_id=self.user_id,
+            working_station_id=working_station.id,
+            is_active=True,
+        )
+        self.db.add(chat_session)
+        self.db.flush()
+
+        interaction = InteractionLog(
+            user_id=self.user_id,
+            machine_id=self.machine_id,
+            working_station_id=working_station.id,
+            chat_session_id=chat_session.id,
+            domanda="Messaggio da svuotare",
+            risposta="Risposta da non mostrare piu in chat",
+            action_type="question",
+            feedback_status="resolved",
+        )
+        self.db.add(interaction)
+        self.db.commit()
+
+        response = await clear_session_history(
+            InteractionTargetRequest(working_station_id=working_station.id),
+            current_user=current_user,
+            db=self.db,
+        )
+
+        self.db.refresh(chat_session)
+        self.db.refresh(interaction)
+
+        self.assertEqual(response.working_station_id, working_station.id)
+        self.assertEqual(response.machine_id, self.machine_id)
+        self.assertEqual(response.messages, [])
+        self.assertIsNotNone(response.chat_session_id)
+        self.assertNotEqual(response.chat_session_id, chat_session.id)
+        self.assertFalse(chat_session.is_active)
+        self.assertIsNone(interaction.chat_session_id)
 
 
 class IndexedKnowledgeItemTestCase(unittest.TestCase):

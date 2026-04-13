@@ -28,6 +28,7 @@ type MachineSelectorRect = {
   top: number;
   width: number;
   maxHeight: number;
+  compactMode: boolean;
 };
 
 const DEMO_BADGE_BY_STATION_CODE: Record<string, string> = {
@@ -67,6 +68,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
     const viewportPadding = 12;
     const preferredMaxHeight = 280;
     const minUsableHeight = 180;
+    const compactMode = window.innerHeight <= 720;
     const availableBelow = window.innerHeight - rect.bottom - viewportPadding;
     const availableAbove = rect.top - viewportPadding;
     const openAbove = availableBelow < minUsableHeight && availableAbove > availableBelow;
@@ -80,6 +82,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
       top: openAbove ? Math.max(viewportPadding, rect.top - maxHeight - 8) : rect.bottom + 8,
       width: Math.min(rect.width, window.innerWidth - viewportPadding * 2),
       maxHeight,
+      compactMode,
     });
   };
 
@@ -169,20 +172,29 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
     }
   };
 
+  const selectWorkingStation = (workingStation: WorkingStation) => {
+    setSelectedWorkingStation(workingStation);
+    setShowWorkingStationSelector(false);
+    setWorkingStationSearch('');
+  };
+
   return (
     <>
-      <div className="h-full min-h-0">
+      <div
+        className="h-full min-h-0 overflow-y-auto overscroll-contain md:overflow-hidden"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+      >
         <motion.div
           initial={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.35 }}
-          className="grid h-full min-h-0 gap-4 overflow-hidden grid-rows-[minmax(14rem,0.82fr)_minmax(0,1.18fr)] md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)] md:grid-rows-1"
+          className="flex min-h-full flex-col gap-4 md:grid md:h-full md:min-h-0 md:overflow-hidden md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)] md:grid-rows-1"
         >
-          <section className="flex min-h-0 flex-col overflow-hidden p-4 pt-2 text-center sm:p-6 sm:pt-3">
-            <div className="flex min-h-0 flex-1 items-start justify-center overflow-hidden">
+          <section className="flex flex-col p-4 pt-2 text-center sm:p-6 sm:pt-3 md:min-h-0 md:overflow-hidden">
+            <div className="flex flex-1 items-start justify-center md:min-h-0 md:overflow-hidden">
               <div
                 className="flex w-full max-w-md flex-col items-center gap-[clamp(0.875rem,1.8vh,1.25rem)] pt-2 sm:pt-4"
-                style={{ transform: 'scale(clamp(0.84, calc((100dvh - 8rem) / 42rem), 1))', transformOrigin: 'center center' }}
+                style={{ transform: 'scale(clamp(0.9, calc((100dvh - 8rem) / 42rem), 1))', transformOrigin: 'center top' }}
               >
               <div className="relative inline-block">
                 <img
@@ -235,7 +247,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
             </div>
           </section>
 
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
+          <section className="flex min-h-[24rem] flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm md:min-h-0">
             <div className="shrink-0 border-b border-white/10 px-4 py-4 sm:px-5">
               <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Accesso operatore</p>
               <h3 className="mt-1 text-lg font-semibold text-white">Accesso con credenziali</h3>
@@ -304,7 +316,10 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
               </div>
             </ScrollArea>
 
-            <div className="shrink-0 border-t border-white/10 px-4 py-4 sm:px-5">
+            <div
+              className="shrink-0 border-t border-white/10 px-4 py-4 sm:px-5"
+              style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+            >
               <div className="flex flex-col gap-3">
                 <p className="text-center text-sm text-slate-400">
                   In alternativa puoi usare il badge dalla stessa postazione.
@@ -321,7 +336,7 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
                   to="/cookie-policy"
                   className="text-center text-xs text-slate-400 transition-colors hover:text-white hover:underline"
                 >
-                  Informativa cookie e tecnologie locali
+                  Cookie, tecnologie utilizzate e privacy
                 </Link>
               </div>
             </div>
@@ -330,57 +345,74 @@ export function BadgeReader({ onBadgeDetected, onCredentialsLogin }: BadgeReader
       </div>
 
       {showWorkingStationSelector && workingStationSelectorRect && createPortal(
-        <div
-          className="fixed z-[9999] overflow-hidden rounded-2xl border border-white/20 bg-slate-900 shadow-2xl"
-          style={{
-            left: workingStationSelectorRect.left,
-            top: workingStationSelectorRect.top,
-            width: workingStationSelectorRect.width,
-          }}
-        >
-          <div className="border-b border-white/10 p-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={workingStationSearch}
-                onChange={(event) => setWorkingStationSearch(event.target.value)}
-                placeholder="Cerca postazione, reparto o macchinario..."
-                className="w-full rounded-xl border border-white/15 bg-white/10 py-3 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                autoFocus
-              />
-            </div>
-          </div>
-
+        <div className="fixed inset-0 z-[9999] bg-slate-950/60 backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Chiudi selezione postazione"
+            className="absolute inset-0"
+            onClick={() => setShowWorkingStationSelector(false)}
+          />
           <div
-            className="overflow-y-auto overscroll-contain p-2"
-            style={{ maxHeight: Math.min(workingStationSelectorRect.maxHeight, 280) }}
+            className="absolute overflow-hidden rounded-2xl border border-white/20 bg-slate-900 shadow-2xl"
+            style={
+              workingStationSelectorRect.compactMode
+                ? {
+                    left: 12,
+                    right: 12,
+                    top: 12,
+                    bottom: 12,
+                  }
+                : {
+                    left: workingStationSelectorRect.left,
+                    top: workingStationSelectorRect.top,
+                    width: workingStationSelectorRect.width,
+                  }
+            }
           >
-            {filteredMachines.length === 0 ? (
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
-                Nessuna postazione trovata.
+            <div className="border-b border-white/10 p-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={workingStationSearch}
+                  onChange={(event) => setWorkingStationSearch(event.target.value)}
+                  placeholder="Cerca postazione, reparto o macchinario..."
+                  className="w-full rounded-xl border border-white/15 bg-white/10 py-3 pl-9 pr-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  autoFocus
+                />
               </div>
-            ) : (
-              filteredMachines.map((workingStation) => (
-                <button
-                  key={workingStation.id}
-                  onClick={() => {
-                    setSelectedWorkingStation(workingStation);
-                    setShowWorkingStationSelector(false);
-                    setWorkingStationSearch('');
-                  }}
-                  className={`w-full rounded-xl px-4 py-3 text-left transition-colors hover:bg-white/10 ${
-                    selectedWorkingStation?.id === workingStation.id ? 'bg-blue-500/20' : ''
-                  }`}
-                >
-                  <div className="font-semibold text-white">{workingStation.name}</div>
-                  <div className="text-xs text-slate-400">
-                    {workingStation.reparto} - {workingStation.station_code}
-                    {workingStation.assigned_machine ? ` - ${workingStation.assigned_machine.nome}` : ''}
-                  </div>
-                </button>
-              ))
-            )}
+            </div>
+
+            <div
+              className="overflow-y-auto overscroll-contain p-2"
+              style={{
+                maxHeight: workingStationSelectorRect.compactMode
+                  ? 'calc(100% - 76px)'
+                  : Math.min(workingStationSelectorRect.maxHeight, 280),
+              }}
+            >
+              {filteredMachines.length === 0 ? (
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                  Nessuna postazione trovata.
+                </div>
+              ) : (
+                filteredMachines.map((workingStation) => (
+                  <button
+                    key={workingStation.id}
+                    onClick={() => selectWorkingStation(workingStation)}
+                    className={`w-full rounded-xl px-4 py-3 text-left transition-colors hover:bg-white/10 ${
+                      selectedWorkingStation?.id === workingStation.id ? 'bg-blue-500/20' : ''
+                    }`}
+                  >
+                    <div className="font-semibold text-white">{workingStation.name}</div>
+                    <div className="text-xs text-slate-400">
+                      {workingStation.reparto} - {workingStation.station_code}
+                      {workingStation.assigned_machine ? ` - ${workingStation.assigned_machine.nome}` : ''}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         </div>,
         document.body

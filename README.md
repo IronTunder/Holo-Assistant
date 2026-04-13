@@ -1,6 +1,6 @@
 ﻿# Holo-Assistant
 
-Ultimo aggiornamento documentazione: 12 aprile 2026
+Ultimo aggiornamento documentazione: 13 aprile 2026
 
 Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
@@ -9,7 +9,7 @@ Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali 
 - database PostgreSQL;
 - servizi AI locali con retrieval deterministico, chiarimenti guidati e fallback controllati;
 - sintesi vocale TTS e avatar operatore;
-- pagina informativa pubblica su cookie e tecnologie locali disponibile su `/cookie-policy`.
+- pagina pubblica su cookie, tecnologie utilizzate e privacy disponibile su `/cookie-policy`.
 
 ## Licenza e copyright
 
@@ -22,7 +22,7 @@ Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali 
 - `frontend/my-app` contiene l'applicazione web.
 - `frontend/my-app/src/features/operator` gestisce login operatore, console assistente, avatar e sessione macchina.
 - `frontend/my-app/src/features/admin` contiene dashboard e strumenti di amministrazione.
-- `frontend/my-app/src/features/legal` contiene la pagina informativa cookie e tecnologie locali.
+- `frontend/my-app/src/features/legal` contiene la pagina informativa cookie, tecnologie utilizzate e privacy.
 - `frontend/my-app/src/shared` raccoglie API client, auth e componenti UI condivisi.
 - `backend/app` contiene API, modelli, servizi AI e logica applicativa.
 - `backend/scripts` contiene bootstrap database e utility operative.
@@ -176,7 +176,7 @@ Configurazioni GPU consigliate:
 - Backend API: `https://{server-ip}:8000`
 - Swagger: `https://{server-ip}:8000/docs`
 - Admin login: `https://localhost:5173/admin-login`
-- Informativa cookie: `https://localhost:5173/cookie-policy`
+- Informativa cookie/privacy: `https://localhost:5173/cookie-policy`
 - Adminer: `http://localhost:8080`
 - Ollama tags: `http://{server-ip}:11434/api/tags`
 
@@ -218,9 +218,11 @@ Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
 - login con badge o credenziali;
 - area avatar con stati `idle`, `listening`, `thinking`, `speaking`;
 - wake-word locale con Vosk in browser: di' `ehi holo`, poi pronuncia la domanda tecnica;
+- dopo la wake-word puoi anche richiamare azioni rapide vocali come `emergenza`, `chiama emergenza`, `manutenzione` o `chiama tecnico`, che aprono la stessa conferma visiva dei pulsanti rapidi;
 - console laterale per domanda, risposta, chiarimenti e follow-up;
 - azioni rapide visibili senza scroll dell'intera pagina;
 - icona impostazioni nella barra operatore, disponibile sia prima del login sia durante la sessione, per gestire ologramma, wakeword e grafica legacy forzata.
+- su mobile il layout aggiorna dinamicamente l'altezza viewport con `visualViewport`, cosi la UI si riallinea correttamente dopo login, chiusura tastiera o cambi di safe-area.
 
 Endpoint principali usati dal frontend operatore:
 - `POST /auth/badge-login`
@@ -405,6 +407,7 @@ Note pratiche:
 - il refresh token resta nel cookie HTTP-only configurato dal backend e non viene piu mantenuto in `localStorage`;
 - se scade solo l'access token, il frontend prova il refresh della sessione;
 - il logout prova prima a liberare la sessione autenticata corrente e revoca il refresh token associato;
+- quando una chat session operatore viene chiusa, i relativi record restano nei log admin ma vengono sganciati dalla `chat_session_id`, quindi non riappaiono nella cronologia live della sessione chiusa;
 - per simulare una vera scadenza completa bisogna ridurre anche i refresh token;
 - il monitoraggio sessione operatore puo forzare il logout se la macchina cambia stato lato admin.
 
@@ -471,11 +474,11 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 - README frontend: [frontend/my-app/README.md](frontend/my-app/README.md)
 - Backend entrypoint: [backend/app/main.py](backend/app/main.py)
 - Config API frontend: [frontend/my-app/src/shared/api/config.ts](frontend/my-app/src/shared/api/config.ts)
-- Informativa cookie frontend: [frontend/my-app/src/features/legal/CookiePolicyPage.tsx](frontend/my-app/src/features/legal/CookiePolicyPage.tsx)
+- Informativa cookie/privacy frontend: [frontend/my-app/src/features/legal/CookiePolicyPage.tsx](frontend/my-app/src/features/legal/CookiePolicyPage.tsx)
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 12 aprile 2026
+- ultimo aggiornamento documentazione: 13 aprile 2026
 - script pubblici supportati: `setup.bat`, `start.bat`, `check.bat`, `./setup.sh`, `./start.sh`, `./check.sh`
 - controlli non distruttivi Unix: `./setup.sh --check-only`, `./start.sh --check-only`
 

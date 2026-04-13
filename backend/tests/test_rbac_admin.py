@@ -38,7 +38,9 @@ from app.api.auth.auth import (
 )
 from app.database import Base
 from app.models.department import Department
+from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
+from app.models.operator_chat_session import OperatorChatSession
 from app.models.working_station import WorkingStation
 from app.models.role import (
     ADMIN_DEFAULT_PERMISSIONS,
@@ -293,6 +295,59 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(machine)
         self.assertFalse(machine.in_uso)
         self.assertIsNone(machine.operatore_attuale_id)
+
+    async def test_logout_keeps_admin_logs_but_detaches_them_from_closed_chat_session(self) -> None:
+        working_station = WorkingStation(
+            name="Postazione Log",
+            department_id=self.department_id,
+            description="Postazione test log",
+            station_code="WS-LOG-01",
+            startup_checklist=["Controllo iniziale"],
+            in_uso=True,
+            operatore_attuale_id=self.operator.id,
+        )
+        self.db.add(working_station)
+        self.db.flush()
+
+        chat_session = OperatorChatSession(
+            user_id=self.operator.id,
+            working_station_id=working_station.id,
+            is_active=True,
+        )
+        self.db.add(chat_session)
+        self.db.flush()
+
+        interaction = InteractionLog(
+            user_id=self.operator.id,
+            working_station_id=working_station.id,
+            chat_session_id=chat_session.id,
+            domanda="Domanda di test",
+            risposta="Risposta di test",
+            action_type="question",
+            priority="normal",
+        )
+        self.db.add(interaction)
+        self.db.commit()
+
+        await logout(
+            LogoutRequest(user_id=self.operator.id, working_station_id=working_station.id),
+            Response(),
+            current_user=self.operator,
+            db=self.db,
+            refresh_token_cookie=None,
+        )
+
+        persisted_interaction = self.db.query(InteractionLog).filter(InteractionLog.id == interaction.id).first()
+        persisted_chat_session = self.db.query(OperatorChatSession).filter(OperatorChatSession.id == chat_session.id).first()
+        self.db.refresh(working_station)
+
+        self.assertIsNotNone(persisted_interaction)
+        self.assertIsNone(persisted_interaction.chat_session_id)
+        self.assertIsNotNone(persisted_chat_session)
+        self.assertFalse(persisted_chat_session.is_active)
+        self.assertIsNotNone(persisted_chat_session.ended_at)
+        self.assertFalse(working_station.in_uso)
+        self.assertIsNone(working_station.operatore_attuale_id)
 
     async def test_badge_login_releases_stale_machine_for_same_user(self) -> None:
         stale_machine = Machine(

@@ -175,7 +175,7 @@ export const AdminLogin = () => {
                       to="/cookie-policy"
                       className="text-center text-xs text-slate-400 transition-colors hover:text-white hover:underline"
                     >
-                      Informativa cookie e tecnologie locali
+                      Cookie, tecnologie utilizzate e privacy
                     </Link>
                   </div>
                 </div>

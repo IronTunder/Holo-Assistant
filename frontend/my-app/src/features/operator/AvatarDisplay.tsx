@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { ReactNode } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import { motion } from 'motion/react';
 import type { TalkingHead } from '@met4citizen/talkinghead';
 
@@ -27,6 +27,11 @@ export type AvatarDisplayHandle = {
   canPlaySpeech: () => boolean;
   speak: (payload: TtsSpeechPayload) => Promise<TtsPlayback>;
   stopSpeech: () => void;
+};
+
+type BrowserAudioContext = AudioContext;
+type BrowserWindowWithWebkitAudio = typeof window & {
+  webkitAudioContext?: typeof AudioContext;
 };
 
 function supportsWebGL() {
@@ -73,20 +78,37 @@ function getSpeechDurationMs(payload: TtsSpeechPayload) {
   return Math.max(visemeEnd, wordEnd);
 }
 
-async function decodeSpeechAudio(buffer: ArrayBuffer): Promise<AudioBuffer> {
-  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+function getAudioContextConstructor(): typeof AudioContext | undefined {
+  return window.AudioContext || (window as BrowserWindowWithWebkitAudio).webkitAudioContext;
+}
+
+async function getOrCreateDecodeAudioContext(
+  audioContextRef: MutableRefObject<BrowserAudioContext | null>,
+): Promise<BrowserAudioContext> {
+  if (audioContextRef.current) {
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume().catch(() => undefined);
+    }
+    return audioContextRef.current;
+  }
+
+  const AudioContextCtor = getAudioContextConstructor();
 
   if (!AudioContextCtor) {
     throw new Error('Web Audio API non disponibile per il decoding del TTS');
   }
 
   const audioContext = new AudioContextCtor();
+  audioContextRef.current = audioContext;
+  return audioContext;
+}
 
-  try {
-    return await audioContext.decodeAudioData(buffer.slice(0));
-  } finally {
-    void audioContext.close().catch(() => undefined);
-  }
+async function decodeSpeechAudio(
+  audioContextRef: MutableRefObject<BrowserAudioContext | null>,
+  buffer: ArrayBuffer,
+): Promise<AudioBuffer> {
+  const audioContext = await getOrCreateDecodeAudioContext(audioContextRef);
+  return audioContext.decodeAudioData(buffer.slice(0));
 }
 
 function disposeTalkingHeadSafely(head: TalkingHead | null): void {
@@ -111,6 +133,7 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
   function AvatarDisplay({ state, disabled = false, overlay }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const headRef = useRef<TalkingHead | null>(null);
+    const decodeAudioContextRef = useRef<BrowserAudioContext | null>(null);
     const stateRef = useRef<AvatarState>(state);
     const speakingTimeoutRef = useRef<number | null>(null);
     const [isActivated, setIsActivated] = useState(hasUserActivation);
@@ -218,6 +241,10 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
         }
         disposeTalkingHeadSafely(headRef.current);
         headRef.current = null;
+        if (decodeAudioContextRef.current) {
+          void decodeAudioContextRef.current.close().catch(() => undefined);
+          decodeAudioContextRef.current = null;
+        }
       };
     }, [disabled, isActivated]);
 
@@ -248,7 +275,7 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
           }
 
           const durationMs = Math.max(1, getSpeechDurationMs(payload));
-          const decodedAudio = await decodeSpeechAudio(payload.audio);
+          const decodedAudio = await decodeSpeechAudio(decodeAudioContextRef, payload.audio);
 
           let resolved = false;
           const finished = new Promise<void>((resolve) => {
@@ -287,6 +314,9 @@ export const AvatarDisplay = forwardRef<AvatarDisplayHandle, AvatarDisplayProps>
             speakingTimeoutRef.current = null;
           }
           headRef.current?.stopSpeaking();
+          if (decodeAudioContextRef.current?.state === 'running') {
+            void decodeAudioContextRef.current.suspend().catch(() => undefined);
+          }
         },
       }),
       [errorMessage, isActivated, isLoading],

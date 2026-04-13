@@ -39,6 +39,7 @@ export const API_ENDPOINTS = {
     `${API_BASE_URL}/api/interactions/pending-quick-action?working_station_id=${workingStationId}`,
   INTERACTION_SESSION_HISTORY: (workingStationId: number) =>
     `${API_BASE_URL}/api/interactions/session-history?working_station_id=${workingStationId}`,
+  INTERACTION_CLEAR_SESSION_HISTORY: `${API_BASE_URL}/api/interactions/clear-session-history`,
   INTERACTION_FEEDBACK: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/feedback`,
   INTERACTION_RESOLVE: (interactionId: number) => `${API_BASE_URL}/api/interactions/${interactionId}/resolve`,
 

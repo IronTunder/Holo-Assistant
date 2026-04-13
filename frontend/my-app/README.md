@@ -1,11 +1,11 @@
 ﻿# Frontend Holo-Assistant
 
-Ultimo aggiornamento: 12 aprile 2026
+Ultimo aggiornamento: 13 aprile 2026
 
 Frontend React/Vite del progetto Holo-Assistant. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
 - area amministrativa su `/admin-login` e `/admin`;
-- informativa pubblica su cookie e tecnologie locali su `/cookie-policy`.
+- informativa pubblica su cookie, tecnologie utilizzate e privacy su `/cookie-policy`.
 
 ## Stack
 
@@ -79,7 +79,7 @@ Routing attuale:
 - `/` interfaccia operatore
 - `/admin-login` login amministratore
 - `/admin` dashboard protetta
-- `/cookie-policy` informativa cookie e tecnologie locali
+- `/cookie-policy` informativa cookie, tecnologie utilizzate e privacy
 
 ## Flusso operatore
 
@@ -91,6 +91,7 @@ Passi principali:
 - login via `POST /auth/badge-login` oppure `POST /auth/credentials-login`;
 - apertura della console operatore con avatar, stato sessione e box domanda;
 - ascolto wake-word locale nel browser con frase `ehi holo`;
+- dopo la wake-word puoi anche pronunciare comandi rapidi come `emergenza`, `chiama emergenza`, `manutenzione`, `richiedi manutenzione` o `chiama tecnico`;
 - invio domande a `POST /api/interactions/ask`;
 - eventuale riproduzione TTS tramite `POST /tts/synthesize`.
 
@@ -100,7 +101,9 @@ Comportamenti utente rilevanti:
 - opzioni di chiarimento quando la knowledge base richiede disambiguazione;
 - follow-up finale per chiedere se il problema e stato risolto;
 - azioni rapide sempre visibili nella parte bassa della console;
+- i comandi vocali di emergenza e manutenzione aprono la stessa finestra di conferma dei pulsanti rapidi, senza invio immediato;
 - pannello impostazioni operatore con toggle persistenti per ologramma, wakeword e grafica legacy forzata.
+- su mobile la viewport utile viene aggiornata dinamicamente con `visualViewport`, riducendo bande vuote o tagli del layout dopo login e chiusura tastiera.
 
 ## Sessione operatore e protezione macchina
 
@@ -146,6 +149,7 @@ Comportamento attuale:
 - il refresh token resta nel cookie HTTP-only del backend;
 - `restoreSession()` prova a recuperare la sessione usando `POST /auth/refresh` e poi riallinea i dati utente con `GET /auth/me`;
 - `logout()` prova anche a liberare la macchina corrente e, se serve, ritenta dopo un refresh dell'access token.
+- quando la chat session operatore viene chiusa, i log restano disponibili nella dashboard admin e vengono solo staccati dalla `chat_session_id`.
 
 ## File utili
 
@@ -155,7 +159,7 @@ Comportamento attuale:
 - `src/features/operator/BadgeReader.tsx` gestisce selezione postazione e accesso.
 - `src/features/operator/CredentialsLogin.tsx` gestisce il modal di login credenziali.
 - `src/features/operator/operatorDisplayPreferences.ts` gestisce le preferenze locali dell'interfaccia operatore.
-- `src/features/legal/CookiePolicyPage.tsx` contiene l'informativa cookie e tecnologie locali.
+- `src/features/legal/CookiePolicyPage.tsx` contiene l'informativa cookie, tecnologie utilizzate e privacy.
 
 ## Note operative
 
@@ -178,7 +182,8 @@ Il frontend viene avviato dagli script correnti tramite `vite dev`. Per un host 
 - la dashboard admin e stata riallineata sulle sezioni `Utenti`, `Macchinari`, `Postazioni` e `Impostazioni`;
 - il form macchinari ora associa la postazione da un elenco di postazioni libere, evitando inserimenti manuali del codice;
 - la pagina impostazioni admin separa consultazione normale e configurazione avanzata, con indicatori di riavvio per singola voce;
-- l'app espone un link pubblico all'informativa cookie sia dalla schermata operatore pre-login sia dal login admin.
+- l'app espone un link pubblico all'informativa cookie/privacy sia dalla schermata operatore pre-login sia dal login admin.
+- la pagina legale include anche azioni lato utente per pulire preferenze locali, snapshot di sessione browser e fare logout quando la sessione e attiva.
 
 
 

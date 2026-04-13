@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, Circle, Shield, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Circle, Shield } from 'lucide-react';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { API_ENDPOINTS } from '@/shared/api/config';
 import { useApiClient } from '@/shared/api/apiClient';
@@ -34,6 +34,7 @@ export function StartupChecklistDialog({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set());
+  const [compactMode, setCompactMode] = useState(false);
 
   useEffect(() => {
     const fetchChecklist = async () => {
@@ -58,6 +59,25 @@ export function StartupChecklistDialog({
 
     fetchChecklist();
   }, [machineId, accessToken, apiCall]);
+
+  useEffect(() => {
+    const updateCompactMode = () => {
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      setCompactMode(viewportHeight <= 760);
+    };
+
+    updateCompactMode();
+
+    window.addEventListener('resize', updateCompactMode);
+    window.addEventListener('orientationchange', updateCompactMode);
+    window.visualViewport?.addEventListener('resize', updateCompactMode);
+
+    return () => {
+      window.removeEventListener('resize', updateCompactMode);
+      window.removeEventListener('orientationchange', updateCompactMode);
+      window.visualViewport?.removeEventListener('resize', updateCompactMode);
+    };
+  }, []);
 
   const allChecked = checkedItems.size === checklist.length;
 
@@ -85,28 +105,34 @@ export function StartupChecklistDialog({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 p-2 backdrop-blur-sm sm:items-center sm:p-4"
       >
         <motion.div
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.95, opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-white/20 bg-slate-900/95 shadow-2xl backdrop-blur-md"
+          className="flex min-h-0 w-full max-w-lg flex-col overflow-hidden rounded-[1.5rem] border border-white/20 bg-slate-900/95 shadow-2xl backdrop-blur-md sm:rounded-3xl"
+          style={{ maxHeight: 'calc(var(--app-viewport-height, 100dvh) - 1rem)' }}
         >
           {/* Header */}
-          <div className="shrink-0 border-b border-white/10 px-6 py-5 text-center">
-            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/20">
-              <AlertTriangle className="h-7 w-7 text-amber-400" />
-            </div>
-            <h2 className="text-xl font-bold text-white">Checklist pre-avvio</h2>
-            <p className="mt-1 text-sm text-slate-400">
+          <div className={`shrink-0 border-b border-white/10 px-4 text-center sm:px-6 ${compactMode ? 'py-3' : 'py-4 sm:py-5'}`}>
+            <h2 className={`font-bold text-white ${compactMode ? 'text-base sm:text-lg' : 'text-lg sm:text-xl'}`}>Checklist pre-avvio</h2>
+            <p className={`mt-1 text-slate-400 ${compactMode ? 'text-xs sm:text-sm' : 'text-sm'}`}>
               Completare tutti i controlli per <span className="font-semibold text-blue-400">{machineName}</span>
             </p>
           </div>
 
           {/* Checklist */}
-          <ScrollArea className="min-h-0 flex-1 px-6 py-4">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className={`px-4 sm:px-6 ${compactMode ? 'space-y-2.5 py-2.5' : 'space-y-4 py-4'}`}>
+              <div className={`rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 ${compactMode ? 'py-2' : 'py-3'}`}>
+                <p className={`text-center text-amber-200 ${compactMode ? 'text-xs sm:text-sm' : 'text-sm'}`}>
+                  <Shield className={`mb-0.5 mr-1.5 inline-block ${compactMode ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
+                  Tutti i controlli devono essere completati prima di procedere
+                </p>
+              </div>
+
             {loading ? (
               <div className="flex h-32 items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-400 border-t-transparent"></div>
@@ -120,7 +146,7 @@ export function StartupChecklistDialog({
                 Nessuna checklist configurata per questa macchina
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className={compactMode ? 'space-y-2' : 'space-y-3'}>
                 {checklist.map((item, index) => {
                   const isChecked = checkedItems.has(index);
                   return (
@@ -128,21 +154,25 @@ export function StartupChecklistDialog({
                       key={index}
                       type="button"
                       onClick={() => toggleItem(index)}
-                      className={`w-full rounded-xl border px-4 py-3 text-left transition-all ${
+                      className={`w-full rounded-xl border text-left transition-all ${
                         isChecked
                           ? 'border-green-500/40 bg-green-500/10'
                           : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
-                      }`}
+                      } ${compactMode ? 'px-3 py-2.5' : 'px-4 py-3'}`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5 shrink-0">
                           {isChecked ? (
-                            <CheckCircle2 className="h-5 w-5 text-green-400" />
+                            <CheckCircle2 className={`${compactMode ? 'h-4 w-4' : 'h-5 w-5'} text-green-400`} />
                           ) : (
-                            <Circle className="h-5 w-5 text-slate-500" />
+                            <Circle className={`${compactMode ? 'h-4 w-4' : 'h-5 w-5'} text-slate-500`} />
                           )}
                         </div>
-                        <span className={`text-sm leading-relaxed ${isChecked ? 'text-green-100' : 'text-slate-200'}`}>
+                        <span
+                          className={`${compactMode ? 'text-xs leading-5 sm:text-sm' : 'text-sm leading-relaxed'} ${
+                            isChecked ? 'text-green-100' : 'text-slate-200'
+                          }`}
+                        >
                           {item}
                         </span>
                       </div>
@@ -151,29 +181,27 @@ export function StartupChecklistDialog({
                 })}
               </div>
             )}
+            </div>
           </ScrollArea>
 
-          {/* Warning message */}
-          <div className="shrink-0 border-t border-white/10 px-6 py-3">
-            <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3">
-              <p className="text-center text-sm text-amber-200">
-                <Shield className="mb-0.5 mr-1.5 inline-block h-4 w-4" />
-                Tutti i controlli devono essere completati prima di procedere
-              </p>
-            </div>
-          </div>
-
           {/* Footer */}
-          <div className="shrink-0 border-t border-white/10 px-6 py-4">
+          <div
+            className={`shrink-0 border-t border-white/10 px-4 sm:px-6 ${compactMode ? 'py-2.5' : 'py-3 sm:py-4'}`}
+            style={{
+              paddingBottom: compactMode
+                ? 'calc(env(safe-area-inset-bottom, 0px) + 0.625rem)'
+                : 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)',
+            }}
+          >
             <button
               type="button"
               onClick={handleConfirm}
               disabled={!allChecked}
-              className={`w-full rounded-xl py-3 text-sm font-semibold transition-colors ${
+              className={`w-full rounded-xl font-semibold transition-colors ${
                 allChecked
                   ? 'bg-blue-500 text-white hover:bg-blue-600'
                   : 'cursor-not-allowed bg-slate-700 text-slate-400'
-              }`}
+              } ${compactMode ? 'py-2.5 text-xs sm:text-sm' : 'py-3 text-sm'}`}
             >
               {allChecked ? 'Conferma e procedi' : `Completa tutti i controlli (${checkedItems.size}/${checklist.length})`}
             </button>
