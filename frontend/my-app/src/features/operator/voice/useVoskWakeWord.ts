@@ -37,9 +37,10 @@ const MODEL_LOAD_TIMEOUT_MS = 120_000;
 const VOSK_AUDIO_WORKLET_URL = '/assets/speech-audio-processor.js';
 const WAKE_VARIANTS = [
   'ehi holo',
+  'e io l ho',
+  'e io ho',
   'ei holo',
   'e i holo',
-  'ehi holo',
   'ehy holo',
   'ehi olo',
   'ei olo',
