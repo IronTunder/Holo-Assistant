@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { AlertTriangle, Info, Mic, MicOff, Radio, Settings, Siren, Trash2, Wrench, X } from 'lucide-react';
 import { AvatarDisplay, type AvatarDisplayHandle } from './AvatarDisplay';
 import { BadgeReader } from './BadgeReader';
@@ -276,6 +276,242 @@ function buildPendingResolutionState(
     resolutionTimestamp,
   };
 }
+
+type OperatorHeaderProps = {
+  assistantBusy: boolean;
+  canClearChat: boolean;
+  isLoggedIn: boolean;
+  quickActionsDisabled: boolean;
+  onClearChat: () => void;
+  onLogout: () => void;
+  onOpenSettings: () => void;
+  onOpenSessionInfo: () => void;
+  onSelectQuickAction: (actionType: QuickActionType) => void;
+  userName: string | null;
+};
+
+const OperatorHeader = memo(function OperatorHeader({
+  assistantBusy,
+  canClearChat,
+  isLoggedIn,
+  quickActionsDisabled,
+  onClearChat,
+  onLogout,
+  onOpenSettings,
+  onOpenSessionInfo,
+  onSelectQuickAction,
+  userName,
+}: OperatorHeaderProps) {
+  return (
+    <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-2 backdrop-blur-sm sm:px-6 sm:py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg font-bold sm:text-xl">
+            <span className="text-blue-400">Holo-Assistant</span>
+          </h1>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+            aria-label="Apri impostazioni operatore"
+            title="Impostazioni"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+          {isLoggedIn && userName && (
+            <>
+              {quickActions.map((action) => {
+                const Icon = action.icon;
+                const isEmergency = action.actionType === 'emergency';
+                return (
+                  <button
+                    key={action.actionType}
+                    type="button"
+                    onClick={() => onSelectQuickAction(action.actionType)}
+                    disabled={quickActionsDisabled}
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      isEmergency
+                        ? 'border-red-500/35 bg-red-500/15 text-red-100 hover:bg-red-500/25'
+                        : 'border-amber-400/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20'
+                    }`}
+                    aria-label={action.title}
+                    title={action.title}
+                  >
+                    <Icon className="h-4 w-4" />
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={onOpenSessionInfo}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                aria-label="Mostra dettagli sessione"
+              >
+                <Info className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={onClearChat}
+                disabled={!canClearChat}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Svuota chat"
+                title="Svuota chat"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={onLogout}
+                disabled={assistantBusy}
+                className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${assistantBusy ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
+              >
+                Logout
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+});
+
+type OperatorAvatarPanelProps = {
+  avatarDisplayRef: RefObject<AvatarDisplayHandle | null>;
+  avatarState: AvatarState;
+  canToggleWakeWord: boolean;
+  hologramEnabled: boolean;
+  voicePartialTranscript: string;
+  wakeWordActive: boolean;
+  wakeWordLabel: string;
+  wakeWordMuted: boolean;
+  wakeWordStatus: VoskWakeWordStatus;
+  onToggleWakeWord: () => void;
+};
+
+const OperatorAvatarPanel = memo(function OperatorAvatarPanel({
+  avatarDisplayRef,
+  avatarState,
+  canToggleWakeWord,
+  hologramEnabled,
+  voicePartialTranscript,
+  wakeWordActive,
+  wakeWordLabel,
+  wakeWordMuted,
+  wakeWordStatus,
+  onToggleWakeWord,
+}: OperatorAvatarPanelProps) {
+  return (
+    <section className="flex min-h-0 overflow-hidden">
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <AvatarDisplay
+          ref={avatarDisplayRef}
+          disabled={!hologramEnabled}
+          state={avatarState}
+          overlay={
+            <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-slate-950/68 px-4 py-2 text-center text-sm text-slate-100 backdrop-blur-md">
+              {avatarState === 'idle' && (
+                <>
+                  <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-400'}`} />
+                  <span>
+                    {wakeWordMuted ? 'In pausa' : wakeWordLabel}
+                    {!wakeWordMuted && wakeWordStatus === 'wake-listening'
+                      ? ' - Di\' "ehi holo" per iniziare'
+                      : ''}
+                  </span>
+                  {canToggleWakeWord && (
+                    <button
+                      type="button"
+                      onClick={onToggleWakeWord}
+                      className={`pointer-events-auto inline-flex items-center justify-center rounded-full border p-1 transition-colors ${
+                        wakeWordMuted
+                          ? 'border-blue-400/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20'
+                          : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'
+                      }`}
+                      aria-pressed={wakeWordMuted}
+                      title={wakeWordMuted ? 'Riattiva ascolto wake word' : 'Metti in pausa la wake word'}
+                    >
+                      {wakeWordMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
+                </>
+              )}
+              {avatarState === 'listening' && (
+                <>
+                  <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
+                  <span>{voicePartialTranscript || 'In ascolto...'}</span>
+                </>
+              )}
+              {avatarState === 'thinking' && (
+                <>
+                  <div className="flex gap-1">
+                    <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" />
+                    <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.1s' }} />
+                    <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  </div>
+                  <span>Elaborazione in corso...</span>
+                </>
+              )}
+              {avatarState === 'speaking' && (
+                <>
+                  <div className="h-3 w-3 rounded-full bg-violet-400 animate-pulse" />
+                  <span>Risposta in corso...</span>
+                </>
+              )}
+            </div>
+          }
+        />
+      </div>
+    </section>
+  );
+});
+
+type SessionInfoDialogProps = {
+  currentMachineName: string | null;
+  currentWorkingStationLabel: string | null;
+  open: boolean;
+  operatorName: string | null;
+  onOpenChange: (open: boolean) => void;
+};
+
+const SessionInfoDialog = memo(function SessionInfoDialog({
+  currentMachineName,
+  currentWorkingStationLabel,
+  open,
+  operatorName,
+  onOpenChange,
+}: SessionInfoDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-white/10 bg-slate-950/95 text-white sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Dettagli sessione operatore</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Postazione</p>
+            <p className="mt-2 break-words text-sm text-slate-100">
+              {currentWorkingStationLabel || 'Nessuna postazione attiva'}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Macchinario in uso</p>
+            <p className="mt-2 break-words text-sm text-slate-100">
+              {currentMachineName || 'Nessun macchinario associato'}
+            </p>
+          </div>
+          {operatorName ? (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Operatore</p>
+              <p className="mt-2 break-words text-sm text-slate-100">{operatorName}</p>
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+});
 
 export function OperatorInterface() {
   const { 
@@ -940,7 +1176,7 @@ export function OperatorInterface() {
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     manualLogoutInProgressRef.current = true;
     dismissLogoutMessage();
     await markActiveInteractionAsNotApplicable();
@@ -963,9 +1199,9 @@ export function OperatorInterface() {
     setIsTyping(false);
     setShowSubtitles(false);
     await logout();
-  };
+  }, [logout]);
 
-  const handleClearChat = async () => {
+  const handleClearChat = useCallback(async () => {
     if (!accessToken || !currentWorkingStation || assistantBusy) {
       return;
     }
@@ -1013,7 +1249,23 @@ export function OperatorInterface() {
       alert(error instanceof Error ? error.message : 'Errore durante lo svuotamento della chat');
       void fetchSessionHistory();
     }
-  };
+  }, [accessToken, assistantBusy, currentWorkingStation]);
+
+  const handleOpenOperatorSettings = useCallback(() => {
+    setShowOperatorSettings(true);
+  }, []);
+
+  const handleOpenSessionInfo = useCallback(() => {
+    setShowSessionInfo(true);
+  }, []);
+
+  const handleSelectQuickActionConfirmation = useCallback((actionType: QuickActionType) => {
+    setPendingQuickActionConfirmation(actionType);
+  }, []);
+
+  const handleToggleWakeWordMuted = useCallback(() => {
+    setWakeWordMuted((current) => !current);
+  }, []);
 
   const submitQuestion = async (userQuestion: string, selectedKnowledgeItemId?: number) => {
     if (!user || !currentWorkingStation || !accessToken || assistantBusy || hasOpenTechnicianRequest) {
@@ -1626,33 +1878,13 @@ export function OperatorInterface() {
         </div>
       ) : null}
 
-      <Dialog open={showSessionInfo} onOpenChange={setShowSessionInfo}>
-        <DialogContent className="border-white/10 bg-slate-950/95 text-white sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Dettagli sessione operatore</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Postazione</p>
-              <p className="mt-2 break-words text-sm text-slate-100">
-                {currentWorkingStation ? `${currentWorkingStation.name} - ${currentWorkingStation.station_code}` : 'Nessuna postazione attiva'}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Macchinario in uso</p>
-              <p className="mt-2 break-words text-sm text-slate-100">
-                {currentMachine ? currentMachine.nome : 'Nessun macchinario associato'}
-              </p>
-            </div>
-            {user ? (
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Operatore</p>
-                <p className="mt-2 break-words text-sm text-slate-100">{user.nome}</p>
-              </div>
-            ) : null}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SessionInfoDialog
+        currentMachineName={currentMachine?.nome ?? null}
+        currentWorkingStationLabel={currentWorkingStation ? `${currentWorkingStation.name} - ${currentWorkingStation.station_code}` : null}
+        open={showSessionInfo}
+        operatorName={user?.nome ?? null}
+        onOpenChange={setShowSessionInfo}
+      />
 
       {/* Background pattern */}
       <div className="absolute inset-0 opacity-10">
@@ -1663,77 +1895,22 @@ export function OperatorInterface() {
       </div>
 
       <div className="relative z-10 flex h-full min-h-0 flex-col">
-        <header className="shrink-0 border-b border-white/10 bg-slate-950/20 px-4 py-2 backdrop-blur-sm sm:px-6 sm:py-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <h1 className="text-lg font-bold sm:text-xl">
-                <span className="text-blue-400">Holo-Assistant</span>
-              </h1>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowOperatorSettings(true)}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-                aria-label="Apri impostazioni operatore"
-                title="Impostazioni"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-              {isLoggedIn && user && (
-                <>
-                  {quickActions.map((action) => {
-                    const Icon = action.icon;
-                    const isEmergency = action.actionType === 'emergency';
-                    return (
-                      <button
-                        key={action.actionType}
-                        type="button"
-                        onClick={() => setPendingQuickActionConfirmation(action.actionType)}
-                        disabled={quickActionsDisabled}
-                        className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                          isEmergency
-                            ? 'border-red-500/35 bg-red-500/15 text-red-100 hover:bg-red-500/25'
-                            : 'border-amber-400/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20'
-                        }`}
-                        aria-label={action.title}
-                        title={action.title}
-                      >
-                        <Icon className="h-4 w-4" />
-                      </button>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    onClick={() => setShowSessionInfo(true)}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
-                    aria-label="Mostra dettagli sessione"
-                  >
-                    <Info className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleClearChat()}
-                    disabled={assistantBusy || (chatMessages.length === 0 && !currentTranscription)}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-                    aria-label="Svuota chat"
-                    title="Svuota chat"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={handleLogout}
-                    disabled={assistantBusy}
-                    className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${assistantBusy ? 'cursor-not-allowed border-red-500/20 bg-red-500/10 text-red-300' : 'border-red-500/40 bg-red-500/20 text-white hover:bg-red-500/30'}`}
-                  >
-                    Logout
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </header>
+        <OperatorHeader
+          assistantBusy={assistantBusy}
+          canClearChat={!assistantBusy && (chatMessages.length > 0 || Boolean(currentTranscription))}
+          isLoggedIn={isLoggedIn}
+          quickActionsDisabled={quickActionsDisabled}
+          onClearChat={() => {
+            void handleClearChat();
+          }}
+          onLogout={() => {
+            void handleLogout();
+          }}
+          onOpenSettings={handleOpenOperatorSettings}
+          onOpenSessionInfo={handleOpenSessionInfo}
+          onSelectQuickAction={handleSelectQuickActionConfirmation}
+          userName={user?.nome ?? null}
+        />
 
         <main className="flex-1 min-h-0 overflow-hidden px-3 py-3 sm:px-6 sm:py-5">
           {!isLoggedIn ? (
@@ -1752,67 +1929,18 @@ export function OperatorInterface() {
             </div>
           ) : (
             <div className="grid h-full min-h-0 gap-4 overflow-hidden grid-rows-[minmax(14rem,0.8fr)_minmax(0,1.2fr)] md:grid-cols-[minmax(280px,0.95fr)_minmax(360px,1.05fr)] md:grid-rows-1">
-              <section className="flex min-h-0 overflow-hidden">
-                <div className="flex min-h-0 flex-1 items-center justify-center">
-                  <AvatarDisplay
-                    ref={avatarDisplayRef}
-                    disabled={!hologramEnabled}
-                    state={avatarState}
-                    overlay={
-                      <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-slate-950/68 px-4 py-2 text-center text-sm text-slate-100 backdrop-blur-md">
-                        {avatarState === 'idle' && (
-                          <>
-                            <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-400'}`} />
-                            <span>
-                              {wakeWordMuted ? 'In pausa' : wakeWordLabel}
-                              {!wakeWordMuted && wakeWordStatus === 'wake-listening'
-                                ? ' - Di\' "ehi holo" per iniziare'
-                                : ''}
-                            </span>
-                            {canToggleWakeWord && (
-                              <button
-                                type="button"
-                                onClick={() => setWakeWordMuted((current) => !current)}
-                                className={`pointer-events-auto inline-flex items-center justify-center rounded-full border p-1 transition-colors ${
-                                  wakeWordMuted
-                                    ? 'border-blue-400/30 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20'
-                                    : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'
-                                }`}
-                                aria-pressed={wakeWordMuted}
-                                title={wakeWordMuted ? 'Riattiva ascolto wake word' : 'Metti in pausa la wake word'}
-                              >
-                                {wakeWordMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                              </button>
-                            )}
-                          </>
-                        )}
-                        {avatarState === 'listening' && (
-                          <>
-                            <Mic className="h-5 w-5 text-blue-400 animate-pulse" />
-                            <span>{voicePartialTranscript || 'In ascolto...'}</span>
-                          </>
-                        )}
-                        {avatarState === 'thinking' && (
-                          <>
-                            <div className="flex gap-1">
-                              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" />
-                              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.1s' }} />
-                              <div className="h-2 w-2 rounded-full bg-yellow-400 animate-bounce" style={{ animationDelay: '0.2s' }} />
-                            </div>
-                            <span>Elaborazione in corso...</span>
-                          </>
-                        )}
-                        {avatarState === 'speaking' && (
-                          <>
-                            <div className="h-3 w-3 rounded-full bg-violet-400 animate-pulse" />
-                            <span>Risposta in corso...</span>
-                          </>
-                        )}
-                      </div>
-                    }
-                  />
-                </div>
-              </section>
+              <OperatorAvatarPanel
+                avatarDisplayRef={avatarDisplayRef}
+                avatarState={avatarState}
+                canToggleWakeWord={canToggleWakeWord}
+                hologramEnabled={hologramEnabled}
+                onToggleWakeWord={handleToggleWakeWordMuted}
+                voicePartialTranscript={voicePartialTranscript}
+                wakeWordActive={wakeWordActive}
+                wakeWordLabel={wakeWordLabel}
+                wakeWordMuted={wakeWordMuted}
+                wakeWordStatus={wakeWordStatus}
+              />
 
               <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/25 backdrop-blur-sm">
                 <div className="flex-1 min-h-0 overflow-hidden px-4 py-4 sm:px-5">
