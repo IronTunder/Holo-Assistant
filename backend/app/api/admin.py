@@ -20,9 +20,8 @@ from app.core.database import get_db
 from app.models.category import Category
 from app.models.department import Department
 from app.models.interaction_log import InteractionLog
-from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
+from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem, WorkingStationKnowledgeItem
 from app.models.machine import Machine
-from app.models.working_station import WorkingStation
 from app.models.working_station import WorkingStation
 from app.models.role import (
     ADMIN_ROLE_CODE,
@@ -418,19 +417,6 @@ def _apply_machine_assignments(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Una o piu postazioni selezionate non esistono",
             )
-        missing_machine_stations = [
-            working_station.station_code
-            for working_station in working_stations
-            if working_station.assigned_machine is None
-        ]
-        if missing_machine_stations:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Le seguenti postazioni non hanno un macchinario associato: "
-                    + ", ".join(missing_machine_stations)
-                ),
-            )
         unique_machine_ids = sorted(
             {
                 working_station.assigned_machine.id
@@ -441,26 +427,19 @@ def _apply_machine_assignments(
     else:
         unique_machine_ids = []
 
-    if unique_machine_ids:
-        machine_count = db.query(Machine).filter(Machine.id.in_(unique_machine_ids)).count()
-        if machine_count != len(unique_machine_ids):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Uno o piu macchinari selezionati non esistono",
-            )
-
-    db.query(MachineKnowledgeItem).filter(
-        MachineKnowledgeItem.knowledge_item_id == knowledge_item.id
+    db.query(WorkingStationKnowledgeItem).filter(
+        WorkingStationKnowledgeItem.knowledge_item_id == knowledge_item.id
     ).delete(synchronize_session=False)
 
-    for machine_id in unique_machine_ids:
+    for working_station_id in unique_working_station_ids:
         db.add(
-            MachineKnowledgeItem(
-                machine_id=machine_id,
+            WorkingStationKnowledgeItem(
+                working_station_id=working_station_id,
                 knowledge_item_id=knowledge_item.id,
                 is_enabled=True,
             )
         )
+
     return unique_machine_ids
 
 
@@ -1440,7 +1419,7 @@ async def list_knowledge_items(
     del admin
     query = db.query(KnowledgeItem).options(
         joinedload(KnowledgeItem.category),
-        joinedload(KnowledgeItem.machine_assignments),
+        joinedload(KnowledgeItem.working_station_assignments),
     )
     if category_id is not None:
         query = query.filter(KnowledgeItem.category_id == category_id)
@@ -1450,26 +1429,20 @@ async def list_knowledge_items(
     knowledge_items = query.order_by(KnowledgeItem.sort_order.asc(), KnowledgeItem.question_title.asc()).all()
     payload = []
     for knowledge_item in knowledge_items:
-        assigned_machine_ids = [
-            assignment.machine_id
-            for assignment in knowledge_item.machine_assignments
-            if assignment.is_enabled
-        ]
         assigned_working_station_ids = sorted(
             {
-                assignment.machine.working_station_id
-                for assignment in knowledge_item.machine_assignments
+                assignment.working_station_id
+                for assignment in knowledge_item.working_station_assignments
                 if assignment.is_enabled
-                and assignment.machine is not None
-                and assignment.machine.working_station_id is not None
             }
         )
-        if machine_id is not None and machine_id not in assigned_machine_ids:
-            continue
+        if machine_id is not None:
+            machine = db.query(Machine).filter(Machine.id == machine_id).first()
+            if machine is None or machine.working_station_id is None or machine.working_station_id not in assigned_working_station_ids:
+                continue
         payload.append(
             serialize_knowledge_item(
                 knowledge_item,
-                assigned_machine_ids=assigned_machine_ids,
                 assigned_working_station_ids=assigned_working_station_ids,
                 assignment_count=len(assigned_working_station_ids),
             )
@@ -1484,20 +1457,27 @@ async def list_machine_knowledge(
     db: Session = Depends(get_db),
 ):
     del admin
+    machine = db.query(Machine).filter(Machine.id == machine_id).first()
+    if machine is None or machine.working_station_id is None:
+        return []
     assignments = (
-        db.query(MachineKnowledgeItem)
+        db.query(WorkingStationKnowledgeItem)
         .options(
-            joinedload(MachineKnowledgeItem.knowledge_item).joinedload(KnowledgeItem.category)
+            joinedload(WorkingStationKnowledgeItem.knowledge_item).joinedload(KnowledgeItem.category)
         )
         .filter(
-            MachineKnowledgeItem.machine_id == machine_id,
-            MachineKnowledgeItem.is_enabled.is_(True),
+            WorkingStationKnowledgeItem.working_station_id == machine.working_station_id,
+            WorkingStationKnowledgeItem.is_enabled.is_(True),
         )
         .all()
     )
     return [
         {
-            **serialize_knowledge_item(assignment.knowledge_item, assigned_machine_ids=[machine_id], assignment_count=1),
+            **serialize_knowledge_item(
+                assignment.knowledge_item,
+                assigned_working_station_ids=[machine.working_station_id],
+                assignment_count=1,
+            ),
             "assignment_id": assignment.id,
         }
         for assignment in assignments
@@ -1532,7 +1512,10 @@ async def create_knowledge_item(
     _invalidate_knowledge_cache(resolved_machine_ids)
     knowledge_item = (
         db.query(KnowledgeItem)
-        .options(joinedload(KnowledgeItem.category), joinedload(KnowledgeItem.machine_assignments))
+        .options(
+            joinedload(KnowledgeItem.category),
+            joinedload(KnowledgeItem.working_station_assignments),
+        )
         .filter(KnowledgeItem.id == knowledge_item.id)
         .first()
     )
@@ -1549,7 +1532,9 @@ async def update_knowledge_item(
     del admin
     knowledge_item = (
         db.query(KnowledgeItem)
-        .options(joinedload(KnowledgeItem.machine_assignments))
+        .options(
+            joinedload(KnowledgeItem.working_station_assignments),
+        )
         .filter(KnowledgeItem.id == knowledge_item_id)
         .first()
     )
@@ -1559,9 +1544,15 @@ async def update_knowledge_item(
     if db.query(Category).filter(Category.id == request.category_id).first() is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Categoria non valida")
 
-    previous_machine_ids = [
-        assignment.machine_id for assignment in knowledge_item.machine_assignments if assignment.is_enabled
-    ]
+    previous_machine_ids = sorted(
+        {
+            assignment.working_station.assigned_machine.id
+            for assignment in knowledge_item.working_station_assignments
+            if assignment.is_enabled
+            and assignment.working_station is not None
+            and assignment.working_station.assigned_machine is not None
+        }
+    )
     knowledge_item.category_id = request.category_id
     knowledge_item.question_title = request.question_title.strip()
     knowledge_item.answer_text = request.answer_text.strip()
@@ -1575,7 +1566,10 @@ async def update_knowledge_item(
 
     knowledge_item = (
         db.query(KnowledgeItem)
-        .options(joinedload(KnowledgeItem.category), joinedload(KnowledgeItem.machine_assignments))
+        .options(
+            joinedload(KnowledgeItem.category),
+            joinedload(KnowledgeItem.working_station_assignments),
+        )
         .filter(KnowledgeItem.id == knowledge_item_id)
         .first()
     )
@@ -1592,15 +1586,19 @@ async def delete_knowledge_item(
     knowledge_item = db.query(KnowledgeItem).filter(KnowledgeItem.id == knowledge_item_id).first()
     if knowledge_item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge item non trovato")
-    machine_ids = [
-        assignment.machine_id
-        for assignment in db.query(MachineKnowledgeItem)
-        .filter(
-            MachineKnowledgeItem.knowledge_item_id == knowledge_item_id,
-            MachineKnowledgeItem.is_enabled.is_(True),
-        )
-        .all()
-    ]
+    machine_ids = sorted(
+        {
+            assignment.working_station.assigned_machine.id
+            for assignment in db.query(WorkingStationKnowledgeItem)
+            .options(joinedload(WorkingStationKnowledgeItem.working_station).joinedload(WorkingStation.assigned_machine))
+            .filter(
+                WorkingStationKnowledgeItem.knowledge_item_id == knowledge_item_id,
+                WorkingStationKnowledgeItem.is_enabled.is_(True),
+            )
+            .all()
+            if assignment.working_station is not None and assignment.working_station.assigned_machine is not None
+        }
+    )
     db.delete(knowledge_item)
     db.commit()
     _invalidate_knowledge_cache(machine_ids)

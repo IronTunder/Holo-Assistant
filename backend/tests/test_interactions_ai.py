@@ -18,7 +18,7 @@ from app.database import Base
 from app.models.category import Category
 from app.models.department import Department
 from app.models.interaction_log import InteractionLog
-from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
+from app.models.knowledge_item import KnowledgeItem, WorkingStationKnowledgeItem
 from app.models.machine import Machine
 from app.models.operator_chat_session import OperatorChatSession
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
@@ -133,13 +133,25 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        self.db.add_all([department, machine, user, technician, admin, manutenzione, sicurezza, *items])
+        working_station = WorkingStation(
+            name="Postazione A7",
+            department=department,
+            description="Postazione collegata alla pressa",
+            station_code="WS-A7",
+            startup_checklist=["Controllo visivo iniziale"],
+            in_uso=True,
+            operatore_attuale_id=user.id,
+            assigned_machine=machine,
+        )
+
+        self.db.add_all([department, machine, user, technician, admin, manutenzione, sicurezza, working_station, *items])
         self.db.flush()
         machine.in_uso = True
         machine.operatore_attuale_id = user.id
+        working_station.operatore_attuale_id = user.id
         self.db.add_all(
             [
-                MachineKnowledgeItem(machine_id=machine.id, knowledge_item_id=item.id, is_enabled=True)
+                WorkingStationKnowledgeItem(working_station_id=working_station.id, knowledge_item_id=item.id, is_enabled=True)
                 for item in items
             ]
         )
@@ -149,6 +161,7 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.user_id = user.id
         self.technician_id = technician.id
         self.admin_id = admin.id
+        self.working_station_id = working_station.id
         self.item_ids = {item.question_title: item.id for item in items}
 
     async def test_ranking_prefers_exact_keyword_match(self) -> None:
@@ -241,23 +254,8 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(response.confidence, 0.7)
 
     async def test_ask_question_accepts_working_station_id(self) -> None:
-        machine = self.db.query(Machine).filter(Machine.id == self.machine_id).first()
-        working_station = WorkingStation(
-            name="Postazione A7",
-            department_id=machine.department_id,
-            description="Postazione collegata alla pressa",
-            station_code="WS-A7",
-            startup_checklist=["Controllo visivo iniziale"],
-            in_uso=True,
-            operatore_attuale_id=self.user_id,
-        )
-        self.db.add(working_station)
-        self.db.flush()
-        machine.working_station_id = working_station.id
-        self.db.commit()
-
         request = AskQuestionRequest(
-            working_station_id=working_station.id,
+            working_station_id=self.working_station_id,
             user_id=self.user_id,
             question="Come faccio il cambio olio della pressa?",
         )
@@ -268,6 +266,51 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.mode, "answer")
         self.assertEqual(response.reason_code, "matched")
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
+
+    async def test_ask_question_uses_working_station_knowledge_without_machine(self) -> None:
+        working_station = WorkingStation(
+            name="Postazione Manuale",
+            department_id=self.db.query(User).filter(User.id == self.user_id).first().department_id,
+            description="Postazione senza macchina ma con knowledge dedicata",
+            station_code="WS-MAN",
+            startup_checklist=["Controllo DPI"],
+            in_uso=True,
+            operatore_attuale_id=self.user_id,
+        )
+        category = self.db.query(Category).filter(Category.name == "Manutenzione").first()
+        knowledge_item = KnowledgeItem(
+            category=category,
+            question_title="Checklist postazione manuale",
+            answer_text="Per questa postazione controlla DPI, utensili e banco di lavoro.",
+            keywords="postazione manuale, banco, dpi",
+            example_questions="Che controlli devo fare sulla postazione manuale?",
+            is_active=True,
+            sort_order=10,
+        )
+        self.db.add_all([working_station, knowledge_item])
+        self.db.flush()
+        self.db.add(
+            WorkingStationKnowledgeItem(
+                working_station_id=working_station.id,
+                knowledge_item_id=knowledge_item.id,
+                is_enabled=True,
+            )
+        )
+        self.db.commit()
+
+        request = AskQuestionRequest(
+            working_station_id=working_station.id,
+            user_id=self.user_id,
+            question="Che controlli devo fare sulla postazione manuale?",
+        )
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await ask_question(request, db=self.db)
+
+        self.assertEqual(response.mode, "answer")
+        self.assertEqual(response.reason_code, "matched")
+        self.assertEqual(response.knowledge_item_title, "Checklist postazione manuale")
+        self.assertIn("banco di lavoro", response.response.lower())
     async def test_ask_question_rejects_unassigned_machine(self) -> None:
         request = AskQuestionRequest(
             machine_id=self.machine_id,
@@ -275,8 +318,11 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
             question="Come faccio il cambio olio della pressa?",
         )
         machine = self.db.query(Machine).filter(Machine.id == self.machine_id).first()
+        working_station = self.db.query(WorkingStation).filter(WorkingStation.id == self.working_station_id).first()
         machine.in_uso = False
         machine.operatore_attuale_id = None
+        working_station.in_uso = False
+        working_station.operatore_attuale_id = None
         self.db.commit()
 
         with self.assertRaises(HTTPException) as context:
@@ -622,7 +668,7 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.api.interactions.knowledge_retrieval_service.resolve_question",
+            "app.api.interactions.knowledge_retrieval_service.resolve_question_for_working_station",
             new=AsyncMock(return_value=clarification_result),
         ):
             response = await ask_question(request, db=self.db)

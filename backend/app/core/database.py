@@ -346,7 +346,7 @@ def _backfill_roles() -> None:
 
 
 def _migrate_legacy_preset_responses() -> None:
-    from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
+    from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem, WorkingStationKnowledgeItem
     from app.models.machine import Machine
     from app.models.preset_response import PresetResponse
 
@@ -384,13 +384,15 @@ def _migrate_legacy_preset_responses() -> None:
             for machine_id in target_machine_ids:
                 if machine_id is None:
                     continue
-                db.add(
-                    MachineKnowledgeItem(
-                        machine_id=machine_id,
-                        knowledge_item_id=knowledge_item.id,
-                        is_enabled=True,
+                machine = next((candidate for candidate in machines if candidate.id == machine_id), None)
+                if machine is not None and machine.working_station_id is not None:
+                    db.add(
+                        WorkingStationKnowledgeItem(
+                            working_station_id=machine.working_station_id,
+                            knowledge_item_id=knowledge_item.id,
+                            is_enabled=True,
+                        )
                     )
-                )
 
         db.commit()
     finally:
@@ -516,6 +518,25 @@ def apply_compatible_migrations():
                     UPDATE working_stations
                     SET station_code = COALESCE(NULLIF(TRIM(station_code), ''), NULLIF(TRIM(name), ''), CONCAT('station-', id))
                     WHERE station_code IS NULL OR TRIM(station_code) = ''
+                    """
+                )
+            )
+
+        if "working_station_knowledge_items" in inspector.get_table_names() and "machine_knowledge_items" in inspector.get_table_names():
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO working_station_knowledge_items (working_station_id, knowledge_item_id, is_enabled)
+                    SELECT DISTINCT m.working_station_id, mki.knowledge_item_id, mki.is_enabled
+                    FROM machine_knowledge_items AS mki
+                    JOIN machines AS m ON m.id = mki.machine_id
+                    WHERE m.working_station_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM working_station_knowledge_items AS wski
+                        WHERE wski.working_station_id = m.working_station_id
+                          AND wski.knowledge_item_id = mki.knowledge_item_id
+                      )
                     """
                 )
             )

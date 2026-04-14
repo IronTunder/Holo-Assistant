@@ -1,7 +1,7 @@
 from .category import Category
 from .department import Department
 from .interaction_log import InteractionLog
-from .knowledge_item import KnowledgeItem, MachineKnowledgeItem
+from .knowledge_item import KnowledgeItem, MachineKnowledgeItem, WorkingStationKnowledgeItem
 from .machine import Machine
 from .operator_chat_session import OperatorChatSession
 from .preset_response import PresetResponse
@@ -16,6 +16,7 @@ __all__ = [
     "KnowledgeItem",
     "Machine",
     "MachineKnowledgeItem",
+    "WorkingStationKnowledgeItem",
     "OperatorChatSession",
     "PresetResponse",
     "Role",

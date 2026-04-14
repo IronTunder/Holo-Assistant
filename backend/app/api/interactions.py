@@ -332,10 +332,25 @@ async def ask_question(
             machine_id=request.machine_id,
         )
 
-        if machine is None:
+        if working_station is not None:
+            retrieval_result = await knowledge_retrieval_service.resolve_question_for_working_station(
+                db,
+                working_station_id=working_station.id,
+                machine_id=machine.id if machine is not None else None,
+                question=request.question,
+                selected_knowledge_item_id=request.selected_knowledge_item_id,
+            )
+        elif machine is not None:
+            retrieval_result = await knowledge_retrieval_service.resolve_question(
+                db,
+                machine_id=machine.id,
+                question=request.question,
+                selected_knowledge_item_id=request.selected_knowledge_item_id,
+            )
+        else:
             response_text = (
-                "Questa postazione non ha un macchinario associato. Posso gestire la sessione e le segnalazioni, "
-                "ma per risposte tecniche serve associare un macchinario in amministrazione."
+                "Questa postazione non ha un macchinario associato e non ha knowledge dedicata disponibile. "
+                "Posso comunque gestire la sessione e le segnalazioni."
             )
             interaction = InteractionLog(
                 user_id=current_user.id,
@@ -353,18 +368,11 @@ async def ask_question(
             db.refresh(interaction)
             return _build_response(
                 mode="fallback",
-                reason_code="out_of_scope",
+                reason_code="no_match",
                 response=response_text,
                 confidence=0.0,
                 interaction_id=interaction.id,
             )
-
-        retrieval_result = await knowledge_retrieval_service.resolve_question(
-            db,
-            machine_id=machine.id,
-            question=request.question,
-            selected_knowledge_item_id=request.selected_knowledge_item_id,
-        )
 
         total_latency_ms = round((perf_counter() - overall_start) * 1000, 2)
         top_candidates = [
@@ -379,7 +387,7 @@ async def ask_question(
             "interaction route=%s working_station_id=%s machine_id=%s user_id=%s confidence=%.3f latency_ms=%.2f ollama_latency_ms=%s top_candidates=%s",
             retrieval_result.route,
             working_station.id if working_station is not None else None,
-            machine.id,
+            machine.id if machine is not None else None,
             current_user.id,
             retrieval_result.confidence,
             total_latency_ms,
@@ -403,7 +411,7 @@ async def ask_question(
 
         interaction = InteractionLog(
             user_id=current_user.id,
-            machine_id=machine.id,
+            machine_id=machine.id if machine is not None else None,
             working_station_id=working_station.id if working_station else None,
             chat_session_id=chat_session.id if chat_session else None,
             category_id=selected_response.get("category_id") if selected_response else None,

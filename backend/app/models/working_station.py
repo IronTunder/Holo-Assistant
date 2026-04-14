@@ -19,3 +19,8 @@ class WorkingStation(Base):
     department = relationship("Department")
     operator = relationship("User", foreign_keys=[operatore_attuale_id])
     assigned_machine = relationship("Machine", back_populates="working_station", uselist=False)
+    knowledge_assignments = relationship(
+        "WorkingStationKnowledgeItem",
+        back_populates="working_station",
+        cascade="all, delete-orphan",
+    )

@@ -22,6 +22,11 @@ class KnowledgeItem(Base):
         back_populates="knowledge_item",
         cascade="all, delete-orphan",
     )
+    working_station_assignments = relationship(
+        "WorkingStationKnowledgeItem",
+        back_populates="knowledge_item",
+        cascade="all, delete-orphan",
+    )
 
 
 class MachineKnowledgeItem(Base):
@@ -34,3 +39,15 @@ class MachineKnowledgeItem(Base):
 
     machine = relationship("Machine", back_populates="knowledge_assignments")
     knowledge_item = relationship("KnowledgeItem", back_populates="machine_assignments")
+
+
+class WorkingStationKnowledgeItem(Base):
+    __tablename__ = "working_station_knowledge_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    working_station_id = Column(Integer, ForeignKey("working_stations.id"), nullable=False, index=True)
+    knowledge_item_id = Column(Integer, ForeignKey("knowledge_items.id"), nullable=False, index=True)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+
+    working_station = relationship("WorkingStation", back_populates="knowledge_assignments")
+    knowledge_item = relationship("KnowledgeItem", back_populates="working_station_assignments")

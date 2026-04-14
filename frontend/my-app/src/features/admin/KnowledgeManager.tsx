@@ -412,9 +412,7 @@ export const KnowledgeManager = ({ categories, workingStations, onMetadataRefres
                     onClick={() =>
                       setFormState((currentState) => ({
                         ...currentState,
-                        working_station_ids: workingStations
-                          .filter((workingStation) => Boolean(workingStation.assigned_machine))
-                          .map((workingStation) => workingStation.id),
+                        working_station_ids: workingStations.map((workingStation) => workingStation.id),
                       }))
                     }
                   >
@@ -438,19 +436,15 @@ export const KnowledgeManager = ({ categories, workingStations, onMetadataRefres
               <div className="grid gap-2 sm:grid-cols-2">
                 {workingStations.map((workingStation) => {
                   const checked = formState.working_station_ids.includes(workingStation.id);
-                  const disabled = !workingStation.assigned_machine;
                   return (
                     <button
                       key={workingStation.id}
                       type="button"
                       onClick={() => handleWorkingStationToggle(workingStation.id)}
-                      disabled={disabled}
                       className={`rounded-lg border px-3 py-3 text-left transition ${
                         checked
                           ? 'border-sky-300 bg-sky-50'
-                          : disabled
-                            ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-60'
-                            : 'border-slate-200 hover:bg-slate-50'
+                          : 'border-slate-200 hover:bg-slate-50'
                       }`}
                     >
                       <p className="font-medium text-slate-900">{workingStation.name}</p>

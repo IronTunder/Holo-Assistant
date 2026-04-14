@@ -136,19 +136,13 @@ def serialize_knowledge_item(
     assignment_count: Optional[int] = None,
 ) -> dict:
     if assigned_machine_ids is None:
-        assigned_machine_ids = [
-            assignment.machine_id
-            for assignment in knowledge_item.machine_assignments
-            if assignment.is_enabled
-        ]
+        assigned_machine_ids = []
     if assigned_working_station_ids is None:
         assigned_working_station_ids = sorted(
             {
-                assignment.machine.working_station_id
-                for assignment in knowledge_item.machine_assignments
+                assignment.working_station_id
+                for assignment in getattr(knowledge_item, "working_station_assignments", [])
                 if assignment.is_enabled
-                and assignment.machine is not None
-                and assignment.machine.working_station_id is not None
             }
         )
     if assignment_count is None:

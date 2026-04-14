@@ -9,7 +9,8 @@ from typing import Iterable, Sequence
 
 from sqlalchemy.orm import Session, joinedload
 
-from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
+from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem, WorkingStationKnowledgeItem
+from app.models.machine import Machine
 from app.services.ollama_service import (
     OllamaServiceError,
     generate_out_of_scope_response,
@@ -543,9 +544,7 @@ class KnowledgeRetrievalService:
         with self._lock:
             self._machine_versions[machine_id] = self._machine_versions.get(machine_id, 0) + 1
             self._machine_cache.pop(machine_id, None)
-        deleted_results = retrieval_result_cache.invalidate(
-            predicate=lambda key: isinstance(key, tuple) and len(key) >= 3 and key[0] == "retrieval" and key[1] == machine_id
-        )
+        deleted_results = retrieval_result_cache.clear()
         logger.info("invalidated knowledge cache machine_id=%s retrieval_entries=%s", machine_id, deleted_results)
 
     def invalidate_machines(self, machine_ids: Iterable[int]) -> None:
@@ -554,9 +553,7 @@ class KnowledgeRetrievalService:
             for machine_id in unique_machine_ids:
                 self._machine_versions[machine_id] = self._machine_versions.get(machine_id, 0) + 1
                 self._machine_cache.pop(machine_id, None)
-        deleted_results = retrieval_result_cache.invalidate(
-            predicate=lambda key: isinstance(key, tuple) and len(key) >= 3 and key[0] == "retrieval" and key[1] in unique_machine_ids
-        )
+        deleted_results = retrieval_result_cache.clear()
         logger.info("invalidated knowledge cache machine_ids=%s retrieval_entries=%s", sorted(unique_machine_ids), deleted_results)
 
     def invalidate_all(self) -> None:
@@ -580,24 +577,48 @@ class KnowledgeRetrievalService:
     def get_machine_knowledge(self, db: Session, machine_id: int) -> tuple[IndexedKnowledgeItem, ...]:
         return self.get_machine_knowledge_cache(db, machine_id).items
 
+    def get_working_station_knowledge(
+        self,
+        db: Session,
+        working_station_id: int,
+        machine_id: int | None = None,
+    ) -> tuple[IndexedKnowledgeItem, ...]:
+        station_items = (
+            db.query(KnowledgeItem)
+            .join(WorkingStationKnowledgeItem, WorkingStationKnowledgeItem.knowledge_item_id == KnowledgeItem.id)
+            .options(joinedload(KnowledgeItem.category))
+            .filter(
+                WorkingStationKnowledgeItem.working_station_id == working_station_id,
+                WorkingStationKnowledgeItem.is_enabled.is_(True),
+                KnowledgeItem.is_active.is_(True),
+            )
+            .order_by(KnowledgeItem.sort_order.asc(), KnowledgeItem.id.asc())
+            .all()
+        )
+        return tuple(IndexedKnowledgeItem.from_model(item) for item in station_items)
+
     def get_machine_knowledge_cache(self, db: Session, machine_id: int) -> MachineKnowledgeCacheEntry:
         with self._lock:
             cached = self._machine_cache.get(machine_id)
         if cached is not None:
             return cached
 
-        knowledge_items = (
-            db.query(KnowledgeItem)
-            .join(MachineKnowledgeItem, MachineKnowledgeItem.knowledge_item_id == KnowledgeItem.id)
-            .options(joinedload(KnowledgeItem.category))
-            .filter(
-                MachineKnowledgeItem.machine_id == machine_id,
-                MachineKnowledgeItem.is_enabled.is_(True),
-                KnowledgeItem.is_active.is_(True),
+        machine = db.query(Machine).filter(Machine.id == machine_id).first()
+        if machine is None or machine.working_station_id is None:
+            knowledge_items = []
+        else:
+            knowledge_items = (
+                db.query(KnowledgeItem)
+                .join(WorkingStationKnowledgeItem, WorkingStationKnowledgeItem.knowledge_item_id == KnowledgeItem.id)
+                .options(joinedload(KnowledgeItem.category))
+                .filter(
+                    WorkingStationKnowledgeItem.working_station_id == machine.working_station_id,
+                    WorkingStationKnowledgeItem.is_enabled.is_(True),
+                    KnowledgeItem.is_active.is_(True),
+                )
+                .order_by(KnowledgeItem.sort_order.asc(), KnowledgeItem.id.asc())
+                .all()
             )
-            .order_by(KnowledgeItem.sort_order.asc(), KnowledgeItem.id.asc())
-            .all()
-        )
         indexed = tuple(IndexedKnowledgeItem.from_model(item) for item in knowledge_items)
         domain_vocabulary = self._machine_domain_vocabulary(indexed)
         with self._lock:
@@ -874,6 +895,15 @@ class KnowledgeRetrievalService:
         question: str,
         selected_knowledge_item_id: int | None = None,
     ) -> RetrievalResult:
+        machine = db.query(Machine).filter(Machine.id == machine_id).first()
+        if machine is not None and machine.working_station_id is not None:
+            return await self.resolve_question_for_working_station(
+                db,
+                working_station_id=machine.working_station_id,
+                question=question,
+                selected_knowledge_item_id=selected_knowledge_item_id,
+                machine_id=machine_id,
+            )
         knowledge_cache = self.get_machine_knowledge_cache(db, machine_id)
         indexed_candidates = knowledge_cache.items
         normalized_question = _normalize_text(question)
@@ -1129,6 +1159,233 @@ class KnowledgeRetrievalService:
             clarification_options=[candidate.item.to_clarification_option() for candidate in rerank_pool[:2]],
             route="clarification",
             reason_code="clarification",
+            top_candidates=scored_candidates[:3],
+            ollama_latency_ms=ollama_latency_ms,
+        ))
+
+    async def resolve_question_for_working_station(
+        self,
+        db: Session,
+        working_station_id: int,
+        question: str,
+        selected_knowledge_item_id: int | None = None,
+        machine_id: int | None = None,
+    ) -> RetrievalResult:
+        indexed_candidates = self.get_working_station_knowledge(
+            db,
+            working_station_id=working_station_id,
+            machine_id=machine_id,
+        )
+        normalized_question = _normalize_text(question)
+        cache_key = (
+            "working-station-retrieval",
+            working_station_id,
+            selected_knowledge_item_id,
+            normalized_question,
+        )
+        cached_result = retrieval_result_cache.get(cache_key)
+        if cached_result is not None:
+            logger.debug("retrieval cache hit working_station_id=%s question=%r", working_station_id, question)
+            return cached_result
+
+        def cache_and_return(result: RetrievalResult, *, cacheable: bool = True) -> RetrievalResult:
+            if cacheable:
+                retrieval_result_cache.set(cache_key, result)
+            return result
+
+        if not indexed_candidates:
+            return cache_and_return(RetrievalResult(
+                mode="fallback",
+                response=FALLBACK_MESSAGE,
+                confidence=0.0,
+                response_payload=None,
+                clarification_options=[],
+                route="fallback_no_knowledge",
+                reason_code="no_match",
+                top_candidates=[],
+            ))
+
+        if selected_knowledge_item_id is not None:
+            selected_candidate = self._find_selected_candidate(selected_knowledge_item_id, indexed_candidates)
+            if selected_candidate is None:
+                return cache_and_return(RetrievalResult(
+                    mode="fallback",
+                    response=FALLBACK_MESSAGE,
+                    confidence=0.0,
+                    response_payload=None,
+                    clarification_options=[],
+                    route="fallback_invalid_selection",
+                    reason_code="no_match",
+                    top_candidates=[],
+                ))
+            return cache_and_return(RetrievalResult(
+                mode="answer",
+                response=selected_candidate.answer_text,
+                confidence=0.99,
+                response_payload=selected_candidate.to_response_payload(),
+                clarification_options=[],
+                route="clarification_selected",
+                reason_code="matched",
+                top_candidates=[],
+            ))
+
+        question_tokens = _tokenize(question)
+        question_all_words = _tokenize_all(question)
+        specific_question_tokens, _generic_question_tokens = _split_question_tokens(question_tokens)
+        station_vocabulary = self._machine_domain_vocabulary(indexed_candidates)
+        is_out_of_scope, scope_details = self._detect_query_scope(
+            question,
+            question_tokens,
+            question_all_words,
+            station_vocabulary,
+        )
+        if is_out_of_scope:
+            out_of_scope_response = OUT_OF_SCOPE_MESSAGE
+            ollama_latency_ms = None
+            out_of_scope_start = perf_counter()
+            try:
+                out_of_scope_response = await generate_out_of_scope_response(question)
+                ollama_latency_ms = round((perf_counter() - out_of_scope_start) * 1000, 2)
+            except OllamaServiceError as exc:
+                ollama_latency_ms = round((perf_counter() - out_of_scope_start) * 1000, 2)
+                logger.warning(
+                    "Ollama out-of-scope response unavailable for working_station_id=%s question=%r: %s",
+                    working_station_id,
+                    question,
+                    exc,
+                )
+            logger.info(
+                "interaction classified as out_of_scope working_station_id=%s question=%r scope_details=%s",
+                working_station_id,
+                question,
+                scope_details,
+            )
+            return cache_and_return(RetrievalResult(
+                mode="fallback",
+                response=out_of_scope_response,
+                confidence=0.0,
+                response_payload=None,
+                clarification_options=[],
+                route="fallback_out_of_scope",
+                reason_code="out_of_scope",
+                top_candidates=[],
+                ollama_latency_ms=ollama_latency_ms,
+            ))
+
+        scored_candidates = self.score_candidates(question, indexed_candidates)
+        if not scored_candidates or scored_candidates[0].score < MIN_DIRECT_SCORE:
+            return cache_and_return(RetrievalResult(
+                mode="fallback",
+                response=FALLBACK_MESSAGE,
+                confidence=0.0,
+                response_payload=None,
+                clarification_options=[],
+                route="fallback_low_score",
+                reason_code="no_match",
+                top_candidates=scored_candidates[:3],
+            ))
+
+        top_candidate = scored_candidates[0]
+        second_candidate = scored_candidates[1] if len(scored_candidates) > 1 else None
+        confidence = self._build_confidence(top_candidate, second_candidate)
+        is_generic_ambiguous_query = self._is_generic_ambiguous_query(question_tokens, specific_question_tokens)
+
+        if is_generic_ambiguous_query:
+            generic_pool = [candidate for candidate in scored_candidates[:3] if candidate.score >= MIN_DIRECT_SCORE]
+            if len(generic_pool) >= 2:
+                return cache_and_return(RetrievalResult(
+                    mode="clarification",
+                    response=CLARIFICATION_MESSAGE,
+                    confidence=min(confidence, 0.6),
+                    response_payload=None,
+                    clarification_options=[candidate.item.to_clarification_option() for candidate in generic_pool[:2]],
+                    route="clarification_generic_query",
+                    reason_code="clarification",
+                    top_candidates=scored_candidates[:3],
+                ))
+            return cache_and_return(RetrievalResult(
+                mode="fallback",
+                response=FALLBACK_MESSAGE,
+                confidence=0.0,
+                response_payload=None,
+                clarification_options=[],
+                route="fallback_generic_query",
+                reason_code="no_match",
+                top_candidates=scored_candidates[:3],
+            ))
+
+        if self._should_request_clarification(top_candidate, second_candidate, confidence):
+            return cache_and_return(RetrievalResult(
+                mode="clarification",
+                response=CLARIFICATION_MESSAGE,
+                confidence=min(confidence, 0.75),
+                response_payload=None,
+                clarification_options=[
+                    candidate.item.to_clarification_option()
+                    for candidate in scored_candidates[:2]
+                ],
+                route="clarification_close_scores",
+                reason_code="clarification",
+                top_candidates=scored_candidates[:3],
+            ))
+
+        ollama_latency_ms = None
+        if self._requires_llm_verification(top_candidate, confidence):
+            verify_start = perf_counter()
+            try:
+                verified = await verify_knowledge_match(question, top_candidate.item.to_rerank_prompt_candidate())
+                ollama_latency_ms = round((perf_counter() - verify_start) * 1000, 2)
+            except OllamaServiceError as exc:
+                verified = True
+                ollama_latency_ms = round((perf_counter() - verify_start) * 1000, 2)
+                logger.warning(
+                    "Ollama verification unavailable for working_station_id=%s question=%r: %s",
+                    working_station_id,
+                    question,
+                    exc,
+                )
+            if not verified:
+                return cache_and_return(RetrievalResult(
+                    mode="fallback",
+                    response=FALLBACK_MESSAGE,
+                    confidence=0.0,
+                    response_payload=None,
+                    clarification_options=[],
+                    route="fallback_llm_rejected",
+                    reason_code="no_match",
+                    top_candidates=scored_candidates[:3],
+                    ollama_latency_ms=ollama_latency_ms,
+                ))
+
+        rerank_pool = self._build_rerank_pool(scored_candidates)
+        if len(rerank_pool) >= 2:
+            rerank_start = perf_counter()
+            try:
+                rerank_choice = await rerank_knowledge_candidates(
+                    question,
+                    [candidate.item.to_rerank_prompt_candidate() for candidate in rerank_pool],
+                )
+                ollama_latency_ms = round((perf_counter() - rerank_start) * 1000, 2)
+                if 0 <= rerank_choice < len(rerank_pool):
+                    top_candidate = rerank_pool[rerank_choice]
+                    confidence = max(confidence, self._build_confidence(top_candidate, second_candidate))
+            except OllamaServiceError as exc:
+                ollama_latency_ms = round((perf_counter() - rerank_start) * 1000, 2)
+                logger.warning(
+                    "Ollama rerank unavailable for working_station_id=%s question=%r: %s",
+                    working_station_id,
+                    question,
+                    exc,
+                )
+
+        return cache_and_return(RetrievalResult(
+            mode="answer",
+            response=top_candidate.item.answer_text,
+            confidence=confidence,
+            response_payload=top_candidate.item.to_response_payload(),
+            clarification_options=[],
+            route="direct_match",
+            reason_code="matched",
             top_candidates=scored_candidates[:3],
             ollama_latency_ms=ollama_latency_ms,
         ))

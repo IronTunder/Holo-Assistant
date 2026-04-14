@@ -166,6 +166,79 @@ function normalizeVoiceCommand(value: string): string {
     .trim();
 }
 
+const maintenanceKnowledgeHints = [
+  'ordinaria',
+  'periodica',
+  'preventiva',
+  'straordinaria',
+  'procedura',
+  'procedure',
+  'controllo',
+  'controlli',
+  'come',
+  'cosa',
+  'quale',
+  'quali',
+  'quando',
+  'fare',
+  'faccio',
+  'eseguire',
+  'eseguo',
+  'olio',
+  'filtri',
+  'filtro',
+  'cinghia',
+  'cinghie',
+  'lubrificazione',
+  'intervalli',
+] as const;
+
+const emergencyKnowledgeHints = [
+  'arresto',
+  'pulsante',
+  'procedura',
+  'procedure',
+  'sicurezza',
+  'come',
+  'cosa',
+  'quale',
+  'quali',
+  'quando',
+  'fare',
+  'faccio',
+  'dove',
+  'trovo',
+  'si trova',
+  'gestire',
+  'gestisco',
+] as const;
+
+function shouldRouteMaintenanceToKnowledge(normalizedTranscript: string): boolean {
+  if (!normalizedTranscript.includes('manutenzione')) {
+    return false;
+  }
+
+  const tokens = normalizedTranscript.split(' ');
+  if (tokens.length <= 1) {
+    return false;
+  }
+
+  return maintenanceKnowledgeHints.some((hint) => tokens.includes(hint));
+}
+
+function shouldRouteEmergencyToKnowledge(normalizedTranscript: string): boolean {
+  if (!normalizedTranscript.includes('emergenza')) {
+    return false;
+  }
+
+  const tokens = normalizedTranscript.split(' ');
+  if (tokens.length <= 1) {
+    return false;
+  }
+
+  return emergencyKnowledgeHints.some((hint) => normalizedTranscript.includes(hint));
+}
+
 function resolveVoiceQuickActionCommand(transcript: string): QuickActionType | null {
   const normalizedTranscript = normalizeVoiceCommand(transcript);
 
@@ -180,6 +253,8 @@ function resolveVoiceQuickActionCommand(transcript: string): QuickActionType | n
     'segnala emergenza',
     'apri emergenza',
     'allarme emergenza',
+    'serve emergenza',
+    'ho un emergenza',
   ];
   const maintenanceCommands = [
     'manutenzione',
@@ -190,11 +265,23 @@ function resolveVoiceQuickActionCommand(transcript: string): QuickActionType | n
     'apri manutenzione',
     'chiama tecnico',
     'richiedi tecnico',
+    'manda tecnico',
+    'serve un tecnico',
+    'mi serve un tecnico',
+    'ho bisogno di un tecnico',
     'serve manutenzione',
   ];
 
+  if (shouldRouteEmergencyToKnowledge(normalizedTranscript)) {
+    return null;
+  }
+
   if (emergencyCommands.some((command) => normalizedTranscript === command || normalizedTranscript.startsWith(`${command} `))) {
     return 'emergency';
+  }
+
+  if (shouldRouteMaintenanceToKnowledge(normalizedTranscript)) {
+    return null;
   }
 
   if (maintenanceCommands.some((command) => normalizedTranscript === command || normalizedTranscript.startsWith(`${command} `))) {

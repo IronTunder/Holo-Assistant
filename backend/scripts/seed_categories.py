@@ -12,8 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app import models  # noqa: F401
 from app.database import Base, apply_compatible_migrations, engine
 from app.models.category import Category
-from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem
+from app.models.knowledge_item import KnowledgeItem, WorkingStationKnowledgeItem
 from app.models.machine import Machine
+from app.models.working_station import WorkingStation
 from app.database import SessionLocal
 
 logging.basicConfig(level=logging.INFO)
@@ -86,12 +87,16 @@ KNOWLEDGE_ASSIGNMENTS = {
 }
 
 
-def resolve_target_machines(question_title: str | None, answer_text: str, machines: list[Machine]) -> list[Machine]:
+def resolve_target_working_stations(
+    question_title: str | None,
+    answer_text: str,
+    working_stations: list[WorkingStation],
+) -> list[WorkingStation]:
     assignment_key = question_title or answer_text
     target_station_codes = KNOWLEDGE_ASSIGNMENTS.get(assignment_key)
     if not target_station_codes:
-        return machines
-    return [machine for machine in machines if machine.id_postazione in target_station_codes]
+        return working_stations
+    return [working_station for working_station in working_stations if working_station.station_code in target_station_codes]
 
 
 def align_existing_seed_data(db) -> int:
@@ -139,9 +144,9 @@ def seed_database():
             )
             return
 
-        machines = db.query(Machine).all()
-        if not machines:
-            logger.warning("Nessun macchinario trovato nel database. Crea prima i macchinari.")
+        working_stations = db.query(WorkingStation).all()
+        if not working_stations:
+            logger.warning("Nessuna postazione trovata nel database. Crea prima le postazioni.")
             return
 
         total_items = 0
@@ -168,15 +173,15 @@ def seed_database():
                 db.flush()
                 total_items += 1
 
-                target_machines = resolve_target_machines(
+                target_working_stations = resolve_target_working_stations(
                     knowledge_item.question_title,
                     knowledge_item.answer_text,
-                    machines,
+                    working_stations,
                 )
-                for machine in target_machines:
+                for working_station in target_working_stations:
                     db.add(
-                        MachineKnowledgeItem(
-                            machine_id=machine.id,
+                        WorkingStationKnowledgeItem(
+                            working_station_id=working_station.id,
                             knowledge_item_id=knowledge_item.id,
                             is_enabled=True,
                         )
