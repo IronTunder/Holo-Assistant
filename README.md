@@ -1,6 +1,6 @@
 ﻿# Holo-Assistant
 
-Ultimo aggiornamento documentazione: 13 aprile 2026
+Ultimo aggiornamento documentazione: 14 aprile 2026
 
 Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
@@ -20,7 +20,7 @@ Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali 
 ## Architettura in breve
 
 - `frontend/my-app` contiene l'applicazione web.
-- `frontend/my-app/src/features/operator` gestisce login operatore, console assistente, avatar e sessione macchina.
+- `frontend/my-app/src/features/operator` gestisce login operatore, console assistente, avatar e sessione postazione.
 - `frontend/my-app/src/features/admin` contiene dashboard e strumenti di amministrazione.
 - `frontend/my-app/src/features/legal` contiene la pagina informativa cookie, tecnologie utilizzate e privacy.
 - `frontend/my-app/src/shared` raccoglie API client, auth e componenti UI condivisi.
@@ -111,7 +111,7 @@ Lo script di start:
 - ricrea il virtualenv backend o reinstalla le dipendenze frontend se mancano;
 - prepara la voce Piper predefinita se manca;
 - prepara il modello Vosk se l'archivio locale manca;
-- riallinea la knowledge base eseguendo `backend/scripts/seed_categories.py` in modalita best-effort;
+- riallinea la knowledge base assegnata alle postazioni eseguendo `backend/scripts/seed_categories.py` in modalita best-effort;
 - avvia backend e frontend.
 
 ## Prerequisiti software
@@ -227,13 +227,13 @@ Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
 Endpoint principali usati dal frontend operatore:
 - `POST /auth/badge-login`
 - `POST /auth/credentials-login`
-- `GET /machines/available`
+- `GET /working-stations/available`
 - `POST /api/interactions/ask`
 - `POST /tts/synthesize`
 
 ### Sessione operatore in tempo reale
 
-La sessione macchina viene monitorata in tempo reale:
+La sessione postazione viene monitorata in tempo reale:
 - il frontend richiede un token via `POST /auth/sse-token`;
 - apre il canale `GET /auth/session-events`;
 - riceve eventi `session_status` e heartbeat;
@@ -246,13 +246,14 @@ I motivi di logout remoto gestiti lato frontend sono:
 
 ### Dashboard admin
 
-L'area admin gestisce autenticazione dedicata, macchine, utenti, postazioni, metadati e knowledge base tecnica. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
+L'area admin gestisce autenticazione dedicata, macchine, utenti, postazioni, metadati e knowledge base tecnica assegnata alle postazioni. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
 
 Aggiornamenti UI rilevanti:
 - la sezione impostazioni e stata separata in `Impostazioni normali` e `Impostazioni avanzate`;
 - ogni voce che richiede riavvio mostra l'indicatore direttamente sulla card dell'impostazione;
 - il form macchinari associa la postazione tramite dropdown delle postazioni libere, evitando inserimenti manuali incoerenti;
 - la sezione postazioni e stata riallineata visivamente agli altri pannelli admin.
+- la knowledge base tecnica viene assegnata alle postazioni; il macchinario associato resta un contesto operativo aggiuntivo, non il contenitore della knowledge.
 
 ## AI, retrieval e TTS
 
@@ -409,7 +410,7 @@ Note pratiche:
 - il logout prova prima a liberare la sessione autenticata corrente e revoca il refresh token associato;
 - quando una chat session operatore viene chiusa, i relativi record restano nei log admin ma vengono sganciati dalla `chat_session_id`, quindi non riappaiono nella cronologia live della sessione chiusa;
 - per simulare una vera scadenza completa bisogna ridurre anche i refresh token;
-- il monitoraggio sessione operatore puo forzare il logout se la macchina cambia stato lato admin.
+- il monitoraggio sessione operatore puo forzare il logout se la postazione cambia stato lato admin.
 
 ## Compatibilita frontend e build CSS
 
@@ -454,7 +455,7 @@ Il primo caricamento del modello puo essere sensibilmente piu lento. Gli script 
 ### Problemi di sessione operatore
 
 Se l'operatore viene disconnesso:
-- verifica se la macchina e stata liberata o riassegnata lato admin;
+- verifica se la postazione e stata liberata o riassegnata lato admin;
 - controlla gli endpoint auth di sessione e il token SSE;
 - verifica che il browser possa mantenere aperta la connessione `session-events`.
 

@@ -1,6 +1,6 @@
 ﻿# Frontend Holo-Assistant
 
-Ultimo aggiornamento: 13 aprile 2026
+Ultimo aggiornamento: 14 aprile 2026
 
 Frontend React/Vite del progetto Holo-Assistant. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
@@ -99,15 +99,16 @@ Comportamenti utente rilevanti:
 - layout a due colonne con avatar a sinistra e console a destra;
 - risposta digitata progressivamente nella console senza far scorrere la pagina intera;
 - opzioni di chiarimento quando la knowledge base richiede disambiguazione;
+- la knowledge base tecnica e assegnata alla postazione selezionata, non direttamente al macchinario;
 - follow-up finale per chiedere se il problema e stato risolto;
 - azioni rapide sempre visibili nella parte bassa della console;
 - i comandi vocali di emergenza e manutenzione aprono la stessa finestra di conferma dei pulsanti rapidi, senza invio immediato;
 - pannello impostazioni operatore con toggle persistenti per ologramma, wakeword e grafica legacy forzata.
 - su mobile la viewport utile viene aggiornata dinamicamente con `visualViewport`, riducendo bande vuote o tagli del layout dopo login e chiusura tastiera.
 
-## Sessione operatore e protezione macchina
+## Sessione operatore e protezione postazione
 
-Una sessione operatore e sempre legata a una macchina.
+Una sessione operatore e sempre legata a una postazione. Se la postazione ha un macchinario associato, il frontend lo usa come contesto aggiuntivo, ma la knowledge base resta assegnata alla postazione.
 
 Protezione attuale:
 - richiesta token SSE via `POST /auth/sse-token`;
@@ -122,7 +123,7 @@ Eventi o motivi di invalidazione gestiti lato frontend:
 Quando la sessione diventa invalida il frontend:
 - chiude la connessione attiva;
 - esegue logout;
-- mostra una notifica temporanea di disconnessione macchina.
+- mostra una notifica temporanea di disconnessione postazione.
 
 ## AI, chiarimenti e TTS
 
@@ -148,7 +149,7 @@ Comportamento attuale:
 - l'access token vive nello stato React ed e usato per le chiamate protette;
 - il refresh token resta nel cookie HTTP-only del backend;
 - `restoreSession()` prova a recuperare la sessione usando `POST /auth/refresh` e poi riallinea i dati utente con `GET /auth/me`;
-- `logout()` prova anche a liberare la macchina corrente e, se serve, ritenta dopo un refresh dell'access token.
+- `logout()` prova anche a liberare la postazione corrente e, se serve, ritenta dopo un refresh dell'access token.
 - quando la chat session operatore viene chiusa, i log restano disponibili nella dashboard admin e vengono solo staccati dalla `chat_session_id`.
 
 ## File utili

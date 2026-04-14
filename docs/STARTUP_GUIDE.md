@@ -2,7 +2,7 @@
 
 Guida pratica per avviare Holo-Assistant con il flusso attuale degli script.
 
-Ultimo aggiornamento: 13 aprile 2026
+Ultimo aggiornamento: 14 aprile 2026
 
 ## Script supportati
 
@@ -80,7 +80,7 @@ Passi principali:
 - ricreano il virtualenv backend o reinstallano le dipendenze frontend se mancano;
 - preparano la voce Piper predefinita se manca;
 - preparano il modello Vosk se l'archivio locale manca;
-- riallineano la knowledge base tecnica con `backend/scripts/seed_categories.py` in best-effort;
+- riallineano la knowledge base tecnica assegnata alle postazioni con `backend/scripts/seed_categories.py` in best-effort;
 - avviano backend FastAPI in HTTPS in una finestra dedicata;
 - avviano frontend Vite in HTTPS in una finestra dedicata quando il certificato e presente.
 
@@ -248,7 +248,7 @@ Nota: `wsl --shutdown` spegne tutte le distro WSL attive. Usalo quando non ti se
 
 ## Sessioni operatore in tempo reale
 
-Il frontend operatore protegge la sessione macchina con due livelli:
+Il frontend operatore protegge la sessione postazione con due livelli:
 - canale SSE via `POST /auth/sse-token` e `GET /auth/session-events`;
 - fallback polling via `GET /auth/session-status`.
 
@@ -259,7 +259,7 @@ Motivi principali gestiti dal frontend:
 - `working_station_reassigned`
 - `working_station_not_found`
 
-Questo copre i casi in cui un amministratore libera la macchina, la assegna a un altro operatore oppure la postazione non e piu disponibile.
+Questo copre i casi in cui un amministratore libera la postazione, la assegna a un altro operatore oppure la postazione non e piu disponibile.
 
 ## Note UI aggiornate
 
@@ -269,6 +269,7 @@ Questo copre i casi in cui un amministratore libera la macchina, la assegna a un
 - su mobile la UI operatore aggiorna l'altezza utile con `visualViewport`, cosi il layout si riallinea quando cambia la tastiera o quando il login avviene nella stessa view;
 - la dashboard admin mostra le impostazioni separate tra `normali` e `avanzate`;
 - il form macchinari usa un dropdown delle postazioni libere per associare la postazione in modo coerente;
+- la knowledge base tecnica viene assegnata alle postazioni; il macchinario associato resta solo contesto operativo;
 - l'informativa cookie, tecnologie utilizzate e privacy e disponibile pubblicamente su `/cookie-policy`.
 
 ## Troubleshooting
@@ -307,7 +308,7 @@ Se serve ancora piu margine:
 ### L'operatore viene disconnesso inaspettatamente
 
 Controlla:
-- se la macchina e stata liberata o riassegnata lato admin;
+- se la postazione e stata liberata o riassegnata lato admin;
 - se il token SSE e stato emesso correttamente;
 - se il browser riceve heartbeat o eventi `session_status`;
 - se il fallback `session-status` risponde correttamente quando SSE cade.
@@ -347,12 +348,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --ssl-certfile ../certs
 
 ## Note su auth e sessioni
 
-- operatori: login via badge o credenziali, sempre associati a una macchina;
+- operatori: login via badge o credenziali, sempre associati a una postazione;
 - admin: login dedicato via `POST /auth/admin-login`;
 - l'access token da solo non rappresenta l'intera sessione;
 - il refresh token attivo viene mantenuto nel cookie HTTP-only del backend;
 - il frontend non persiste piu il refresh token in `localStorage`;
-- il logout revoca il refresh token della sessione corrente e libera la macchina associata quando presente;
+- il logout revoca il refresh token della sessione corrente e libera la postazione associata quando presente;
 - la chiusura di una chat session operatore non elimina piu i record dalla lista log admin: i log restano persistenti e vengono solo scollegati dalla sessione chiusa;
 - per testare una scadenza completa bisogna ridurre anche i refresh token;
 - il frontend prova il refresh prima di considerare scaduta la sessione.
