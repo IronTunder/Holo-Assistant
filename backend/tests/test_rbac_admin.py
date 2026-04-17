@@ -10,16 +10,23 @@ from sqlalchemy.pool import StaticPool
 from app import models  # noqa: F401
 from app.api.admin import (
     DepartmentRequest,
+    MaterialRequest,
+    MaterialStockMovementRequest,
     MachineUpdateRequest,
     RoleRequest,
     UserUpdateRequest,
+    create_material,
+    create_material_stock_movement,
     create_department,
     create_role,
+    dashboard_summary,
     delete_department,
     delete_machine,
     delete_user,
+    get_material_detail,
     list_departments_metadata,
     update_machine,
+    update_material,
     update_role,
     update_user,
 )
@@ -40,6 +47,7 @@ from app.database import Base
 from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
+from app.models.material import Material, MaterialStockMovement
 from app.models.operator_chat_session import OperatorChatSession
 from app.models.working_station import WorkingStation
 from app.models.role import (
@@ -664,6 +672,198 @@ class RbacAdminTestCase(unittest.IsolatedAsyncioTestCase):
             await delete_user(self.operator.id, admin=self.admin, db=self.db)
 
         self.assertEqual(context.exception.status_code, 409)
+
+    async def test_create_material_persists_stock_fields(self) -> None:
+        created = await create_material(
+            MaterialRequest(
+                name="Refrigerante emulsione CNC",
+                sku="REF-CNC-01",
+                category="refrigerante",
+                unit_of_measure="lt",
+                current_quantity=120,
+                minimum_quantity=30,
+                reorder_quantity=80,
+                storage_location="Scaffale A1",
+            ),
+            admin=self.admin,
+            db=self.db,
+        )
+
+        self.assertEqual(created["sku"], "REF-CNC-01")
+        self.assertEqual(created["current_quantity"], 120)
+        self.assertEqual(created["stock_status"], "ok")
+
+    async def test_update_material_does_not_overwrite_existing_stock_quantity(self) -> None:
+        material = Material(
+            name="Guanti nitrile",
+            sku="GUA-01",
+            category="dpi",
+            unit_of_measure="pz",
+            current_quantity=50,
+            minimum_quantity=10,
+            reorder_quantity=30,
+            is_stock_tracked=True,
+            is_active=True,
+        )
+        self.db.add(material)
+        self.db.commit()
+
+        updated = await update_material(
+            material.id,
+            MaterialRequest(
+                name="Guanti nitrile premium",
+                sku="GUA-01",
+                category="dpi",
+                unit_of_measure="pz",
+                current_quantity=999,
+                minimum_quantity=12,
+                reorder_quantity=35,
+                storage_location="Armadio DPI",
+                is_stock_tracked=True,
+                is_active=True,
+            ),
+            admin=self.admin,
+            db=self.db,
+        )
+
+        self.assertEqual(updated["name"], "Guanti nitrile premium")
+        self.assertEqual(updated["current_quantity"], 50)
+        self.assertEqual(updated["minimum_quantity"], 12)
+
+    async def test_create_material_stock_movement_updates_quantity_and_history(self) -> None:
+        material = Material(
+            name="Refrigerante emulsione CNC",
+            sku="REF-CNC-02",
+            category="refrigerante",
+            unit_of_measure="lt",
+            current_quantity=40,
+            minimum_quantity=20,
+            reorder_quantity=80,
+            is_stock_tracked=True,
+            is_active=True,
+        )
+        self.db.add(material)
+        self.db.commit()
+
+        movement = await create_material_stock_movement(
+            material.id,
+            MaterialStockMovementRequest(
+                movement_type="unload",
+                quantity=5,
+                note="Prelievo linea CNC",
+            ),
+            admin=self.admin,
+            db=self.db,
+        )
+
+        self.db.refresh(material)
+        self.assertEqual(movement["quantity_before"], 40)
+        self.assertEqual(movement["quantity_after"], 35)
+        self.assertEqual(material.current_quantity, 35)
+        self.assertEqual(self.db.query(MaterialStockMovement).count(), 1)
+
+    async def test_create_material_stock_movement_rejects_negative_result(self) -> None:
+        material = Material(
+            name="Inserti tornitura",
+            sku="INS-01",
+            category="utensili",
+            unit_of_measure="pz",
+            current_quantity=2,
+            minimum_quantity=1,
+            reorder_quantity=10,
+            is_stock_tracked=True,
+            is_active=True,
+        )
+        self.db.add(material)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as context:
+            await create_material_stock_movement(
+                material.id,
+                MaterialStockMovementRequest(
+                    movement_type="unload",
+                    quantity=5,
+                ),
+                admin=self.admin,
+                db=self.db,
+            )
+
+        self.assertEqual(context.exception.status_code, 409)
+
+    async def test_get_material_detail_returns_assignments_and_recent_movements(self) -> None:
+        material = Material(
+            name="Panni pulizia",
+            sku="PAN-01",
+            category="consumabili",
+            unit_of_measure="pz",
+            current_quantity=15,
+            minimum_quantity=10,
+            reorder_quantity=25,
+            is_stock_tracked=True,
+            is_active=True,
+        )
+        self.db.add(material)
+        self.db.flush()
+        movement = MaterialStockMovement(
+            material_id=material.id,
+            movement_type="load",
+            quantity_delta=10,
+            quantity_before=5,
+            quantity_after=15,
+            created_by_user_id=self.admin.id,
+        )
+        self.db.add(movement)
+        self.db.commit()
+
+        detail = await get_material_detail(material.id, admin=self.admin, db=self.db)
+
+        self.assertEqual(detail["id"], material.id)
+        self.assertEqual(len(detail["recent_movements"]), 1)
+        self.assertEqual(detail["assignments"], [])
+
+    async def test_dashboard_summary_includes_material_counters(self) -> None:
+        self.db.add_all(
+            [
+                Material(
+                    name="Materiale OK",
+                    sku="MAT-OK",
+                    unit_of_measure="pz",
+                    current_quantity=20,
+                    minimum_quantity=5,
+                    reorder_quantity=10,
+                    is_stock_tracked=True,
+                    is_active=True,
+                ),
+                Material(
+                    name="Materiale low",
+                    sku="MAT-LOW",
+                    unit_of_measure="pz",
+                    current_quantity=5,
+                    minimum_quantity=5,
+                    reorder_quantity=15,
+                    is_stock_tracked=True,
+                    is_active=True,
+                ),
+                Material(
+                    name="Materiale zero",
+                    sku="MAT-ZERO",
+                    unit_of_measure="pz",
+                    current_quantity=0,
+                    minimum_quantity=2,
+                    reorder_quantity=10,
+                    is_stock_tracked=True,
+                    is_active=True,
+                ),
+            ]
+        )
+        self.db.commit()
+        admin_metadata_cache.clear()
+
+        summary = await dashboard_summary(admin=self.admin, db=self.db)
+
+        self.assertEqual(summary.total_materials, 3)
+        self.assertEqual(summary.low_stock_materials, 1)
+        self.assertEqual(summary.out_of_stock_materials, 1)
 
 
 if __name__ == "__main__":

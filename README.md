@@ -1,12 +1,13 @@
 ﻿# Holo-Assistant
 
-Ultimo aggiornamento documentazione: 14 aprile 2026
+Ultimo aggiornamento documentazione: 18 aprile 2026
 
 Holo-Assistant e un sistema di supporto per postazioni e macchinari industriali composto da:
 - frontend React/Vite per operatori e amministratori;
 - fallback CSS legacy generato in build per browser senza supporto ai CSS layers;
 - backend FastAPI;
 - database PostgreSQL;
+- catalogo materiali centralizzato con stock, soglie e movimenti di magazzino;
 - servizi AI locali con retrieval deterministico, chiarimenti guidati e fallback controllati;
 - sintesi vocale TTS e avatar operatore;
 - pagina pubblica su cookie, tecnologie utilizzate e privacy disponibile su `/cookie-policy`.
@@ -220,6 +221,8 @@ Il frontend operatore e ottimizzato per l'uso su postazioni in orizzontale:
 - wake-word locale con Vosk in browser: di' `ehi holo`, poi pronuncia la domanda tecnica;
 - dopo la wake-word puoi anche richiamare azioni rapide vocali come `emergenza`, `chiama emergenza`, `manutenzione` o `chiama tecnico`, che aprono la stessa conferma visiva dei pulsanti rapidi;
 - console laterale per domanda, risposta, chiarimenti e follow-up;
+- nei follow-up vocali di conferma o chiarimento l'ascolto contestuale resta attivo, cosi normalmente non serve ripetere `ehi holo`;
+- i flussi materiale poco chiari non autoconfermano piu in modo aggressivo e possono proporre chiarimenti guidati come `Magari volevi dire "Ho finito il refrigerante"?`;
 - azioni rapide visibili senza scroll dell'intera pagina;
 - icona impostazioni nella barra operatore, disponibile sia prima del login sia durante la sessione, per gestire ologramma, wakeword e grafica legacy forzata.
 - su mobile il layout aggiorna dinamicamente l'altezza viewport con `visualViewport`, cosi la UI si riallinea correttamente dopo login, chiusura tastiera o cambi di safe-area.
@@ -246,13 +249,22 @@ I motivi di logout remoto gestiti lato frontend sono:
 
 ### Dashboard admin
 
-L'area admin gestisce autenticazione dedicata, macchine, utenti, postazioni, metadati e knowledge base tecnica assegnata alle postazioni. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
+L'area admin gestisce autenticazione dedicata, macchine, utenti, postazioni, materiali, ticket operativi, metadati e knowledge base tecnica assegnata alle postazioni. Il frontend usa routing lazy e protegge `/admin` tramite sessione autenticata.
+
+Organizzazione attuale:
+- `Panoramica` per KPI e accessi rapidi;
+- `Operazioni` per log compattati e ticket/segnalazioni;
+- `Risorse` per utenti, macchinari, postazioni e materiali;
+- `Configurazione` per knowledge base, reparti, ruoli e impostazioni.
 
 Aggiornamenti UI rilevanti:
 - la sezione impostazioni e stata separata in `Impostazioni normali` e `Impostazioni avanzate`;
 - ogni voce che richiede riavvio mostra l'indicatore direttamente sulla card dell'impostazione;
 - il form macchinari associa la postazione tramite dropdown delle postazioni libere, evitando inserimenti manuali incoerenti;
-- la sezione postazioni e stata riallineata visivamente agli altri pannelli admin.
+- la sezione postazioni e stata riallineata visivamente agli altri pannelli admin;
+- i log admin ora compattano i workflow multi-step, rendendo piu leggibili chiarimenti, conferme e follow-up;
+- e disponibile un modulo `Materiali` con catalogo centrale, stock, soglie minime, stato sintetico, movimenti di carico/scarico/rettifica e assegnazioni alle postazioni;
+- il dettaglio postazione mostra anche un riepilogo dei materiali assegnati con relativo stato stock centrale;
 - la knowledge base tecnica viene assegnata alle postazioni; il macchinario associato resta un contesto operativo aggiuntivo, non il contenitore della knowledge.
 
 ## AI, retrieval e TTS
@@ -479,7 +491,7 @@ Verifica anche che `DATABASE_HOST` punti all'host corretto.
 
 ## Stato attuale
 
-- ultimo aggiornamento documentazione: 13 aprile 2026
+- ultimo aggiornamento documentazione: 18 aprile 2026
 - script pubblici supportati: `setup.bat`, `start.bat`, `check.bat`, `./setup.sh`, `./start.sh`, `./check.sh`
 - controlli non distruttivi Unix: `./setup.sh --check-only`, `./start.sh --check-only`
 

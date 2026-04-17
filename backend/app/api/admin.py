@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -21,7 +21,9 @@ from app.models.category import Category
 from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, MachineKnowledgeItem, WorkingStationKnowledgeItem
+from app.models.material import Material, MaterialStockMovement, WorkingStationMaterial
 from app.models.machine import Machine
+from app.models.operational_ticket import OperationalTicket
 from app.models.working_station import WorkingStation
 from app.models.role import (
     ADMIN_ROLE_CODE,
@@ -31,7 +33,7 @@ from app.models.role import (
     normalize_permissions,
 )
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
-from app.schemas.interaction import FeedbackStatus, InteractionActionType, InteractionPriority
+from app.schemas.interaction import FeedbackStatus, InteractionActionType, InteractionPriority, OperationalTicketResponse
 from app.api.presenters import (
     serialize_category,
     serialize_department,
@@ -222,6 +224,78 @@ class KnowledgeItemRequest(BaseModel):
     working_station_ids: List[int] = Field(default_factory=list)
 
 
+class MaterialRequest(BaseModel):
+    name: str
+    sku: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    characteristics: Optional[str] = None
+    aliases: Optional[str] = None
+    unit_of_measure: str = "pz"
+    current_quantity: float = 0
+    minimum_quantity: float = 0
+    reorder_quantity: float = 0
+    storage_location: Optional[str] = None
+    is_stock_tracked: bool = True
+    is_active: bool = True
+
+    @field_validator("name", "unit_of_measure")
+    @classmethod
+    def validate_required_strings(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Campo obbligatorio")
+        return value
+
+    @field_validator("sku")
+    @classmethod
+    def normalize_sku(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip().upper()
+        return value or None
+
+    @field_validator("current_quantity", "minimum_quantity", "reorder_quantity")
+    @classmethod
+    def validate_non_negative_quantities(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("La quantita non puo essere negativa")
+        return value
+
+
+class MaterialStockMovementRequest(BaseModel):
+    movement_type: str
+    quantity: float
+    note: Optional[str] = None
+    working_station_id: Optional[int] = None
+    related_ticket_id: Optional[int] = None
+
+    @field_validator("movement_type")
+    @classmethod
+    def validate_movement_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"load", "unload", "adjustment"}:
+            raise ValueError("Tipo movimento non valido")
+        return normalized
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("La quantita non puo essere negativa")
+        return value
+
+
+class WorkingStationMaterialRequest(BaseModel):
+    material_id: int
+    machine_id: Optional[int] = None
+    usage_context: Optional[str] = None
+    notes: Optional[str] = None
+    display_order: int = 0
+    is_required: bool = False
+    is_active: bool = True
+
+
 class DashboardSummaryResponse(BaseModel):
     total_users: int
     total_machines: int
@@ -230,6 +304,10 @@ class DashboardSummaryResponse(BaseModel):
     machines_available: int
     active_departments: int
     knowledge_items: int
+    total_materials: int = 0
+    low_stock_materials: int = 0
+    out_of_stock_materials: int = 0
+    assigned_materials: int = 0
     recent_interactions: int
 
 
@@ -239,6 +317,9 @@ class InteractionLogResponse(BaseModel):
     user_name: str
     machine_id: int
     machine_name: str
+    working_station_id: Optional[int] = None
+    chat_session_id: Optional[int] = None
+    conversation_state_id: Optional[int] = None
     department_name: Optional[str] = None
     category_id: Optional[int] = None
     category_name: Optional[str] = None
@@ -253,6 +334,8 @@ class InteractionLogResponse(BaseModel):
     resolution_note: Optional[str] = None
     resolution_timestamp: Optional[datetime] = None
     action_type: InteractionActionType = "question"
+    workflow_type: Optional[str] = None
+    response_mode: Optional[str] = None
     priority: InteractionPriority = "normal"
     timestamp: datetime
 
@@ -380,6 +463,132 @@ def _build_working_station_response(
     deleted: bool = False,
 ) -> dict:
     return serialize_working_station(working_station, operator=operator, deleted=deleted)
+
+
+def _serialize_material(material: Material) -> dict:
+    assignment_count = (
+        len([assignment for assignment in material.working_station_assignments if assignment.is_active])
+        if material.working_station_assignments
+        else 0
+    )
+    return {
+        "id": material.id,
+        "name": material.name,
+        "sku": material.sku,
+        "category": material.category,
+        "description": material.description,
+        "characteristics": material.characteristics,
+        "aliases": material.aliases,
+        "unit_of_measure": material.unit_of_measure,
+        "current_quantity": material.current_quantity,
+        "minimum_quantity": material.minimum_quantity,
+        "reorder_quantity": material.reorder_quantity,
+        "storage_location": material.storage_location,
+        "is_stock_tracked": material.is_stock_tracked,
+        "last_stock_update_at": material.last_stock_update_at,
+        "stock_status": _get_material_stock_status(material),
+        "assignment_count": assignment_count,
+        "is_active": material.is_active,
+    }
+
+
+def _get_material_stock_status(material: Material) -> str:
+    if not material.is_active:
+        return "inactive"
+    if not material.is_stock_tracked:
+        return "ok"
+    if material.current_quantity <= 0:
+        return "out_of_stock"
+    if material.current_quantity <= material.minimum_quantity:
+        return "low_stock"
+    return "ok"
+
+
+def _serialize_material_stock_movement(movement: MaterialStockMovement) -> dict:
+    return {
+        "id": movement.id,
+        "material_id": movement.material_id,
+        "movement_type": movement.movement_type,
+        "quantity_delta": movement.quantity_delta,
+        "quantity_before": movement.quantity_before,
+        "quantity_after": movement.quantity_after,
+        "note": movement.note,
+        "created_by_user_id": movement.created_by_user_id,
+        "created_by_user_name": movement.created_by_user.nome if movement.created_by_user else None,
+        "working_station_id": movement.working_station_id,
+        "working_station_name": movement.working_station.name if movement.working_station else None,
+        "related_ticket_id": movement.related_ticket_id,
+        "created_at": movement.created_at,
+    }
+
+
+def _serialize_material_detail(material: Material) -> dict:
+    assignments = sorted(
+        material.working_station_assignments,
+        key=lambda assignment: (assignment.display_order, assignment.id),
+    )
+    movements = sorted(
+        material.stock_movements,
+        key=lambda movement: (movement.created_at or datetime.min.replace(tzinfo=timezone.utc), movement.id),
+        reverse=True,
+    )
+    payload = _serialize_material(material)
+    payload.update(
+        {
+            "assignments": [_serialize_working_station_material(assignment) for assignment in assignments],
+            "recent_movements": [_serialize_material_stock_movement(movement) for movement in movements[:10]],
+        }
+    )
+    return payload
+
+
+def _serialize_working_station_material(assignment: WorkingStationMaterial) -> dict:
+    material = assignment.material
+    machine = assignment.machine
+    return {
+        "id": assignment.id,
+        "working_station_id": assignment.working_station_id,
+        "machine_id": assignment.machine_id,
+        "machine_name": machine.nome if machine else None,
+        "material_id": assignment.material_id,
+        "material_name": material.name if material else None,
+        "material_category": material.category if material else None,
+        "material_characteristics": material.characteristics if material else None,
+        "material_sku": material.sku if material else None,
+        "material_unit_of_measure": material.unit_of_measure if material else None,
+        "material_current_quantity": material.current_quantity if material else None,
+        "material_minimum_quantity": material.minimum_quantity if material else None,
+        "material_stock_status": _get_material_stock_status(material) if material else None,
+        "usage_context": assignment.usage_context,
+        "notes": assignment.notes,
+        "display_order": assignment.display_order,
+        "is_required": assignment.is_required,
+        "is_active": assignment.is_active,
+    }
+
+
+def _serialize_operational_ticket(ticket: OperationalTicket) -> OperationalTicketResponse:
+    return OperationalTicketResponse(
+        id=ticket.id,
+        workflow_type=ticket.workflow_type,
+        status=ticket.status,
+        priority=ticket.priority,
+        summary=ticket.summary,
+        details=ticket.details,
+        user_id=ticket.user_id,
+        user_name=ticket.user.nome if ticket.user else None,
+        working_station_id=ticket.working_station_id,
+        working_station_name=ticket.working_station.name if ticket.working_station else None,
+        machine_id=ticket.machine_id,
+        machine_name=ticket.machine.nome if ticket.machine else None,
+        material_id=ticket.material_id,
+        material_name=ticket.material.name if ticket.material else None,
+        interaction_log_id=ticket.interaction_log_id,
+        conversation_state_id=ticket.conversation_state_id,
+        created_at=ticket.created_at,
+        updated_at=ticket.updated_at,
+        closed_at=ticket.closed_at,
+    )
 
 
 def _load_operator_map(db: Session, machines: List[Machine]) -> dict[int, User]:
@@ -521,6 +730,11 @@ async def dashboard_summary(
     machines_in_use = db.query(Machine).filter(Machine.in_uso.is_(True)).count()
     active_departments = db.query(Department).filter(Department.is_active.is_(True)).count()
     knowledge_items = db.query(KnowledgeItem).count()
+    materials = db.query(Material).options(joinedload(Material.working_station_assignments)).all()
+    total_materials = len(materials)
+    low_stock_materials = sum(1 for material in materials if _get_material_stock_status(material) == "low_stock")
+    out_of_stock_materials = sum(1 for material in materials if _get_material_stock_status(material) == "out_of_stock")
+    assigned_materials = sum(1 for material in materials if any(assignment.is_active for assignment in material.working_station_assignments))
     recent_interactions = (
         db.query(InteractionLog)
         .filter(InteractionLog.timestamp >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0))
@@ -535,6 +749,10 @@ async def dashboard_summary(
         machines_available=max(total_machines - machines_in_use, 0),
         active_departments=active_departments,
         knowledge_items=knowledge_items,
+        total_materials=total_materials,
+        low_stock_materials=low_stock_materials,
+        out_of_stock_materials=out_of_stock_materials,
+        assigned_materials=assigned_materials,
         recent_interactions=recent_interactions,
     ))
 
@@ -1605,6 +1823,380 @@ async def delete_knowledge_item(
     return None
 
 
+@router.get("/materials")
+async def list_materials(
+    include_inactive: bool = False,
+    category: Optional[str] = None,
+    stock_status: Optional[str] = None,
+    assigned_only: bool = False,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    query = (
+        db.query(Material)
+        .options(joinedload(Material.working_station_assignments))
+        .order_by(Material.category.asc(), Material.name.asc())
+    )
+    if not include_inactive:
+        query = query.filter(Material.is_active.is_(True))
+    if category:
+        query = query.filter(Material.category == category.strip())
+
+    materials = query.all()
+    if assigned_only:
+        materials = [material for material in materials if any(assignment.is_active for assignment in material.working_station_assignments)]
+    if stock_status:
+        materials = [material for material in materials if _get_material_stock_status(material) == stock_status]
+    return [_serialize_material(material) for material in materials]
+
+
+@router.get("/materials/{material_id}")
+async def get_material_detail(
+    material_id: int,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    material = (
+        db.query(Material)
+        .options(
+            joinedload(Material.working_station_assignments).joinedload(WorkingStationMaterial.machine),
+            joinedload(Material.working_station_assignments).joinedload(WorkingStationMaterial.material),
+            joinedload(Material.stock_movements).joinedload(MaterialStockMovement.created_by_user),
+            joinedload(Material.stock_movements).joinedload(MaterialStockMovement.working_station),
+        )
+        .filter(Material.id == material_id)
+        .first()
+    )
+    if material is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Materiale non trovato")
+    return _serialize_material_detail(material)
+
+
+@router.post("/materials", status_code=status.HTTP_201_CREATED)
+async def create_material(
+    request: MaterialRequest,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    existing = db.query(Material).filter(Material.name == request.name.strip()).first()
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Materiale gia esistente")
+    if request.sku:
+        duplicate_sku = db.query(Material).filter(Material.sku == request.sku).first()
+        if duplicate_sku is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SKU materiale gia esistente")
+    material = Material(
+        name=request.name.strip(),
+        sku=request.sku,
+        category=request.category.strip() if request.category else None,
+        description=request.description,
+        characteristics=request.characteristics,
+        aliases=request.aliases,
+        unit_of_measure=request.unit_of_measure,
+        current_quantity=request.current_quantity if request.is_stock_tracked else 0,
+        minimum_quantity=request.minimum_quantity,
+        reorder_quantity=request.reorder_quantity,
+        storage_location=request.storage_location.strip() if request.storage_location else None,
+        is_stock_tracked=request.is_stock_tracked,
+        last_stock_update_at=datetime.now(timezone.utc) if request.is_stock_tracked else None,
+        is_active=request.is_active,
+    )
+    db.add(material)
+    db.commit()
+    db.refresh(material)
+    _invalidate_admin_metadata_cache()
+    return _serialize_material(material)
+
+
+@router.put("/materials/{material_id}")
+async def update_material(
+    material_id: int,
+    request: MaterialRequest,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    material = db.query(Material).filter(Material.id == material_id).first()
+    if material is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Materiale non trovato")
+    duplicate = (
+        db.query(Material)
+        .filter(Material.name == request.name.strip(), Material.id != material_id)
+        .first()
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Materiale gia esistente")
+    if request.sku:
+        duplicate_sku = (
+            db.query(Material)
+            .filter(Material.sku == request.sku, Material.id != material_id)
+            .first()
+        )
+        if duplicate_sku is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SKU materiale gia esistente")
+    material.name = request.name.strip()
+    material.sku = request.sku
+    material.category = request.category.strip() if request.category else None
+    material.description = request.description
+    material.characteristics = request.characteristics
+    material.aliases = request.aliases
+    material.unit_of_measure = request.unit_of_measure
+    material.minimum_quantity = request.minimum_quantity
+    material.reorder_quantity = request.reorder_quantity
+    material.storage_location = request.storage_location.strip() if request.storage_location else None
+    material.is_stock_tracked = request.is_stock_tracked
+    if not material.is_stock_tracked:
+        material.current_quantity = 0
+    elif material.last_stock_update_at is None:
+        material.last_stock_update_at = datetime.now(timezone.utc)
+    material.is_active = request.is_active
+    db.commit()
+    db.refresh(material)
+    _invalidate_admin_metadata_cache()
+    return _serialize_material(material)
+
+
+@router.get("/materials/{material_id}/movements")
+async def list_material_stock_movements(
+    material_id: int,
+    page: int = 1,
+    size: int = 20,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    material = db.query(Material).filter(Material.id == material_id).first()
+    if material is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Materiale non trovato")
+    movements = (
+        db.query(MaterialStockMovement)
+        .options(
+            joinedload(MaterialStockMovement.created_by_user),
+            joinedload(MaterialStockMovement.working_station),
+        )
+        .filter(MaterialStockMovement.material_id == material_id)
+        .order_by(MaterialStockMovement.created_at.desc(), MaterialStockMovement.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
+    return [_serialize_material_stock_movement(movement) for movement in movements]
+
+
+@router.post("/materials/{material_id}/movements", status_code=status.HTTP_201_CREATED)
+async def create_material_stock_movement(
+    material_id: int,
+    request: MaterialStockMovementRequest,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    material = db.query(Material).filter(Material.id == material_id).first()
+    if material is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Materiale non trovato")
+    if not material.is_stock_tracked:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Questo materiale non traccia giacenze")
+
+    working_station_id = request.working_station_id
+    if working_station_id is not None:
+        working_station = db.query(WorkingStation).filter(WorkingStation.id == working_station_id).first()
+        if working_station is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Postazione non valida")
+    if request.related_ticket_id is not None:
+        ticket = db.query(OperationalTicket).filter(OperationalTicket.id == request.related_ticket_id).first()
+        if ticket is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ticket non valido")
+
+    quantity_before = material.current_quantity or 0
+    if request.movement_type == "load":
+        quantity_delta = request.quantity
+    elif request.movement_type == "unload":
+        quantity_delta = -request.quantity
+    else:
+        quantity_delta = request.quantity - quantity_before
+
+    quantity_after = quantity_before + quantity_delta
+    if quantity_after < 0:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La giacenza non puo diventare negativa")
+
+    movement = MaterialStockMovement(
+        material_id=material.id,
+        movement_type=request.movement_type,
+        quantity_delta=quantity_delta,
+        quantity_before=quantity_before,
+        quantity_after=quantity_after,
+        note=request.note.strip() if request.note else None,
+        created_by_user_id=admin.id,
+        working_station_id=working_station_id,
+        related_ticket_id=request.related_ticket_id,
+    )
+    material.current_quantity = quantity_after
+    material.last_stock_update_at = datetime.now(timezone.utc)
+    db.add(movement)
+    db.commit()
+    movement = (
+        db.query(MaterialStockMovement)
+        .options(
+            joinedload(MaterialStockMovement.created_by_user),
+            joinedload(MaterialStockMovement.working_station),
+        )
+        .filter(MaterialStockMovement.id == movement.id)
+        .first()
+    )
+    _invalidate_admin_metadata_cache()
+    return _serialize_material_stock_movement(movement)
+
+
+@router.get("/working-stations/{working_station_id}/materials")
+async def list_working_station_materials(
+    working_station_id: int,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    working_station = db.query(WorkingStation).filter(WorkingStation.id == working_station_id).first()
+    if working_station is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Postazione non trovata")
+    assignments = (
+        db.query(WorkingStationMaterial)
+        .options(joinedload(WorkingStationMaterial.material), joinedload(WorkingStationMaterial.machine))
+        .filter(WorkingStationMaterial.working_station_id == working_station_id)
+        .order_by(WorkingStationMaterial.display_order.asc(), WorkingStationMaterial.id.asc())
+        .all()
+    )
+    return [_serialize_working_station_material(assignment) for assignment in assignments]
+
+
+@router.post("/working-stations/{working_station_id}/materials", status_code=status.HTTP_201_CREATED)
+async def create_working_station_material(
+    working_station_id: int,
+    request: WorkingStationMaterialRequest,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    working_station = db.query(WorkingStation).filter(WorkingStation.id == working_station_id).first()
+    if working_station is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Postazione non trovata")
+    material = db.query(Material).filter(Material.id == request.material_id).first()
+    if material is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Materiale non valido")
+    if request.machine_id is not None:
+        machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
+        if machine is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Macchinario non valido")
+    duplicate = (
+        db.query(WorkingStationMaterial)
+        .filter(
+            WorkingStationMaterial.working_station_id == working_station_id,
+            WorkingStationMaterial.material_id == request.material_id,
+            WorkingStationMaterial.machine_id == request.machine_id,
+        )
+        .first()
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Associazione materiale gia esistente")
+    assignment = WorkingStationMaterial(
+        working_station_id=working_station_id,
+        machine_id=request.machine_id,
+        material_id=request.material_id,
+        usage_context=request.usage_context,
+        notes=request.notes,
+        display_order=request.display_order,
+        is_required=request.is_required,
+        is_active=request.is_active,
+    )
+    db.add(assignment)
+    db.commit()
+    assignment = (
+        db.query(WorkingStationMaterial)
+        .options(joinedload(WorkingStationMaterial.material), joinedload(WorkingStationMaterial.machine))
+        .filter(WorkingStationMaterial.id == assignment.id)
+        .first()
+    )
+    _invalidate_admin_metadata_cache()
+    return _serialize_working_station_material(assignment)
+
+
+@router.put("/working-stations/{working_station_id}/materials/{assignment_id}")
+async def update_working_station_material(
+    working_station_id: int,
+    assignment_id: int,
+    request: WorkingStationMaterialRequest,
+    admin: User = Depends(verify_permission("knowledge.manage")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    assignment = (
+        db.query(WorkingStationMaterial)
+        .options(joinedload(WorkingStationMaterial.material), joinedload(WorkingStationMaterial.machine))
+        .filter(
+            WorkingStationMaterial.id == assignment_id,
+            WorkingStationMaterial.working_station_id == working_station_id,
+        )
+        .first()
+    )
+    if assignment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associazione materiale non trovata")
+    material = db.query(Material).filter(Material.id == request.material_id).first()
+    if material is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Materiale non valido")
+    if request.machine_id is not None:
+        machine = db.query(Machine).filter(Machine.id == request.machine_id).first()
+        if machine is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Macchinario non valido")
+    duplicate = (
+        db.query(WorkingStationMaterial)
+        .filter(
+            WorkingStationMaterial.working_station_id == working_station_id,
+            WorkingStationMaterial.material_id == request.material_id,
+            WorkingStationMaterial.machine_id == request.machine_id,
+            WorkingStationMaterial.id != assignment_id,
+        )
+        .first()
+    )
+    if duplicate is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Associazione materiale gia esistente")
+    assignment.material_id = request.material_id
+    assignment.machine_id = request.machine_id
+    assignment.usage_context = request.usage_context
+    assignment.notes = request.notes
+    assignment.display_order = request.display_order
+    assignment.is_required = request.is_required
+    assignment.is_active = request.is_active
+    db.commit()
+    db.refresh(assignment)
+    _invalidate_admin_metadata_cache()
+    return _serialize_working_station_material(assignment)
+
+
+@router.get("/operational-tickets", response_model=List[OperationalTicketResponse])
+async def list_operational_tickets(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    workflow_type: Optional[str] = None,
+    admin: User = Depends(verify_permission("logs.view")),
+    db: Session = Depends(get_db),
+):
+    del admin
+    query = (
+        db.query(OperationalTicket)
+        .options(
+            joinedload(OperationalTicket.user),
+            joinedload(OperationalTicket.working_station),
+            joinedload(OperationalTicket.machine),
+            joinedload(OperationalTicket.material),
+        )
+        .order_by(OperationalTicket.created_at.desc(), OperationalTicket.id.desc())
+    )
+    if status_filter:
+        query = query.filter(OperationalTicket.status == status_filter)
+    if workflow_type:
+        query = query.filter(OperationalTicket.workflow_type == workflow_type)
+    return [_serialize_operational_ticket(ticket) for ticket in query.all()]
+
+
 @router.get("/logs")
 async def list_logs(
     page: int = Query(1, ge=1),
@@ -1666,6 +2258,9 @@ async def list_logs(
                 user_name=user.nome if user else f"Utente {log.user_id}",
                 machine_id=log.machine_id,
                 machine_name=machine.nome if machine else f"Macchina {log.machine_id}",
+                working_station_id=log.working_station_id,
+                chat_session_id=log.chat_session_id,
+                conversation_state_id=log.conversation_state_id,
                 department_name=department_name,
                 category_id=log.category_id,
                 category_name=log.category.name if log.category else None,
@@ -1680,6 +2275,8 @@ async def list_logs(
                 resolution_note=log.resolution_note,
                 resolution_timestamp=log.resolution_timestamp,
                 action_type=log.action_type or "question",
+                workflow_type=log.workflow_type,
+                response_mode=log.response_mode,
                 priority=log.priority or "normal",
                 timestamp=log.timestamp,
             )

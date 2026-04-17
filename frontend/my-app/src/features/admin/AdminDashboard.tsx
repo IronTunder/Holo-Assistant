@@ -8,7 +8,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card } from '@/shared/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import { Activity, BookText, Cpu, LayoutDashboard, LogOut, MapPinned, ScrollText, Settings, ShieldCheck, Users } from 'lucide-react';
+import { Activity, BookText, Boxes, Cpu, LayoutDashboard, LogOut, MapPinned, ScrollText, Settings, ShieldCheck, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DashboardSummary, InteractionLogEntry } from './adminTypes';
 import { KnowledgeManager } from './KnowledgeManager';
@@ -20,6 +20,9 @@ import { RoleManager } from './RoleManager';
 import { SettingsPanel } from './SettingsPanel';
 import { UserList } from './UserList';
 import { useAdminMetadata } from './useAdminMetadata';
+import { compactInteractionLogs } from './compactInteractionLogs';
+import { MaterialManager } from './MaterialManager';
+import { OperationalTicketList } from './OperationalTicketList';
 
 const statCards = [
   { key: 'total_users', label: 'Utenti', icon: Users, accent: 'bg-sky-50 text-sky-700' },
@@ -27,6 +30,9 @@ const statCards = [
   { key: 'machines_in_use', label: 'Macchinari in uso', icon: Activity, accent: 'bg-amber-50 text-amber-700' },
   { key: 'active_departments', label: 'Reparti attivi', icon: LayoutDashboard, accent: 'bg-indigo-50 text-indigo-700' },
   { key: 'knowledge_items', label: 'Template knowledge', icon: BookText, accent: 'bg-rose-50 text-rose-700' },
+  { key: 'total_materials', label: 'Materiali', icon: Boxes, accent: 'bg-cyan-50 text-cyan-700' },
+  { key: 'low_stock_materials', label: 'Sotto soglia', icon: Boxes, accent: 'bg-amber-50 text-amber-700' },
+  { key: 'out_of_stock_materials', label: 'Esauriti', icon: Boxes, accent: 'bg-red-50 text-red-700' },
 ] as const;
 
 const feedbackLabels = {
@@ -39,6 +45,7 @@ const actionLabels = {
   question: 'Domanda',
   maintenance: 'Manutenzione',
   emergency: 'Emergenza',
+  material_shortage: 'Materiale',
 } as const;
 
 type InteractionResolutionResponse = {
@@ -57,6 +64,9 @@ export const AdminDashboard = () => {
   const { departments, categories, machines, workingStations, users, roles, refresh } = useAdminMetadata();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
+  const [operationsView, setOperationsView] = useState<'logs' | 'tickets'>('logs');
+  const [resourcesView, setResourcesView] = useState<'users' | 'machines' | 'working-stations' | 'materials'>('users');
+  const [configurationView, setConfigurationView] = useState<'knowledge' | 'organization' | 'settings'>('knowledge');
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [recentLogs, setRecentLogs] = useState<InteractionLogEntry[]>([]);
   const [recentUnresolvedLogs, setRecentUnresolvedLogs] = useState<InteractionLogEntry[]>([]);
@@ -157,19 +167,20 @@ export const AdminDashboard = () => {
 
   const headerSubtitle = useMemo(() => {
     if (!summary) {
-      return 'Controlla utenti, macchinari e knowledge da un unico punto.';
+      return 'Controlla utenti, macchinari, materiali e knowledge da un unico punto.';
     }
-    return `${summary.total_users} utenti, ${summary.total_machines} macchinari, ${summary.total_working_stations} postazioni, ${summary.knowledge_items} template knowledge.`;
+    return `${summary.total_users} utenti, ${summary.total_machines} macchinari, ${summary.total_working_stations} postazioni, ${summary.total_materials} materiali, ${summary.knowledge_items} template knowledge.`;
   }, [summary]);
 
-  const recentCriticalEmergencyLogs = useMemo(
-    () => recentUnresolvedLogs.filter((log) => log.action_type === 'emergency' && log.priority === 'critical'),
-    [recentUnresolvedLogs]
+  const compactRecentLogs = useMemo(() => compactInteractionLogs(recentLogs), [recentLogs]);
+  const compactRecentUnresolvedLogs = useMemo(() => compactInteractionLogs(recentUnresolvedLogs), [recentUnresolvedLogs]);
+  const compactRecentCriticalEmergencyLogs = useMemo(
+    () => compactRecentUnresolvedLogs.filter((log) => log.action_type === 'emergency' && log.priority === 'critical'),
+    [compactRecentUnresolvedLogs]
   );
-
-  const recentStandardUnresolvedLogs = useMemo(
-    () => recentUnresolvedLogs.filter((log) => !(log.action_type === 'emergency' && log.priority === 'critical')),
-    [recentUnresolvedLogs]
+  const compactRecentStandardUnresolvedLogs = useMemo(
+    () => compactRecentUnresolvedLogs.filter((log) => !(log.action_type === 'emergency' && log.priority === 'critical')),
+    [compactRecentUnresolvedLogs]
   );
 
   const hasPermission = useCallback(
@@ -420,57 +431,33 @@ export const AdminDashboard = () => {
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-3 lg:grid-cols-8">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-2xl bg-white p-2 shadow-sm sm:grid-cols-4">
             <TabsTrigger value="overview" className="gap-2">
               <LayoutDashboard className="h-4 w-4" />
               <span>Panoramica</span>
             </TabsTrigger>
-            {hasPermission('users.manage') ? (
-              <TabsTrigger value="users" className="gap-2">
-                <Users className="h-4 w-4" />
-                <span>Utenti</span>
-              </TabsTrigger>
-            ) : null}
-            {hasPermission('roles.manage') || hasPermission('departments.manage') ? (
-              <TabsTrigger value="organization" className="gap-2">
-                <ShieldCheck className="h-4 w-4" />
-                <span>Organizzazione</span>
-              </TabsTrigger>
-            ) : null}
-            {hasPermission('machines.manage') ? (
-              <TabsTrigger value="working-stations" className="gap-2">
-                <MapPinned className="h-4 w-4" />
-                <span>Postazioni</span>
-              </TabsTrigger>
-            ) : null}
-            {hasPermission('machines.manage') ? (
-              <TabsTrigger value="machines" className="gap-2">
-                <Cpu className="h-4 w-4" />
-                <span>Macchinari</span>
-              </TabsTrigger>
-            ) : null}
-            {hasPermission('knowledge.manage') ? (
-              <TabsTrigger value="knowledge" className="gap-2">
-                <BookText className="h-4 w-4" />
-                <span>Knowledge</span>
-              </TabsTrigger>
-            ) : null}
             {hasPermission('logs.view') ? (
-              <TabsTrigger value="logs" className="gap-2">
+              <TabsTrigger value="operations" className="gap-2">
                 <ScrollText className="h-4 w-4" />
-                <span>Log</span>
+                <span>Operazioni</span>
               </TabsTrigger>
             ) : null}
-            {hasPermission('settings.view') ? (
-              <TabsTrigger value="settings" className="gap-2">
+            {hasPermission('users.manage') || hasPermission('machines.manage') || hasPermission('knowledge.manage') ? (
+              <TabsTrigger value="resources" className="gap-2">
+                <Boxes className="h-4 w-4" />
+                <span>Risorse</span>
+              </TabsTrigger>
+            ) : null}
+            {hasPermission('knowledge.manage') || hasPermission('roles.manage') || hasPermission('departments.manage') || hasPermission('settings.view') ? (
+              <TabsTrigger value="configuration" className="gap-2">
                 <Settings className="h-4 w-4" />
-                <span>Impostazioni</span>
+                <span>Configurazione</span>
               </TabsTrigger>
             ) : null}
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {statCards.map((card) => {
                 const Icon = card.icon;
                 const value = summary ? summary[card.key] : null;
@@ -502,21 +489,21 @@ export const AdminDashboard = () => {
                     </p>
                   </div>
                   <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
-                    {recentUnresolvedLogs.length} aperti
+                    {compactRecentUnresolvedLogs.length} aperti
                   </Badge>
                 </div>
 
                 <div className="mt-4 space-y-3">
-                  {recentCriticalEmergencyLogs.length > 0 ? (
+                  {compactRecentCriticalEmergencyLogs.length > 0 ? (
                     <div className="rounded-xl border border-red-300 bg-red-600 p-4 text-white shadow-sm">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline" className="border-white/40 bg-white text-red-700">
                           Emergenza critica
                         </Badge>
-                        <span className="text-xs text-red-100">{recentCriticalEmergencyLogs.length} attive</span>
+                        <span className="text-xs text-red-100">{compactRecentCriticalEmergencyLogs.length} attive</span>
                       </div>
                       <div className="mt-3 space-y-3">
-                        {recentCriticalEmergencyLogs.map((log) => (
+                        {compactRecentCriticalEmergencyLogs.map((log) => (
                           <div key={log.id} className="rounded-xl border border-white/20 bg-white/10 p-3">
                             <p className="text-sm font-semibold">
                               {log.machine_name} - {log.user_name}
@@ -542,12 +529,12 @@ export const AdminDashboard = () => {
                     </div>
                   ) : null}
 
-                  {recentUnresolvedLogs.length === 0 ? (
+                  {compactRecentUnresolvedLogs.length === 0 ? (
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
                       Nessun problema non risolto nelle interazioni piu recenti.
                     </div>
                   ) : (
-                    recentStandardUnresolvedLogs.map((log) => (
+                    compactRecentStandardUnresolvedLogs.map((log) => (
                       <div key={log.id} className="rounded-xl border border-red-100 bg-red-50/60 p-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline" className="border-red-200 bg-white text-red-700">
@@ -557,6 +544,11 @@ export const AdminDashboard = () => {
                             {actionLabels[log.action_type]}
                           </Badge>
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          {log.compactedEntriesCount > 1 ? (
+                            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+                              {log.compactedEntriesCount} passaggi
+                            </Badge>
+                          ) : null}
                           <span className="text-xs text-slate-500">
                             {new Date(log.timestamp).toLocaleString('it-IT')}
                           </span>
@@ -594,22 +586,30 @@ export const AdminDashboard = () => {
                     <p className="text-sm text-slate-500">Panoramica rapida delle richieste recenti.</p>
                   </div>
                   {hasPermission('logs.view') ? (
-                    <Button variant="outline" size="sm" onClick={() => setActiveTab('logs')}>
+                    <Button variant="outline" size="sm" onClick={() => {
+                      setOperationsView('logs');
+                      setActiveTab('operations');
+                    }}>
                       Vai ai log
                     </Button>
                   ) : null}
                 </div>
 
                 <div className="mt-4 space-y-3">
-                  {recentLogs.length === 0 ? (
+                  {compactRecentLogs.length === 0 ? (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
                       Nessuna interazione recente disponibile.
                     </div>
                   ) : (
-                    recentLogs.map((log) => (
+                    compactRecentLogs.map((log) => (
                       <div key={log.id} className="rounded-xl border border-slate-200 p-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          {log.compactedEntriesCount > 1 ? (
+                            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+                              {log.compactedEntriesCount} passaggi
+                            </Badge>
+                          ) : null}
                           {log.feedback_status ? (
                             <Badge variant="outline">
                               {feedbackLabels[log.feedback_status]}
@@ -639,27 +639,50 @@ export const AdminDashboard = () => {
                 <p className="text-sm text-slate-500">Apri subito il flusso che ti serve di piu.</p>
                 <div className="mt-4 grid gap-3">
                   {hasPermission('users.manage') ? (
-                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('users')}>
+                    <Button variant="outline" className="justify-start" onClick={() => {
+                      setResourcesView('users');
+                      setActiveTab('resources');
+                    }}>
                       Crea o modifica utenti
                     </Button>
                   ) : null}
                   {hasPermission('machines.manage') ? (
-                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('machines')}>
+                    <Button variant="outline" className="justify-start" onClick={() => {
+                      setResourcesView('machines');
+                      setActiveTab('resources');
+                    }}>
                       Gestisci macchinari e stato
                     </Button>
                   ) : null}
                   {hasPermission('machines.manage') ? (
-                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('working-stations')}>
+                    <Button variant="outline" className="justify-start" onClick={() => {
+                      setResourcesView('working-stations');
+                      setActiveTab('resources');
+                    }}>
                       Crea o modifica postazioni
                     </Button>
                   ) : null}
                   {hasPermission('knowledge.manage') ? (
-                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('knowledge')}>
+                    <Button variant="outline" className="justify-start" onClick={() => {
+                      setResourcesView('materials');
+                      setActiveTab('resources');
+                    }}>
+                      Gestisci materiali e magazzino
+                    </Button>
+                  ) : null}
+                  {hasPermission('knowledge.manage') ? (
+                    <Button variant="outline" className="justify-start" onClick={() => {
+                      setConfigurationView('knowledge');
+                      setActiveTab('configuration');
+                    }}>
                       Aggiorna knowledge e assegnazioni
                     </Button>
                   ) : null}
                   {hasPermission('settings.view') ? (
-                    <Button variant="outline" className="justify-start" onClick={() => setActiveTab('settings')}>
+                    <Button variant="outline" className="justify-start" onClick={() => {
+                      setConfigurationView('settings');
+                      setActiveTab('configuration');
+                    }}>
                       Controlla impostazioni sistema
                     </Button>
                   ) : null}
@@ -668,51 +691,102 @@ export const AdminDashboard = () => {
             </section>
           </TabsContent>
 
-          <TabsContent value="users" className="space-y-4">
-            {hasPermission('users.manage') ? (
-              <UserList departments={departments} roles={roles} machines={machines} onMetadataRefresh={refreshAll} />
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="organization" className="space-y-6">
-            {hasPermission('roles.manage') ? <RoleManager onMetadataRefresh={refreshAll} /> : null}
-            {hasPermission('departments.manage') ? <DepartmentManager onMetadataRefresh={refreshAll} /> : null}
-            {!hasPermission('roles.manage') && !hasPermission('departments.manage') ? (
-              <Card className="border-slate-200 bg-white p-5 text-sm text-slate-500">
-                Non hai permessi per modificare ruoli o reparti.
-              </Card>
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="machines" className="space-y-4">
-            {hasPermission('machines.manage') ? (
-              <MachineList departments={departments} workingStations={workingStations} onMetadataRefresh={refreshAll} />
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="working-stations" className="space-y-4">
-            {hasPermission('machines.manage') ? (
-              <WorkingStationList departments={departments} onMetadataRefresh={refreshAll} />
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="knowledge" className="space-y-4">
-            {hasPermission('knowledge.manage') ? (
-              <KnowledgeManager categories={categories} workingStations={workingStations} onMetadataRefresh={refreshAll} />
-            ) : null}
-          </TabsContent>
-
-          <TabsContent value="logs" className="space-y-4">
-            {hasPermission('logs.view') ? (
+          <TabsContent value="operations" className="space-y-4">
+            <Card className="border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap gap-2">
+                <Button variant={operationsView === 'logs' ? 'default' : 'outline'} onClick={() => setOperationsView('logs')}>
+                  Log
+                </Button>
+                <Button variant={operationsView === 'tickets' ? 'default' : 'outline'} onClick={() => setOperationsView('tickets')}>
+                  Ticket / segnalazioni
+                </Button>
+              </div>
+            </Card>
+            {operationsView === 'logs' && hasPermission('logs.view') ? (
               <LogViewer departments={departments} categories={categories} machines={machines} users={users} />
             ) : null}
+            {operationsView === 'tickets' && hasPermission('logs.view') ? (
+              <OperationalTicketList />
+            ) : null}
           </TabsContent>
 
-          {hasPermission('settings.view') ? (
-            <TabsContent value="settings" className="space-y-4">
+          <TabsContent value="resources" className="space-y-4">
+            <Card className="border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap gap-2">
+                {hasPermission('users.manage') ? (
+                  <Button variant={resourcesView === 'users' ? 'default' : 'outline'} onClick={() => setResourcesView('users')}>
+                    Utenti
+                  </Button>
+                ) : null}
+                {hasPermission('machines.manage') ? (
+                  <Button variant={resourcesView === 'machines' ? 'default' : 'outline'} onClick={() => setResourcesView('machines')}>
+                    Macchinari
+                  </Button>
+                ) : null}
+                {hasPermission('machines.manage') ? (
+                  <Button variant={resourcesView === 'working-stations' ? 'default' : 'outline'} onClick={() => setResourcesView('working-stations')}>
+                    Postazioni
+                  </Button>
+                ) : null}
+                {hasPermission('knowledge.manage') ? (
+                  <Button variant={resourcesView === 'materials' ? 'default' : 'outline'} onClick={() => setResourcesView('materials')}>
+                    Materiali
+                  </Button>
+                ) : null}
+              </div>
+            </Card>
+            {resourcesView === 'users' && hasPermission('users.manage') ? (
+              <UserList departments={departments} roles={roles} machines={machines} onMetadataRefresh={refreshAll} />
+            ) : null}
+            {resourcesView === 'machines' && hasPermission('machines.manage') ? (
+              <MachineList departments={departments} workingStations={workingStations} onMetadataRefresh={refreshAll} />
+            ) : null}
+            {resourcesView === 'working-stations' && hasPermission('machines.manage') ? (
+              <WorkingStationList departments={departments} onMetadataRefresh={refreshAll} />
+            ) : null}
+            {resourcesView === 'materials' && hasPermission('knowledge.manage') ? (
+              <MaterialManager workingStations={workingStations} machines={machines} onMetadataRefresh={refreshAll} />
+            ) : null}
+          </TabsContent>
+
+          <TabsContent value="configuration" className="space-y-4">
+            <Card className="border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap gap-2">
+                {hasPermission('knowledge.manage') ? (
+                  <Button variant={configurationView === 'knowledge' ? 'default' : 'outline'} onClick={() => setConfigurationView('knowledge')}>
+                    Knowledge
+                  </Button>
+                ) : null}
+                {(hasPermission('roles.manage') || hasPermission('departments.manage')) ? (
+                  <Button variant={configurationView === 'organization' ? 'default' : 'outline'} onClick={() => setConfigurationView('organization')}>
+                    Reparti e ruoli
+                  </Button>
+                ) : null}
+                {hasPermission('settings.view') ? (
+                  <Button variant={configurationView === 'settings' ? 'default' : 'outline'} onClick={() => setConfigurationView('settings')}>
+                    Impostazioni
+                  </Button>
+                ) : null}
+              </div>
+            </Card>
+            {configurationView === 'knowledge' && hasPermission('knowledge.manage') ? (
+              <KnowledgeManager categories={categories} workingStations={workingStations} onMetadataRefresh={refreshAll} />
+            ) : null}
+            {configurationView === 'organization' ? (
+              <div className="space-y-6">
+                {hasPermission('roles.manage') ? <RoleManager onMetadataRefresh={refreshAll} /> : null}
+                {hasPermission('departments.manage') ? <DepartmentManager onMetadataRefresh={refreshAll} /> : null}
+                {!hasPermission('roles.manage') && !hasPermission('departments.manage') ? (
+                  <Card className="border-slate-200 bg-white p-5 text-sm text-slate-500">
+                    Non hai permessi per modificare ruoli o reparti.
+                  </Card>
+                ) : null}
+              </div>
+            ) : null}
+            {configurationView === 'settings' && hasPermission('settings.view') ? (
               <SettingsPanel canEdit={hasPermission('settings.edit')} />
-            </TabsContent>
-          ) : null}
+            ) : null}
+          </TabsContent>
         </Tabs>
       </div>
     </div>

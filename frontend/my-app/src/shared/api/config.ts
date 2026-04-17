@@ -95,6 +95,10 @@ export const API_ENDPOINTS = {
   CREATE_WORKING_STATION: `${API_BASE_URL}/admin/working-stations`,
   UPDATE_WORKING_STATION: (id: number) => `${API_BASE_URL}/admin/working-stations/${id}`,
   DELETE_WORKING_STATION: (id: number) => `${API_BASE_URL}/admin/working-stations/${id}`,
+  LIST_WORKING_STATION_MATERIALS: (workingStationId: number) => `${API_BASE_URL}/admin/working-stations/${workingStationId}/materials`,
+  CREATE_WORKING_STATION_MATERIAL: (workingStationId: number) => `${API_BASE_URL}/admin/working-stations/${workingStationId}/materials`,
+  UPDATE_WORKING_STATION_MATERIAL: (workingStationId: number, assignmentId: number) =>
+    `${API_BASE_URL}/admin/working-stations/${workingStationId}/materials/${assignmentId}`,
 
   LIST_ADMIN_CATEGORIES: `${API_BASE_URL}/admin/categories`,
   CREATE_ADMIN_CATEGORY: `${API_BASE_URL}/admin/categories`,
@@ -104,6 +108,13 @@ export const API_ENDPOINTS = {
   UPDATE_KNOWLEDGE_ITEM: (id: number) => `${API_BASE_URL}/admin/knowledge-items/${id}`,
   DELETE_KNOWLEDGE_ITEM: (id: number) => `${API_BASE_URL}/admin/knowledge-items/${id}`,
   LIST_MACHINE_KNOWLEDGE: (machineId: number) => `${API_BASE_URL}/admin/machines/${machineId}/knowledge`,
+  LIST_MATERIALS: `${API_BASE_URL}/admin/materials`,
+  GET_MATERIAL_DETAIL: (id: number) => `${API_BASE_URL}/admin/materials/${id}`,
+  CREATE_MATERIAL: `${API_BASE_URL}/admin/materials`,
+  UPDATE_MATERIAL: (id: number) => `${API_BASE_URL}/admin/materials/${id}`,
+  LIST_MATERIAL_MOVEMENTS: (id: number) => `${API_BASE_URL}/admin/materials/${id}/movements`,
+  CREATE_MATERIAL_MOVEMENT: (id: number) => `${API_BASE_URL}/admin/materials/${id}/movements`,
+  LIST_OPERATIONAL_TICKETS: `${API_BASE_URL}/admin/operational-tickets`,
 
   LIST_LOGS: `${API_BASE_URL}/admin/logs`,
 

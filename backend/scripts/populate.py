@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from app.database import SessionLocal
 from app.models.department import Department
+from app.models.material import Material, WorkingStationMaterial
 from app.models.machine import Machine
 from app.models.role import ADMIN_ROLE_CODE, MAINTENANCE_TECH_ROLE_CODE, OPERATOR_ROLE_CODE, Role
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
@@ -170,6 +171,86 @@ WORKING_STATION_SEEDS = [
 ]
 
 
+MATERIAL_SEEDS = [
+    {
+        "name": "Guanti resistenti al calore",
+        "category": "guanti",
+        "description": "Guanti per operazioni vicino a stampi e componenti caldi.",
+        "characteristics": "resistenti al calore",
+        "aliases": "guanti termici, guanti calore, guanti alta temperatura",
+        "assignments": [
+            {
+                "station_code": "STP-01",
+                "machine_station_code": "STP-01",
+                "usage_context": "Stampaggio a caldo e scarico pezzi appena formati",
+                "notes": "Usare durante prelievo staffe e supporti in uscita dalla pressa",
+                "display_order": 1,
+                "is_required": True,
+            }
+        ],
+    },
+    {
+        "name": "Guanti antitaglio",
+        "category": "guanti",
+        "description": "Guanti per movimentazione lamiere e rifilatura bordi.",
+        "characteristics": "antitaglio",
+        "aliases": "guanti taglio, guanti contro taglio, guanti lamiera",
+        "assignments": [
+            {
+                "station_code": "STP-01",
+                "machine_station_code": "STP-01",
+                "usage_context": "Movimentazione lamiere, rifilatura e sbavatura",
+                "notes": "Usare quando i pezzi hanno bordi vivi o sfridi taglienti",
+                "display_order": 2,
+                "is_required": True,
+            }
+        ],
+    },
+    {
+        "name": "Refrigerante emulsione CNC",
+        "category": "lubrificanti",
+        "description": "Emulsione refrigerante per lavorazioni tornitura e fresatura.",
+        "characteristics": "raffreddamento utensili",
+        "aliases": "emulsione cnc, refrigerante, liquido refrigerante",
+        "assignments": [
+            {
+                "station_code": "CNC-02",
+                "machine_station_code": "CNC-02",
+                "usage_context": "Tornitura di alberi e bussole",
+                "notes": "Controllare il livello prima del cambio turno",
+                "display_order": 1,
+                "is_required": True,
+            },
+            {
+                "station_code": "CNC-03",
+                "machine_station_code": "CNC-03",
+                "usage_context": "Fresatura 5 assi di piastre e supporti",
+                "notes": "Necessario per cicli lunghi su materiali tenaci",
+                "display_order": 1,
+                "is_required": True,
+            },
+        ],
+    },
+    {
+        "name": "Inserti avvitatore DT-4",
+        "category": "utensili",
+        "description": "Inserti di ricambio per avvitatori controllati della linea assemblaggio.",
+        "characteristics": "torx e brugola calibrati",
+        "aliases": "inserti avvitatore, punte avvitatore, inserti dt4",
+        "assignments": [
+            {
+                "station_code": "ASM-01",
+                "machine_station_code": "ASM-01",
+                "usage_context": "Avvitatura controllata in stazione montaggio modulo",
+                "notes": "Disponibili nei formati T20, T25 e brugola 5 mm",
+                "display_order": 1,
+                "is_required": True,
+            }
+        ],
+    },
+]
+
+
 USER_SEEDS = [
     {
         "nome": "elisa.conti",
@@ -282,6 +363,62 @@ for machine_seed in MACHINE_SEEDS:
 
 db.commit()
 
+materials_by_name: dict[str, Material] = {}
+
+for material_seed in MATERIAL_SEEDS:
+    material = db.query(Material).filter(Material.name == material_seed["name"]).first()
+    if material is None:
+        material = Material(name=material_seed["name"])
+        db.add(material)
+        db.flush()
+
+    material.category = material_seed["category"]
+    material.description = material_seed["description"]
+    material.characteristics = material_seed["characteristics"]
+    material.aliases = material_seed["aliases"]
+    material.is_active = True
+    materials_by_name[material.name] = material
+
+    print(f"Allineato materiale demo: {material.name}")
+
+db.flush()
+
+for material_seed in MATERIAL_SEEDS:
+    material = materials_by_name[material_seed["name"]]
+    for assignment_seed in material_seed["assignments"]:
+        station = working_stations_by_code[assignment_seed["station_code"]]
+        machine = None
+        machine_station_code = assignment_seed.get("machine_station_code")
+        if machine_station_code:
+            machine = db.query(Machine).filter(Machine.id_postazione == machine_station_code).first()
+
+        assignment = (
+            db.query(WorkingStationMaterial)
+            .filter(
+                WorkingStationMaterial.working_station_id == station.id,
+                WorkingStationMaterial.material_id == material.id,
+                WorkingStationMaterial.machine_id == (machine.id if machine else None),
+            )
+            .first()
+        )
+        if assignment is None:
+            assignment = WorkingStationMaterial(
+                working_station_id=station.id,
+                material_id=material.id,
+                machine_id=machine.id if machine else None,
+            )
+            db.add(assignment)
+
+        assignment.usage_context = assignment_seed["usage_context"]
+        assignment.notes = assignment_seed["notes"]
+        assignment.display_order = assignment_seed["display_order"]
+        assignment.is_required = assignment_seed["is_required"]
+        assignment.is_active = True
+
+        print(f"  - Assegnato a {station.station_code}: {material.name}")
+
+db.commit()
+
 for user_seed in USER_SEEDS:
     department = departments_by_name[user_seed["department"]]
     existing_user = db.query(User).filter(User.badge_id == user_seed["badge_id"]).first()
@@ -309,6 +446,8 @@ print("=" * 50)
 print(f"Postazioni: {db.query(WorkingStation).count()}")
 print(f"Macchinari: {db.query(Machine).count()}")
 print(f"Utenti: {db.query(User).count()}")
+print(f"Materiali: {db.query(Material).count()}")
+print(f"Assegnazioni materiali/postazione: {db.query(WorkingStationMaterial).count()}")
 print("\nPassword demo impostata per gli utenti seed.")
 print("\nUtenti:")
 for user in db.query(User).order_by(User.nome).all():
@@ -323,5 +462,25 @@ for working_station in db.query(WorkingStation).order_by(WorkingStation.station_
         working_station.assigned_machine.nome if working_station.assigned_machine is not None else "Nessun macchinario"
     )
     print(f" - {working_station.name} ({working_station.station_code}) - {assigned_machine_name}")
+
+print("\nMateriali per test agente:")
+assignments = (
+    db.query(WorkingStationMaterial)
+    .join(Material, Material.id == WorkingStationMaterial.material_id)
+    .join(WorkingStation, WorkingStation.id == WorkingStationMaterial.working_station_id)
+    .order_by(WorkingStation.station_code.asc(), WorkingStationMaterial.display_order.asc(), Material.name.asc())
+    .all()
+)
+for assignment in assignments:
+    material = assignment.material
+    station = assignment.working_station
+    characteristic = material.characteristics or "nessuna caratteristica"
+    print(f" - {station.station_code}: {material.name} [{characteristic}]")
+
+print("\nEsempi pronti da provare in chat:")
+print(' - STP-01: "Ho finito i guanti" -> dovrebbe chiedere se servono quelli resistenti al calore o antitaglio')
+print(' - STP-01: dopo la domanda, rispondi "Quelli antitaglio" e poi "Confermo"')
+print(' - CNC-02: "Ho finito il refrigerante" -> dovrebbe proporre o confermare il refrigerante emulsione CNC')
+print(' - ASM-01: "Mi mancano gli inserti dell avvitatore" -> dovrebbe identificare gli inserti DT-4')
 
 db.close()

@@ -35,6 +35,26 @@ type ClarificationOption = {
   category_name?: string | null;
 };
 
+type AgentCandidateOption = {
+  material_id: number;
+  label: string;
+  description?: string | null;
+};
+
+type AgentConfirmationPayload = {
+  prompt: string;
+  action: string;
+  material_id?: number | null;
+  material_name?: string | null;
+};
+
+type AgentExecutedAction = {
+  action: string;
+  status: 'completed' | 'blocked' | 'cancelled';
+  ticket_id?: number | null;
+  summary?: string | null;
+};
+
 type AskQuestionApiResponse = {
   interaction_id?: number | null;
   response: string;
@@ -46,6 +66,14 @@ type AskQuestionApiResponse = {
   category_name?: string | null;
   knowledge_item_id?: number | null;
   knowledge_item_title?: string | null;
+  response_mode?: 'knowledge_answer' | 'agent_question' | 'confirmation_required' | 'action_completed' | 'action_blocked' | null;
+  conversation_state_id?: number | null;
+  workflow_type?: 'material_shortage' | null;
+  pending_slots?: string[];
+  candidate_options?: AgentCandidateOption[];
+  confirmation_payload?: AgentConfirmationPayload | null;
+  executed_action?: AgentExecutedAction | null;
+  ticket_id?: number | null;
 };
 
 type InteractionFeedbackStatus = 'resolved' | 'unresolved' | 'not_applicable';
@@ -164,6 +192,36 @@ function normalizeVoiceCommand(value: string): string {
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+const affirmativeVoiceCommands = [
+  'conferma',
+  'si',
+  'sì',
+  'ok',
+  'va bene',
+  'procedi',
+  'invia',
+  'confermo',
+] as const;
+
+const negativeVoiceCommands = [
+  'annulla',
+  'no',
+  'ferma',
+  'cancella',
+  'non confermare',
+  'lascia stare',
+] as const;
+
+const ordinalVoiceCommands = [
+  ['prima', 'opzione uno', 'uno', '1'],
+  ['seconda', 'opzione due', 'due', '2'],
+  ['terza', 'opzione tre', 'tre', '3'],
+] as const;
+
+function isVoiceCommandMatch(transcript: string, commands: readonly string[]): boolean {
+  return commands.some((command) => transcript === command || transcript.startsWith(`${command} `));
 }
 
 const maintenanceKnowledgeHints = [
@@ -489,6 +547,13 @@ const OperatorAvatarPanel = memo(function OperatorAvatarPanel({
   wakeWordStatus,
   onToggleWakeWord,
 }: OperatorAvatarPanelProps) {
+  const wakeWordIndicatorClassName =
+    wakeWordStatus === 'command-listening'
+      ? 'text-green-400 animate-pulse'
+      : wakeWordStatus === 'loading-model' || wakeWordStatus === 'requesting-microphone'
+        ? 'text-blue-300 animate-pulse'
+        : 'text-slate-400';
+
   return (
     <section className="flex min-h-0 overflow-hidden">
       <div className="flex min-h-0 flex-1 items-center justify-center">
@@ -500,7 +565,7 @@ const OperatorAvatarPanel = memo(function OperatorAvatarPanel({
             <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-white/15 bg-slate-950/68 px-4 py-2 text-center text-sm text-slate-100 backdrop-blur-md">
               {avatarState === 'idle' && (
                 <>
-                  <Radio className={`h-4 w-4 ${wakeWordActive ? 'text-green-400 animate-pulse' : 'text-slate-400'}`} />
+                  <Radio className={`h-4 w-4 ${wakeWordIndicatorClassName}`} />
                   <span>
                     {wakeWordMuted ? 'In pausa' : wakeWordLabel}
                     {!wakeWordMuted && wakeWordStatus === 'wake-listening'
@@ -626,6 +691,10 @@ export function OperatorInterface() {
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [clarificationOptions, setClarificationOptions] = useState<ClarificationOption[]>([]);
+  const [agentCandidateOptions, setAgentCandidateOptions] = useState<AgentCandidateOption[]>([]);
+  const [agentConfirmationPayload, setAgentConfirmationPayload] = useState<AgentConfirmationPayload | null>(null);
+  const [agentConversationStateId, setAgentConversationStateId] = useState<number | null>(null);
+  const [voiceInteractionActive, setVoiceInteractionActive] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [fallbackReasonCode, setFallbackReasonCode] = useState<'matched' | 'clarification' | 'no_match' | 'out_of_scope' | null>(null);
   const [activeInteractionId, setActiveInteractionId] = useState<number | null>(null);
@@ -764,7 +833,7 @@ export function OperatorInterface() {
     window.requestAnimationFrame(() => {
       scrollChatToBottom();
     });
-  }, [chatMessages, currentTranscription, clarificationOptions.length, pendingResolution, showFollowUp]);
+  }, [chatMessages, currentTranscription, clarificationOptions.length, agentCandidateOptions.length, agentConfirmationPayload, pendingResolution, showFollowUp]);
 
   const dismissLogoutMessage = () => {
     if (logoutMessageTimeoutRef.current !== null) {
@@ -791,6 +860,20 @@ export function OperatorInterface() {
     setTechnicianPassword('');
     setIsResolvingInteraction(false);
   };
+
+  const resetAgentInteractionState = () => {
+    setAgentCandidateOptions([]);
+    setAgentConfirmationPayload(null);
+    setAgentConversationStateId(null);
+  };
+
+  const hasVoiceFollowUpTarget =
+    Boolean(pendingQuickActionConfirmation) ||
+    clarificationOptions.length > 0 ||
+    agentCandidateOptions.length > 0 ||
+    Boolean(agentConfirmationPayload) ||
+    showFollowUp ||
+    Boolean(pendingResolution?.resolvedByName);
 
   const assistantBusy =
     loading ||
@@ -858,6 +941,19 @@ export function OperatorInterface() {
       window.clearTimeout(hideResolutionBannerTimeout);
     };
   }, [pendingResolution?.resolvedByName]);
+
+  useEffect(() => {
+    if (!voiceInteractionActive) {
+      return;
+    }
+    if (assistantBusy) {
+      return;
+    }
+    if (hasVoiceFollowUpTarget) {
+      return;
+    }
+    setVoiceInteractionActive(false);
+  }, [assistantBusy, hasVoiceFollowUpTarget, voiceInteractionActive]);
 
   useEffect(() => {
     const sessionKey = currentWorkingStation && user ? `${user.id}:${currentWorkingStation.id}` : null;
@@ -1274,6 +1370,8 @@ export function OperatorInterface() {
     setCurrentTranscription('');
     setShowFollowUp(false);
     setClarificationOptions([]);
+    resetAgentInteractionState();
+    setVoiceInteractionActive(false);
     setPendingQuestion(null);
     setFallbackReasonCode(null);
     setTrackedActiveInteractionId(null);
@@ -1308,6 +1406,8 @@ export function OperatorInterface() {
     setChatMessages([]);
     setShowFollowUp(false);
     setClarificationOptions([]);
+    resetAgentInteractionState();
+    setVoiceInteractionActive(false);
     setPendingQuestion(null);
     setFallbackReasonCode(null);
     setTrackedActiveInteractionId(null);
@@ -1354,7 +1454,15 @@ export function OperatorInterface() {
     setWakeWordMuted((current) => !current);
   }, []);
 
-  const submitQuestion = async (userQuestion: string, selectedKnowledgeItemId?: number) => {
+  const submitQuestion = async (
+    userQuestion: string,
+    options?: {
+      selectedKnowledgeItemId?: number;
+      selectedMaterialId?: number;
+      conversationStateId?: number | null;
+      confirmationDecision?: 'confirm' | 'cancel';
+    }
+  ) => {
     if (!user || !currentWorkingStation || !accessToken || assistantBusy || hasOpenTechnicianRequest) {
       return;
     }
@@ -1362,6 +1470,7 @@ export function OperatorInterface() {
     setAvatarState('thinking');
     setShowFollowUp(false);
     setClarificationOptions([]);
+    resetAgentInteractionState();
     setFallbackReasonCode(null);
     setTrackedActiveInteractionId(null);
 
@@ -1375,7 +1484,10 @@ export function OperatorInterface() {
         body: JSON.stringify({
           working_station_id: currentWorkingStation.id,
           question: userQuestion,
-          selected_knowledge_item_id: selectedKnowledgeItemId,
+          selected_knowledge_item_id: options?.selectedKnowledgeItemId,
+          selected_material_id: options?.selectedMaterialId,
+          conversation_state_id: options?.conversationStateId,
+          confirmation_decision: options?.confirmationDecision,
         }),
       });
 
@@ -1444,6 +1556,7 @@ export function OperatorInterface() {
       if (shouldAutoMarkAsNotApplicable(data)) {
         setPendingQuestion(null);
         setClarificationOptions([]);
+        resetAgentInteractionState();
         setFallbackReasonCode(data.reason_code);
         setShowFollowUp(false);
 
@@ -1463,14 +1576,47 @@ export function OperatorInterface() {
       if (data.mode === 'clarification') {
         setPendingQuestion(userQuestion);
         setClarificationOptions(data.clarification_options);
+        resetAgentInteractionState();
+        return;
+      }
+
+      if (data.response_mode === 'agent_question') {
+        setPendingQuestion(userQuestion);
+        setClarificationOptions([]);
+        setAgentConversationStateId(data.conversation_state_id ?? null);
+        setAgentCandidateOptions(data.candidate_options || []);
+        setAgentConfirmationPayload(null);
+        setShowFollowUp(false);
+        await fetchSessionHistory();
+        return;
+      }
+
+      if (data.response_mode === 'confirmation_required') {
+        setPendingQuestion(userQuestion);
+        setClarificationOptions([]);
+        setAgentConversationStateId(data.conversation_state_id ?? null);
+        setAgentCandidateOptions([]);
+        setAgentConfirmationPayload(data.confirmation_payload ?? null);
+        setShowFollowUp(false);
+        await fetchSessionHistory();
+        return;
+      }
+
+      if (data.response_mode === 'action_completed' || data.response_mode === 'action_blocked') {
+        setPendingQuestion(null);
+        setClarificationOptions([]);
+        resetAgentInteractionState();
+        setShowFollowUp(false);
+        await fetchSessionHistory();
         return;
       }
 
       setPendingQuestion(null);
       setClarificationOptions([]);
+      resetAgentInteractionState();
       setFallbackReasonCode(data.mode === 'fallback' ? data.reason_code : null);
       setTrackedActiveInteractionId(interactionId);
-      setShowFollowUp(Boolean(data.interaction_id));
+      setShowFollowUp(Boolean(data.interaction_id) && data.response_mode !== 'action_completed');
       await fetchSessionHistory();
     } catch (error) {
       if (manualLogoutInProgressRef.current) {
@@ -1492,6 +1638,7 @@ export function OperatorInterface() {
     if (questionInput.trim() && user && currentWorkingStation) {
       const userQuestion = questionInput.trim();
       setQuestionInput('');
+      setVoiceInteractionActive(false);
       await submitQuestion(userQuestion);
     }
   };
@@ -1551,6 +1698,7 @@ export function OperatorInterface() {
     setQuestionInput('');
     setShowFollowUp(false);
     setClarificationOptions([]);
+    resetAgentInteractionState();
     setPendingQuestion(null);
     setFallbackReasonCode(null);
     setTrackedActiveInteractionId(null);
@@ -1622,6 +1770,14 @@ export function OperatorInterface() {
   };
 
   const handleVoiceTranscript = async (transcript: string) => {
+    setVoiceInteractionActive(true);
+
+    if (await tryHandleContextualVoiceCommand(transcript)) {
+      setQuestionInput('');
+      setAvatarState('idle');
+      return;
+    }
+
     const quickActionType = resolveVoiceQuickActionCommand(transcript);
     if (quickActionType) {
       setQuestionInput('');
@@ -1729,7 +1885,120 @@ export function OperatorInterface() {
     if (!pendingQuestion || assistantBusy) {
       return;
     }
-    await submitQuestion(pendingQuestion, knowledgeItemId);
+    await submitQuestion(pendingQuestion, { selectedKnowledgeItemId: knowledgeItemId });
+  };
+
+  const handleAgentCandidateSelection = async (option: AgentCandidateOption) => {
+    if (!agentConversationStateId || assistantBusy) {
+      return;
+    }
+    await submitQuestion(option.label, {
+      selectedMaterialId: option.material_id,
+      conversationStateId: agentConversationStateId,
+    });
+  };
+
+  const handleAgentConfirmation = async (decision: 'confirm' | 'cancel') => {
+    if (!agentConversationStateId || assistantBusy) {
+      return;
+    }
+    const confirmationText = decision === 'confirm' ? 'Confermo' : 'Annulla';
+    await submitQuestion(confirmationText, {
+      conversationStateId: agentConversationStateId,
+      confirmationDecision: decision,
+    });
+  };
+
+  const tryHandleContextualVoiceCommand = async (transcript: string): Promise<boolean> => {
+    const normalizedTranscript = normalizeVoiceCommand(transcript);
+    if (!normalizedTranscript) {
+      return false;
+    }
+
+    if (pendingQuickActionConfirmation) {
+      if (isVoiceCommandMatch(normalizedTranscript, affirmativeVoiceCommands)) {
+        await submitQuickAction(pendingQuickActionConfirmation);
+        return true;
+      }
+      if (isVoiceCommandMatch(normalizedTranscript, negativeVoiceCommands)) {
+        setPendingQuickActionConfirmation(null);
+        return true;
+      }
+    }
+
+    if (agentConfirmationPayload) {
+      if (isVoiceCommandMatch(normalizedTranscript, affirmativeVoiceCommands)) {
+        await handleAgentConfirmation('confirm');
+        return true;
+      }
+      if (isVoiceCommandMatch(normalizedTranscript, negativeVoiceCommands)) {
+        await handleAgentConfirmation('cancel');
+        return true;
+      }
+    }
+
+    if (showFollowUp) {
+      if (isVoiceCommandMatch(normalizedTranscript, ['si', 'sì', 'risolto'])) {
+        await handleFollowUpResponse('resolved');
+        return true;
+      }
+      if (isVoiceCommandMatch(normalizedTranscript, ['no', 'non risolto', 'non ancora'])) {
+        await handleFollowUpResponse('unresolved');
+        return true;
+      }
+      if (isVoiceCommandMatch(normalizedTranscript, ['non rilevante', 'non applicabile', 'annulla'])) {
+        await handleFollowUpResponse('not_applicable');
+        return true;
+      }
+    }
+
+    if (pendingResolution?.resolvedByName && isVoiceCommandMatch(normalizedTranscript, ['chiudi', 'ok', 'conferma'])) {
+      setPendingResolution(null);
+      resetResolutionForm();
+      return true;
+    }
+
+    if (clarificationOptions.length > 0) {
+      const clarificationIndex = ordinalVoiceCommands.findIndex((variants) =>
+        variants.some((variant) => normalizedTranscript === variant)
+      );
+      if (clarificationIndex >= 0 && clarificationOptions[clarificationIndex]) {
+        await handleClarificationSelection(clarificationOptions[clarificationIndex].knowledge_item_id);
+        return true;
+      }
+      const matchedClarification = clarificationOptions.find((option) => {
+        const label = normalizeVoiceCommand(option.label);
+        return normalizedTranscript === label || label.includes(normalizedTranscript) || normalizedTranscript.includes(label);
+      });
+      if (matchedClarification) {
+        await handleClarificationSelection(matchedClarification.knowledge_item_id);
+        return true;
+      }
+    }
+
+    if (agentCandidateOptions.length > 0) {
+      const candidateIndex = ordinalVoiceCommands.findIndex((variants) =>
+        variants.some((variant) => normalizedTranscript === variant)
+      );
+      if (candidateIndex >= 0 && agentCandidateOptions[candidateIndex]) {
+        await handleAgentCandidateSelection(agentCandidateOptions[candidateIndex]);
+        return true;
+      }
+      const matchedCandidate = agentCandidateOptions.find((option) => {
+        const optionText = normalizeVoiceCommand(`${option.label} ${option.description || ''}`);
+        return (
+          normalizedTranscript === normalizeVoiceCommand(option.label) ||
+          optionText.includes(normalizedTranscript) ||
+          normalizedTranscript.includes(normalizeVoiceCommand(option.label))
+        );
+      });
+      if (matchedCandidate) {
+        await handleAgentCandidateSelection(matchedCandidate);
+        return true;
+      }
+    }
+
+    return false;
   };
 
   const startTypingEffect = (fullText: string, durationMs?: number) => {
@@ -1775,12 +2044,15 @@ export function OperatorInterface() {
     paused: wakeWordPaused,
     wakePhrase: 'ehi holo',
     modelUrl: VOSK_MODEL_URL,
+    commandModeRequested: voiceInteractionActive && hasVoiceFollowUpTarget && !wakeWordAutomaticallyPaused,
     onWake: () => {
+      setVoiceInteractionActive(true);
       setAvatarState('listening');
       setQuestionInput('');
       setCurrentTranscription('');
       setShowFollowUp(false);
       setClarificationOptions([]);
+      resetAgentInteractionState();
       setPendingQuestion(null);
       setFallbackReasonCode(null);
       setTrackedActiveInteractionId(null);
@@ -1790,6 +2062,7 @@ export function OperatorInterface() {
     },
     onError: (voiceError) => {
       console.error('Wake word Vosk error:', voiceError);
+      setVoiceInteractionActive(false);
       setAvatarState('idle');
     },
   });
@@ -2117,6 +2390,53 @@ export function OperatorInterface() {
                         </div>
                       )}
 
+                      {agentCandidateOptions.length > 0 && (
+                        <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+                          <h3 className="text-sm font-semibold text-cyan-100">Scelta materiale</h3>
+                          <div className="mt-3 grid gap-3">
+                            {agentCandidateOptions.map((option) => (
+                              <button
+                                key={option.material_id}
+                                type="button"
+                                onClick={() => void handleAgentCandidateSelection(option)}
+                                disabled={assistantBusy}
+                                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm text-slate-100 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <div className="font-semibold">{option.label}</div>
+                                {option.description ? (
+                                  <div className="mt-1 text-xs text-slate-300">{option.description}</div>
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {agentConfirmationPayload && (
+                        <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4">
+                          <h3 className="text-sm font-semibold text-emerald-100">Conferma azione</h3>
+                          <p className="mt-2 text-sm leading-6 text-emerald-50">{agentConfirmationPayload.prompt}</p>
+                          <div className="mt-4 flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => void handleAgentConfirmation('confirm')}
+                              disabled={assistantBusy}
+                              className="rounded-xl bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Conferma
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleAgentConfirmation('cancel')}
+                              disabled={assistantBusy}
+                              className="rounded-xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Annulla
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       {showFollowUp && (
                         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">
                           <p className="text-lg font-semibold text-white">Hai risolto il problema?</p>
@@ -2166,6 +2486,7 @@ export function OperatorInterface() {
                             setCurrentTranscription('');
                             setShowFollowUp(false);
                             setClarificationOptions([]);
+                            resetAgentInteractionState();
                             setPendingQuestion(null);
                             setFallbackReasonCode(null);
                             setTrackedActiveInteractionId(null);

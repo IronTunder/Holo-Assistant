@@ -14,7 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { Edit2, MapPinned, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import type { AdminWorkingStation, DepartmentOption } from './adminTypes';
+import type { AdminWorkingStation, DepartmentOption, WorkingStationMaterialAssignment } from './adminTypes';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 
 interface WorkingStationListProps {
@@ -80,6 +80,7 @@ export function WorkingStationList({ departments, onMetadataRefresh }: WorkingSt
   const [selectedWorkingStation, setSelectedWorkingStation] = useState<AdminWorkingStation | null>(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [formState, setFormState] = useState(emptyForm);
+  const [materialAssignmentsByStation, setMaterialAssignmentsByStation] = useState<Record<number, WorkingStationMaterialAssignment[]>>({});
 
   const fetchWorkingStations = useCallback(async () => {
     setIsLoading(true);
@@ -101,6 +102,38 @@ export function WorkingStationList({ departments, onMetadataRefresh }: WorkingSt
   useEffect(() => {
     void fetchWorkingStations();
   }, [fetchWorkingStations]);
+
+  useEffect(() => {
+    if (!workingStations.length) {
+      setMaterialAssignmentsByStation({});
+      return;
+    }
+
+    let isCancelled = false;
+    const fetchAssignments = async () => {
+      try {
+        const entries = await Promise.all(
+          workingStations.map(async (workingStation) => {
+            const response = await apiCall(API_ENDPOINTS.LIST_WORKING_STATION_MATERIALS(workingStation.id));
+            if (!response.ok) {
+              return [workingStation.id, []] as const;
+            }
+            return [workingStation.id, (await response.json()) as WorkingStationMaterialAssignment[]] as const;
+          })
+        );
+        if (!isCancelled) {
+          setMaterialAssignmentsByStation(Object.fromEntries(entries));
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    void fetchAssignments();
+    return () => {
+      isCancelled = true;
+    };
+  }, [apiCall, workingStations]);
 
   const filteredWorkingStations = useMemo(() => {
     return workingStations.filter((workingStation) => {
@@ -321,6 +354,7 @@ export function WorkingStationList({ departments, onMetadataRefresh }: WorkingSt
                 <TableHead>Postazione</TableHead>
                 <TableHead>Reparto</TableHead>
                 <TableHead>Macchinario</TableHead>
+                <TableHead>Materiali</TableHead>
                 <TableHead>Stato</TableHead>
                 <TableHead>Checklist</TableHead>
                 <TableHead className="text-right">Azioni</TableHead>
@@ -329,13 +363,13 @@ export function WorkingStationList({ departments, onMetadataRefresh }: WorkingSt
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={7} className="py-10 text-center text-slate-500">
                     Caricamento postazioni...
                   </TableCell>
                 </TableRow>
               ) : filteredWorkingStations.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-slate-500">
+                  <TableCell colSpan={7} className="py-10 text-center text-slate-500">
                     Nessuna postazione trovata con i filtri correnti
                   </TableCell>
                 </TableRow>
@@ -361,6 +395,33 @@ export function WorkingStationList({ departments, onMetadataRefresh }: WorkingSt
                       ) : (
                         <span className="text-sm text-slate-500">Nessun macchinario</span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const assignments = (materialAssignmentsByStation[workingStation.id] || []).filter((assignment) => assignment.is_active);
+                        const criticalCount = assignments.filter(
+                          (assignment) => assignment.material_stock_status === 'low_stock' || assignment.material_stock_status === 'out_of_stock'
+                        ).length;
+                        if (!assignments.length) {
+                          return <span className="text-sm text-slate-500">Nessuno</span>;
+                        }
+                        return (
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant="outline">{assignments.length} assegnati</Badge>
+                              {criticalCount > 0 ? (
+                                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                                  {criticalCount} critici
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              {assignments.slice(0, 2).map((assignment) => assignment.material_name).join(', ')}
+                              {assignments.length > 2 ? '...' : ''}
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <Badge

@@ -567,6 +567,7 @@ def apply_compatible_migrations():
             _ensure_column(connection, inspector, "interaction_logs", "resolution_timestamp", "resolution_timestamp TIMESTAMP")
             _ensure_column(connection, inspector, "interaction_logs", "working_station_id", "working_station_id INTEGER")
             _ensure_column(connection, inspector, "interaction_logs", "chat_session_id", "chat_session_id INTEGER")
+            _ensure_column(connection, inspector, "interaction_logs", "conversation_state_id", "conversation_state_id INTEGER")
             _ensure_column(
                 connection,
                 inspector,
@@ -574,6 +575,8 @@ def apply_compatible_migrations():
                 "action_type",
                 "action_type VARCHAR(32) NOT NULL DEFAULT 'question'",
             )
+            _ensure_column(connection, inspector, "interaction_logs", "workflow_type", "workflow_type VARCHAR(64)")
+            _ensure_column(connection, inspector, "interaction_logs", "response_mode", "response_mode VARCHAR(64)")
             _ensure_column(
                 connection,
                 inspector,
@@ -622,6 +625,66 @@ def apply_compatible_migrations():
                 "interaction_logs",
                 "ix_interaction_logs_chat_session_id",
                 "CREATE INDEX ix_interaction_logs_chat_session_id ON interaction_logs (chat_session_id)",
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "interaction_logs",
+                "ix_interaction_logs_conversation_state_id",
+                "CREATE INDEX ix_interaction_logs_conversation_state_id ON interaction_logs (conversation_state_id)",
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "interaction_logs",
+                "ix_interaction_logs_workflow_type",
+                "CREATE INDEX ix_interaction_logs_workflow_type ON interaction_logs (workflow_type)",
+            )
+
+        if "materials" in inspector.get_table_names():
+            _ensure_column(connection, inspector, "materials", "sku", "sku VARCHAR(64)")
+            _ensure_column(connection, inspector, "materials", "unit_of_measure", "unit_of_measure VARCHAR(32) NOT NULL DEFAULT 'pz'")
+            _ensure_column(connection, inspector, "materials", "current_quantity", "current_quantity DOUBLE PRECISION NOT NULL DEFAULT 0")
+            _ensure_column(connection, inspector, "materials", "minimum_quantity", "minimum_quantity DOUBLE PRECISION NOT NULL DEFAULT 0")
+            _ensure_column(connection, inspector, "materials", "reorder_quantity", "reorder_quantity DOUBLE PRECISION NOT NULL DEFAULT 0")
+            _ensure_column(connection, inspector, "materials", "storage_location", "storage_location VARCHAR(160)")
+            _ensure_column(connection, inspector, "materials", "is_stock_tracked", "is_stock_tracked BOOLEAN NOT NULL DEFAULT TRUE")
+            _ensure_column(connection, inspector, "materials", "last_stock_update_at", "last_stock_update_at TIMESTAMP")
+            connection.execute(text("UPDATE materials SET unit_of_measure = 'pz' WHERE unit_of_measure IS NULL"))
+            connection.execute(text("UPDATE materials SET current_quantity = 0 WHERE current_quantity IS NULL"))
+            connection.execute(text("UPDATE materials SET minimum_quantity = 0 WHERE minimum_quantity IS NULL"))
+            connection.execute(text("UPDATE materials SET reorder_quantity = 0 WHERE reorder_quantity IS NULL"))
+            connection.execute(text("UPDATE materials SET is_stock_tracked = TRUE WHERE is_stock_tracked IS NULL"))
+            connection.execute(text("UPDATE materials SET current_quantity = 0 WHERE is_stock_tracked = TRUE AND current_quantity < 0"))
+            _ensure_index(
+                connection,
+                inspector,
+                "materials",
+                "ix_materials_sku",
+                "CREATE UNIQUE INDEX ix_materials_sku ON materials (sku)",
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "materials",
+                "ix_materials_current_quantity",
+                "CREATE INDEX ix_materials_current_quantity ON materials (current_quantity)",
+            )
+
+        if "material_stock_movements" in inspector.get_table_names():
+            _ensure_index(
+                connection,
+                inspector,
+                "material_stock_movements",
+                "ix_material_stock_movements_material_id",
+                "CREATE INDEX ix_material_stock_movements_material_id ON material_stock_movements (material_id)",
+            )
+            _ensure_index(
+                connection,
+                inspector,
+                "material_stock_movements",
+                "ix_material_stock_movements_created_at",
+                "CREATE INDEX ix_material_stock_movements_created_at ON material_stock_movements (created_at)",
             )
 
         if "knowledge_items" in inspector.get_table_names():

@@ -13,6 +13,7 @@ class InteractionLog(Base):
     machine_id = Column(Integer, ForeignKey("machines.id"), nullable=True)
     working_station_id = Column(Integer, ForeignKey("working_stations.id"), nullable=True, index=True)
     chat_session_id = Column(Integer, ForeignKey("operator_chat_sessions.id"), nullable=True, index=True)
+    conversation_state_id = Column(Integer, ForeignKey("operator_conversation_states.id"), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     knowledge_item_id = Column(Integer, ForeignKey("knowledge_items.id"), nullable=True)
     domanda = Column(Text, nullable=False)
@@ -23,6 +24,8 @@ class InteractionLog(Base):
     resolution_note = Column(Text, nullable=True)
     resolution_timestamp = Column(DateTime(timezone=True), nullable=True)
     action_type = Column(String(32), nullable=False, default="question", index=True)
+    workflow_type = Column(String(64), nullable=True, index=True)
+    response_mode = Column(String(64), nullable=True)
     priority = Column(String(32), nullable=False, default="normal", index=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -31,5 +34,6 @@ class InteractionLog(Base):
     machine = relationship("Machine")
     working_station = relationship("WorkingStation")
     chat_session = relationship("OperatorChatSession")
+    conversation_state = relationship("OperatorConversationState")
     category = relationship("Category")
     knowledge_item = relationship("KnowledgeItem")

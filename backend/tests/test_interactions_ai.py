@@ -19,7 +19,9 @@ from app.models.category import Category
 from app.models.department import Department
 from app.models.interaction_log import InteractionLog
 from app.models.knowledge_item import KnowledgeItem, WorkingStationKnowledgeItem
+from app.models.material import Material, WorkingStationMaterial
 from app.models.machine import Machine
+from app.models.operational_ticket import OperationalTicket
 from app.models.operator_chat_session import OperatorChatSession
 from app.models.user import LivelloEsperienza, Ruolo, Turno, User
 from app.models.working_station import WorkingStation
@@ -149,10 +151,52 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         machine.in_uso = True
         machine.operatore_attuale_id = user.id
         working_station.operatore_attuale_id = user.id
+        heat_gloves = Material(
+            name="Guanti resistenti al calore",
+            category="guanti",
+            description="Guanti per lavorazioni ad alta temperatura",
+            characteristics="resistenti al calore",
+            aliases="guanti termici, guanti calore",
+            is_active=True,
+        )
+        cut_gloves = Material(
+            name="Guanti antitaglio",
+            category="guanti",
+            description="Guanti per taglio e rifilatura",
+            characteristics="antitaglio",
+            aliases="guanti taglio, guanti antitaglio",
+            is_active=True,
+        )
+        self.db.add_all([heat_gloves, cut_gloves])
+        self.db.flush()
         self.db.add_all(
             [
                 WorkingStationKnowledgeItem(working_station_id=working_station.id, knowledge_item_id=item.id, is_enabled=True)
                 for item in items
+            ]
+        )
+        self.db.add_all(
+            [
+                WorkingStationMaterial(
+                    working_station_id=working_station.id,
+                    machine_id=machine.id,
+                    material_id=heat_gloves.id,
+                    usage_context="stampaggio a caldo",
+                    notes="Usati per pezzi molto caldi",
+                    display_order=1,
+                    is_required=True,
+                    is_active=True,
+                ),
+                WorkingStationMaterial(
+                    working_station_id=working_station.id,
+                    machine_id=machine.id,
+                    material_id=cut_gloves.id,
+                    usage_context="rifilatura",
+                    notes="Usati quando serve protezione da taglio",
+                    display_order=2,
+                    is_required=True,
+                    is_active=True,
+                ),
             ]
         )
         self.db.commit()
@@ -163,6 +207,10 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.admin_id = admin.id
         self.working_station_id = working_station.id
         self.item_ids = {item.question_title: item.id for item in items}
+        self.material_ids = {
+            "Guanti resistenti al calore": heat_gloves.id,
+            "Guanti antitaglio": cut_gloves.id,
+        }
 
     async def test_ranking_prefers_exact_keyword_match(self) -> None:
         indexed_candidates = knowledge_retrieval_service.get_machine_knowledge(self.db, self.machine_id)
@@ -252,6 +300,203 @@ class InteractionAiTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.reason_code, "matched")
         self.assertEqual(response.knowledge_item_title, "Cambio olio pressa")
         self.assertGreater(response.confidence, 0.7)
+
+    async def test_agent_material_shortage_requires_disambiguation(self) -> None:
+        request = AskQuestionRequest(
+            working_station_id=self.working_station_id,
+            user_id=self.user_id,
+            question="Ho finito i guanti",
+        )
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await ask_question(request, db=self.db)
+
+        self.assertEqual(response.response_mode, "agent_question")
+        self.assertEqual(response.workflow_type, "material_shortage")
+        self.assertEqual(len(response.candidate_options), 2)
+        self.assertIsNotNone(response.conversation_state_id)
+
+    async def test_agent_material_shortage_does_not_autoconfirm_unrelated_single_material(self) -> None:
+        user = self.db.query(User).filter(User.id == self.user_id).first()
+        coolant_station = WorkingStation(
+            name="Tornio CNC Doosan CNC-02",
+            department_id=user.department_id,
+            description="Postazione con solo refrigerante",
+            station_code="CNC-02",
+            startup_checklist=["Controllo refrigerante"],
+            in_uso=True,
+            operatore_attuale_id=self.user_id,
+        )
+        coolant = Material(
+            name="Refrigerante emulsione CNC",
+            category="refrigerante",
+            description="Emulsione refrigerante per lavorazioni CNC",
+            aliases="emulsione cnc, refrigerante, liquido refrigerante",
+            is_active=True,
+        )
+        self.db.add_all([coolant_station, coolant])
+        self.db.flush()
+        self.db.add(
+            WorkingStationMaterial(
+                working_station_id=coolant_station.id,
+                material_id=coolant.id,
+                usage_context="tornitura cnc",
+                display_order=1,
+                is_required=True,
+                is_active=True,
+            )
+        )
+        self.db.commit()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=coolant_station.id,
+                    user_id=self.user_id,
+                    question="Ho finito i guanti",
+                ),
+                db=self.db,
+            )
+
+        self.assertEqual(response.response_mode, "agent_question")
+        self.assertEqual(response.reason_code, "clarification")
+        self.assertIn("Magari volevi dire", response.response)
+        self.assertIn("ho finito il refrigerante", response.response.lower())
+        self.assertEqual(len(response.candidate_options), 1)
+
+    async def test_agent_material_shortage_single_material_keeps_confirmation_for_supported_match(self) -> None:
+        user = self.db.query(User).filter(User.id == self.user_id).first()
+        coolant_station = WorkingStation(
+            name="Tornio CNC Doosan CNC-02",
+            department_id=user.department_id,
+            description="Postazione con solo refrigerante",
+            station_code="CNC-02",
+            startup_checklist=["Controllo refrigerante"],
+            in_uso=True,
+            operatore_attuale_id=self.user_id,
+        )
+        coolant = Material(
+            name="Refrigerante emulsione CNC",
+            category="refrigerante",
+            description="Emulsione refrigerante per lavorazioni CNC",
+            aliases="emulsione cnc, refrigerante, liquido refrigerante",
+            is_active=True,
+        )
+        self.db.add_all([coolant_station, coolant])
+        self.db.flush()
+        self.db.add(
+            WorkingStationMaterial(
+                working_station_id=coolant_station.id,
+                material_id=coolant.id,
+                usage_context="tornitura cnc",
+                display_order=1,
+                is_required=True,
+                is_active=True,
+            )
+        )
+        self.db.commit()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            response = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=coolant_station.id,
+                    user_id=self.user_id,
+                    question="Ho finito il refrigerante",
+                ),
+                db=self.db,
+            )
+
+        self.assertEqual(response.response_mode, "confirmation_required")
+        self.assertIn("Refrigerante emulsione CNC", response.response)
+
+    async def test_agent_material_shortage_completes_after_selection_and_confirmation(self) -> None:
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            first = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=self.working_station_id,
+                    user_id=self.user_id,
+                    question="Ho finito i guanti",
+                ),
+                db=self.db,
+            )
+
+            second = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=self.working_station_id,
+                    user_id=self.user_id,
+                    question="Quelli antitaglio",
+                    conversation_state_id=first.conversation_state_id,
+                    selected_material_id=self.material_ids["Guanti antitaglio"],
+                ),
+                db=self.db,
+            )
+
+            third = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=self.working_station_id,
+                    user_id=self.user_id,
+                    question="Confermo",
+                    conversation_state_id=second.conversation_state_id,
+                    confirmation_decision="confirm",
+                ),
+                db=self.db,
+            )
+
+        self.assertEqual(second.response_mode, "confirmation_required")
+        self.assertEqual(third.response_mode, "action_completed")
+        self.assertIsNotNone(third.ticket_id)
+        ticket = self.db.query(OperationalTicket).filter(OperationalTicket.id == third.ticket_id).first()
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket.material_id, self.material_ids["Guanti antitaglio"])
+        self.assertEqual(ticket.workflow_type, "material_shortage")
+
+    async def test_agent_material_shortage_blocks_duplicate_open_ticket(self) -> None:
+        ticket = OperationalTicket(
+            workflow_type="material_shortage",
+            status="open",
+            priority="normal",
+            summary="Guanti antitaglio terminati",
+            details="Ticket esistente",
+            user_id=self.user_id,
+            working_station_id=self.working_station_id,
+            machine_id=self.machine_id,
+            material_id=self.material_ids["Guanti antitaglio"],
+        )
+        self.db.add(ticket)
+        self.db.commit()
+
+        with patch("app.api.interactions.session_event_bus.publish", new=AsyncMock()):
+            first = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=self.working_station_id,
+                    user_id=self.user_id,
+                    question="Ho finito i guanti",
+                ),
+                db=self.db,
+            )
+            second = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=self.working_station_id,
+                    user_id=self.user_id,
+                    question="Quelli antitaglio",
+                    conversation_state_id=first.conversation_state_id,
+                    selected_material_id=self.material_ids["Guanti antitaglio"],
+                ),
+                db=self.db,
+            )
+            third = await ask_question(
+                AskQuestionRequest(
+                    working_station_id=self.working_station_id,
+                    user_id=self.user_id,
+                    question="Confermo",
+                    conversation_state_id=second.conversation_state_id,
+                    confirmation_decision="confirm",
+                ),
+                db=self.db,
+            )
+
+        self.assertEqual(third.response_mode, "action_blocked")
+        self.assertEqual(third.ticket_id, ticket.id)
 
     async def test_ask_question_accepts_working_station_id(self) -> None:
         request = AskQuestionRequest(

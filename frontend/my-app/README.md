@@ -1,6 +1,6 @@
 ﻿# Frontend Holo-Assistant
 
-Ultimo aggiornamento: 14 aprile 2026
+Ultimo aggiornamento: 18 aprile 2026
 
 Frontend React/Vite del progetto Holo-Assistant. L'applicazione espone due macro-aree:
 - esperienza operatore su `/`;
@@ -72,7 +72,7 @@ Con gli script attuali `VITE_API_URL` viene scritto come `https://{server-ip}:80
 
 - `src/app` contiene root, router, route protection e bootstrap applicativo.
 - `src/features/operator` contiene interfaccia operatore, badge reader, login credenziali, avatar e logica della console.
-- `src/features/admin` contiene login admin, dashboard e strumenti CRUD.
+- `src/features/admin` contiene login admin, dashboard raggruppata per domini e strumenti CRUD, inclusi log, ticket e magazzino materiali.
 - `src/shared` contiene API client, auth context e componenti UI condivisi.
 
 Routing attuale:
@@ -99,11 +99,14 @@ Comportamenti utente rilevanti:
 - layout a due colonne con avatar a sinistra e console a destra;
 - risposta digitata progressivamente nella console senza far scorrere la pagina intera;
 - opzioni di chiarimento quando la knowledge base richiede disambiguazione;
+- nei chiarimenti e nelle conferme vocali contestuali il listener resta attivo, cosi il follow-up non richiede normalmente una nuova wake-word;
+- i flussi materiale poco sicuri non autoconfermano piu per semplice pattern e possono suggerire una frase piu precisa, per esempio `Magari volevi dire "Ho finito il refrigerante"?`;
 - la knowledge base tecnica e assegnata alla postazione selezionata, non direttamente al macchinario;
 - follow-up finale per chiedere se il problema e stato risolto;
 - azioni rapide sempre visibili nella parte bassa della console;
 - i comandi vocali di emergenza e manutenzione aprono la stessa finestra di conferma dei pulsanti rapidi, senza invio immediato;
-- pannello impostazioni operatore con toggle persistenti per ologramma, wakeword e grafica legacy forzata.
+- pannello impostazioni operatore con toggle persistenti per ologramma, wakeword e grafica legacy forzata;
+- stato visivo della UI vocale riallineato tra ascolto comando e `In attesa`, evitando indicatori verdi fuorvianti quando il sistema non sta ancora ascoltando un nuovo comando completo.
 - su mobile la viewport utile viene aggiornata dinamicamente con `visualViewport`, riducendo bande vuote o tagli del layout dopo login e chiusura tastiera.
 
 ## Sessione operatore e protezione postazione
@@ -143,6 +146,10 @@ Per la voce:
 - se l'avatar puo gestire il parlato, usa playback sincronizzato;
 - altrimenti usa audio fallback.
 
+Per i workflow multi-step materiale:
+- la UI puo mostrare chiarimenti guidati invece di conferme automatiche troppo aggressive;
+- i follow-up vocali restano contestuali quando il backend segnala uno stato `in attesa`.
+
 ## Auth e sessioni
 
 Comportamento attuale:
@@ -157,6 +164,9 @@ Comportamento attuale:
 - `src/shared/api/config.ts` centralizza endpoint e base URL.
 - `src/features/operator/OperatorInterface.tsx` contiene il flusso principale operatore.
 - `src/features/operator/voice/useVoskWakeWord.ts` gestisce wake-word e trascrizione locale.
+- `src/features/admin/AdminDashboard.tsx` organizza l'admin in `Panoramica`, `Operazioni`, `Risorse` e `Configurazione`.
+- `src/features/admin/MaterialManager.tsx` gestisce catalogo materiali, stock, movimenti e assegnazioni.
+- `src/features/admin/OperationalTicketList.tsx` mostra ticket e segnalazioni operative.
 - `src/features/operator/BadgeReader.tsx` gestisce selezione postazione e accesso.
 - `src/features/operator/CredentialsLogin.tsx` gestisce il modal di login credenziali.
 - `src/features/operator/operatorDisplayPreferences.ts` gestisce le preferenze locali dell'interfaccia operatore.
@@ -180,9 +190,14 @@ Il frontend viene avviato dagli script correnti tramite `vite dev`. Per un host 
 
 ## Note recenti
 
-- la dashboard admin e stata riallineata sulle sezioni `Utenti`, `Macchinari`, `Postazioni` e `Impostazioni`;
+- la dashboard admin e stata riorganizzata per domini in `Panoramica`, `Operazioni`, `Risorse` e `Configurazione`;
+- l'area `Risorse` include ora `Materiali`, con catalogo centrale, stock tracciato, soglie, movimenti e assegnazioni alle postazioni;
+- l'area `Operazioni` include una vista ticket/segnalazioni e una vista log piu compatta per workflow multi-step;
 - il form macchinari ora associa la postazione da un elenco di postazioni libere, evitando inserimenti manuali del codice;
 - la pagina impostazioni admin separa consultazione normale e configurazione avanzata, con indicatori di riavvio per singola voce;
+- la vista postazioni mostra anche il riepilogo materiali assegnati e segnala i casi critici di stock;
+- il flusso voce operatore mantiene attivo il follow-up contestuale dopo conferme o chiarimenti e allinea meglio stato testuale e indicatore visivo;
+- i casi `ho finito...` lato materiali ora chiedono chiarimento quando il materiale nominato non coincide con quello realmente assegnato alla postazione;
 - l'app espone un link pubblico all'informativa cookie/privacy sia dalla schermata operatore pre-login sia dal login admin.
 - la pagina legale include anche azioni lato utente per pulire preferenze locali, snapshot di sessione browser e fare logout quando la sessione e attiva.
 

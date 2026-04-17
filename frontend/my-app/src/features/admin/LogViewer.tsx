@@ -19,6 +19,7 @@ import type {
   InteractionLogEntry,
   InteractionPriority,
 } from './adminTypes';
+import { compactInteractionLogs, type CompactInteractionLogEntry } from './compactInteractionLogs';
 
 interface LogViewerProps {
   departments: DepartmentOption[];
@@ -65,12 +66,14 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
     question: 'Domanda',
     maintenance: 'Manutenzione',
     emergency: 'Emergenza',
+    material_shortage: 'Materiale',
   };
 
   const actionBadgeClassNames: Record<InteractionActionType, string> = {
     question: 'border-slate-200 bg-slate-50 text-slate-700',
     maintenance: 'border-amber-200 bg-amber-50 text-amber-700',
     emergency: 'border-red-200 bg-red-50 text-red-700',
+    material_shortage: 'border-sky-200 bg-sky-50 text-sky-700',
   };
 
   const priorityLabels: Record<InteractionPriority, string> = {
@@ -137,8 +140,10 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
     void fetchLogs();
   }, [apiCall]);
 
+  const compactedLogs = useMemo(() => compactInteractionLogs(logs), [logs]);
+
   const filteredLogs = useMemo(() => {
-    return logs.filter((log) => {
+    return compactedLogs.filter((log) => {
       const haystack = `${log.user_name} ${log.machine_name} ${log.domanda} ${log.risposta ?? ''}`.toLowerCase();
       const matchesSearch = haystack.includes(searchTerm.toLowerCase());
       const matchesDepartment =
@@ -149,7 +154,7 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
       const matchesFeedback = feedbackFilter === 'all' || (log.feedback_status ?? 'pending') === feedbackFilter;
       return matchesSearch && matchesDepartment && matchesCategory && matchesMachine && matchesUser && matchesFeedback;
     });
-  }, [categoryFilter, departmentFilter, departments, feedbackFilter, logs, machineFilter, searchTerm, userFilter]);
+  }, [categoryFilter, compactedLogs, departmentFilter, departments, feedbackFilter, machineFilter, searchTerm, userFilter]);
 
   return (
     <div className="space-y-4">
@@ -256,7 +261,7 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredLogs.map((log) => (
+                filteredLogs.map((log: CompactInteractionLogEntry) => (
                   <TableRow key={log.id} className="align-top hover:bg-slate-50/80">
                     <TableCell className="text-sm text-slate-600">
                       {new Date(log.timestamp).toLocaleString('it-IT')}
@@ -287,6 +292,11 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                       <div className="space-y-2">
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="outline">{log.category_name || 'Fallback'}</Badge>
+                          {log.compactedEntriesCount > 1 ? (
+                            <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+                              {log.compactedEntriesCount} passaggi
+                            </Badge>
+                          ) : null}
                         </div>
                         {log.knowledge_item_title ? (
                           <p className="max-w-xs text-xs text-slate-500">{log.knowledge_item_title}</p>
@@ -294,10 +304,26 @@ export const LogViewer = ({ departments, categories, machines, users }: LogViewe
                       </div>
                     </TableCell>
                     <TableCell className="max-w-sm text-sm text-slate-700">
-                      <p className="line-clamp-4 whitespace-pre-wrap">{log.domanda}</p>
+                      <div className="space-y-2">
+                        <p className="line-clamp-4 whitespace-pre-wrap">{log.domanda}</p>
+                        {log.compactedLatestQuestion ? (
+                          <p className="text-xs text-slate-500">
+                            Ultimo input: <span className="whitespace-pre-wrap">{log.compactedLatestQuestion}</span>
+                          </p>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="max-w-md text-sm text-slate-700">
-                      <p className="line-clamp-5 whitespace-pre-wrap">{log.risposta || '-'}</p>
+                      <div className="space-y-2">
+                        <p className="line-clamp-5 whitespace-pre-wrap">{log.risposta || '-'}</p>
+                        {log.compactedEntriesCount > 1 ? (
+                          <p className="text-xs text-slate-500">
+                            Workflow compatto
+                            {log.compactedStartedAt ? ` da ${new Date(log.compactedStartedAt).toLocaleTimeString('it-IT')}` : ''}
+                            {` a ${new Date(log.timestamp).toLocaleTimeString('it-IT')}`}
+                          </p>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {log.feedback_status ? (

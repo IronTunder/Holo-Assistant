@@ -15,6 +15,7 @@ type UseVoskWakeWordOptions = {
   paused: boolean;
   wakePhrase: string;
   modelUrl: string;
+  commandModeRequested?: boolean;
   onWake: () => void;
   onTranscriptFinal: (transcript: string) => void;
   onError?: (error: Error) => void;
@@ -272,6 +273,7 @@ export function useVoskWakeWord({
   paused,
   wakePhrase,
   modelUrl,
+  commandModeRequested = false,
   onWake,
   onTranscriptFinal,
   onError,
@@ -298,6 +300,7 @@ export function useVoskWakeWord({
   const onErrorRef = useRef(onError);
   const onTranscriptFinalRef = useRef(onTranscriptFinal);
   const onWakeRef = useRef(onWake);
+  const commandModeRequestedRef = useRef(commandModeRequested);
 
   const wakeVariants = useMemo(() => buildWakeVariants(wakePhrase), [wakePhrase]);
 
@@ -306,6 +309,10 @@ export function useVoskWakeWord({
     onTranscriptFinalRef.current = onTranscriptFinal;
     onErrorRef.current = onError;
   }, [onError, onTranscriptFinal, onWake]);
+
+  useEffect(() => {
+    commandModeRequestedRef.current = commandModeRequested;
+  }, [commandModeRequested]);
 
   const clearCommandTimers = useCallback(() => {
     if (commandTimeoutRef.current !== null) {
@@ -338,11 +345,43 @@ export function useVoskWakeWord({
     setPartialTranscript('');
   }, [clearCommandTimers]);
 
+  const scheduleCommandIdleTimeout = useCallback(() => {
+    if (commandTimeoutRef.current !== null) {
+      window.clearTimeout(commandTimeoutRef.current);
+      commandTimeoutRef.current = null;
+    }
+
+    commandTimeoutRef.current = window.setTimeout(() => {
+      if (commandPartialRef.current) {
+        return;
+      }
+
+      if (commandModeRequestedRef.current && enabled && !paused) {
+        scheduleCommandIdleTimeout();
+        return;
+      }
+
+      resetCommandMode();
+      setStatus(enabled && !paused ? 'wake-listening' : enabled ? 'ready' : 'disabled');
+    }, COMMAND_TIMEOUT_MS);
+  }, [enabled, paused, resetCommandMode]);
+
   const finishCommand = useCallback(
     (rawTranscript: string) => {
       const transcript = normalizeSpeech(rawTranscript);
-      resetCommandMode();
-      setStatus(enabled && !paused ? 'wake-listening' : enabled ? 'ready' : 'disabled');
+      clearCommandTimers();
+      commandPartialRef.current = '';
+      setPartialTranscript('');
+
+      const keepCommandMode = commandModeRequestedRef.current && enabled && !paused;
+      if (keepCommandMode) {
+        modeRef.current = 'command';
+        setStatus('command-listening');
+        scheduleCommandIdleTimeout();
+      } else {
+        modeRef.current = 'wake';
+        setStatus(enabled && !paused ? 'wake-listening' : enabled ? 'ready' : 'disabled');
+      }
 
       if (!transcript) {
         return;
@@ -351,7 +390,7 @@ export function useVoskWakeWord({
       setLastTranscript(transcript);
       onTranscriptFinalRef.current(transcript);
     },
-    [enabled, paused, resetCommandMode]
+    [clearCommandTimers, enabled, paused, scheduleCommandIdleTimeout]
   );
 
   const scheduleCommandSilenceTimeout = useCallback(() => {
@@ -390,6 +429,16 @@ export function useVoskWakeWord({
     },
     [clearCommandTimers, finishCommand, scheduleCommandSilenceTimeout, wakeVariants]
   );
+
+  const enterFollowUpCommandMode = useCallback(() => {
+    modeRef.current = 'command';
+    commandPartialRef.current = '';
+    setPartialTranscript('');
+    setStatus('command-listening');
+    setError(null);
+    clearCommandTimers();
+    scheduleCommandIdleTimeout();
+  }, [clearCommandTimers, scheduleCommandIdleTimeout]);
 
   const handleFailure = useCallback((rawError: unknown, fallbackMessage: string) => {
     const voskError = createVoskError(rawError, fallbackMessage);
@@ -594,13 +643,19 @@ export function useVoskWakeWord({
       recognizerRef.current = recognizer;
       sourceRef.current = source;
       streamRef.current = stream;
-      setStatus('wake-listening');
-      debugVosk('wake listening');
+      if (commandModeRequestedRef.current) {
+        enterFollowUpCommandMode();
+        debugVosk('follow-up command listening after restart');
+      } else {
+        setStatus('wake-listening');
+        debugVosk('wake listening');
+      }
     } catch (startError) {
       stop();
       handleFailure(startError, 'Impossibile avviare il riconoscimento vocale');
     }
   }, [
+    enterFollowUpCommandMode,
     enabled,
     enterCommandMode,
     finishCommand,
@@ -647,6 +702,33 @@ export function useVoskWakeWord({
       clearScheduledStart();
     };
   }, [clearScheduledStart, enabled, paused, start, stop]);
+
+  useEffect(() => {
+    if (!enabled || paused || !recognizerRef.current) {
+      return;
+    }
+
+    if (commandModeRequested) {
+      if (modeRef.current !== 'command') {
+        enterFollowUpCommandMode();
+      } else {
+        scheduleCommandIdleTimeout();
+      }
+      return;
+    }
+
+    if (modeRef.current === 'command' && !commandPartialRef.current) {
+      resetCommandMode();
+      setStatus('wake-listening');
+    }
+  }, [
+    commandModeRequested,
+    enabled,
+    enterFollowUpCommandMode,
+    paused,
+    resetCommandMode,
+    scheduleCommandIdleTimeout,
+  ]);
 
   useEffect(() => {
     return () => {

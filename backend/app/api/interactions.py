@@ -17,15 +17,20 @@ from app.api.auth.auth import (
 from app.core.database import get_db
 from app.models.interaction_log import InteractionLog
 from app.models.machine import Machine
+from app.models.operational_ticket import OperationalTicket
 from app.models.operator_chat_session import OperatorChatSession
 from app.models.user import User
 from app.models.working_station import WorkingStation
 from app.schemas.interaction import (
+    AgentCandidateOption,
+    AgentConfirmationPayload,
+    AgentExecutedAction,
     AskQuestionRequest,
     AskQuestionResponse,
     InteractionFeedbackRequest,
     InteractionFeedbackResponse,
     InteractionTargetRequest,
+    OperationalTicketResponse,
     OperatorChatMessage,
     OperatorChatSessionResponse,
     InteractionResolutionRequest,
@@ -34,6 +39,7 @@ from app.schemas.interaction import (
     QuickActionRequest,
     QuickActionResponse,
 )
+from app.services.agent_orchestrator import agent_orchestrator_service
 from app.services.knowledge_retrieval import FALLBACK_MESSAGE, knowledge_retrieval_service
 from app.services.session_events import session_event_bus
 
@@ -64,8 +70,17 @@ def _build_response(
     interaction_id: int | None = None,
     selected_response: dict | None = None,
     clarification_options: list[dict] | None = None,
+    response_mode: str | None = None,
+    conversation_state_id: int | None = None,
+    workflow_type: str | None = None,
+    pending_slots: list[str] | None = None,
+    candidate_options: list[dict] | None = None,
+    confirmation_payload: dict | None = None,
+    executed_action: dict | None = None,
+    ticket_id: int | None = None,
 ) -> AskQuestionResponse:
     clarification_options = clarification_options or []
+    candidate_options = candidate_options or []
     selected_response = selected_response or {}
     return AskQuestionResponse(
         interaction_id=interaction_id,
@@ -78,6 +93,14 @@ def _build_response(
         category_name=selected_response.get("category_name"),
         knowledge_item_id=selected_response.get("knowledge_item_id"),
         knowledge_item_title=selected_response.get("knowledge_item_title"),
+        response_mode=response_mode,
+        conversation_state_id=conversation_state_id,
+        workflow_type=workflow_type,
+        pending_slots=pending_slots or [],
+        candidate_options=[AgentCandidateOption(**option) for option in candidate_options],
+        confirmation_payload=AgentConfirmationPayload(**confirmation_payload) if confirmation_payload else None,
+        executed_action=AgentExecutedAction(**executed_action) if executed_action else None,
+        ticket_id=ticket_id,
     )
 
 
@@ -114,6 +137,30 @@ def _build_interaction_event_payload(interaction: InteractionLog) -> dict:
         "priority": interaction.priority or "normal",
         "timestamp": interaction.timestamp.isoformat() if interaction.timestamp else None,
     }
+
+
+def _serialize_operational_ticket(ticket: OperationalTicket) -> OperationalTicketResponse:
+    return OperationalTicketResponse(
+        id=ticket.id,
+        workflow_type=ticket.workflow_type,
+        status=ticket.status,
+        priority=ticket.priority,
+        summary=ticket.summary,
+        details=ticket.details,
+        user_id=ticket.user_id,
+        user_name=ticket.user.nome if ticket.user else None,
+        working_station_id=ticket.working_station_id,
+        working_station_name=ticket.working_station.name if ticket.working_station else None,
+        machine_id=ticket.machine_id,
+        machine_name=ticket.machine.nome if ticket.machine else None,
+        material_id=ticket.material_id,
+        material_name=ticket.material.name if ticket.material else None,
+        interaction_log_id=ticket.interaction_log_id,
+        conversation_state_id=ticket.conversation_state_id,
+        created_at=ticket.created_at,
+        updated_at=ticket.updated_at,
+        closed_at=ticket.closed_at,
+    )
 
 
 def _is_technician(user: User) -> bool:
@@ -331,6 +378,114 @@ async def ask_question(
             working_station_id=request.working_station_id,
             machine_id=request.machine_id,
         )
+
+        agent_result = agent_orchestrator_service.resolve(
+            db,
+            current_user=current_user,
+            working_station=working_station,
+            machine=machine,
+            chat_session=chat_session,
+            question=request.question,
+            conversation_state_id=request.conversation_state_id,
+            selected_material_id=request.selected_material_id,
+            confirmation_decision=request.confirmation_decision,
+        )
+        if agent_result.handled:
+            interaction = InteractionLog(
+                user_id=current_user.id,
+                machine_id=machine.id if machine is not None else None,
+                working_station_id=working_station.id if working_station else None,
+                chat_session_id=chat_session.id if chat_session else None,
+                conversation_state_id=agent_result.conversation_state_id,
+                domanda=request.question,
+                risposta=agent_result.response or FALLBACK_MESSAGE,
+                action_type=agent_result.action_type,
+                workflow_type=agent_result.workflow_type,
+                response_mode=agent_result.response_mode,
+                priority=agent_result.priority,
+                feedback_status=agent_result.feedback_status,
+                feedback_timestamp=datetime.now(timezone.utc) if agent_result.feedback_status else None,
+            )
+            db.add(interaction)
+            db.flush()
+            if agent_result.ticket_id is not None:
+                ticket = db.query(OperationalTicket).filter(OperationalTicket.id == agent_result.ticket_id).first()
+                if ticket is not None and ticket.interaction_log_id is None:
+                    ticket.interaction_log_id = interaction.id
+            db.commit()
+            db.refresh(interaction)
+            interaction = (
+                db.query(InteractionLog)
+                .options(
+                    joinedload(InteractionLog.user),
+                    joinedload(InteractionLog.machine),
+                    joinedload(InteractionLog.working_station),
+                    joinedload(InteractionLog.category),
+                    joinedload(InteractionLog.knowledge_item),
+                    joinedload(InteractionLog.resolved_by_user),
+                )
+                .filter(InteractionLog.id == interaction.id)
+                .first()
+            )
+
+            await session_event_bus.publish(
+                ADMIN_MACHINE_EVENTS_CHANNEL,
+                "interaction_created",
+                {
+                    **_build_interaction_event_payload(interaction),
+                    "mode": "agent",
+                    "reason_code": agent_result.reason_code,
+                    "confidence": 1.0,
+                    "route": agent_result.workflow_type or "agent",
+                    "response_mode": agent_result.response_mode,
+                    "ticket_id": agent_result.ticket_id,
+                },
+            )
+
+            return _build_response(
+                mode="answer",
+                reason_code=(
+                    "clarification"
+                    if agent_result.response_mode == "agent_question"
+                    else (
+                        "no_match"
+                        if agent_result.response_mode == "action_blocked" and agent_result.reason_code == "no_match"
+                        else "matched"
+                    )
+                ),
+                response=agent_result.response or FALLBACK_MESSAGE,
+                confidence=1.0,
+                interaction_id=interaction.id,
+                response_mode=agent_result.response_mode,
+                conversation_state_id=agent_result.conversation_state_id,
+                workflow_type=agent_result.workflow_type,
+                pending_slots=agent_result.pending_slots,
+                candidate_options=[
+                    {
+                        "material_id": option.material_id,
+                        "label": option.label,
+                        "description": option.description,
+                    }
+                    for option in agent_result.candidate_options
+                ],
+                confirmation_payload={
+                    "prompt": agent_result.confirmation_payload.prompt,
+                    "action": agent_result.confirmation_payload.action,
+                    "material_id": agent_result.confirmation_payload.material_id,
+                    "material_name": agent_result.confirmation_payload.material_name,
+                }
+                if agent_result.confirmation_payload
+                else None,
+                executed_action={
+                    "action": agent_result.executed_action.action,
+                    "status": agent_result.executed_action.status,
+                    "ticket_id": agent_result.executed_action.ticket_id,
+                    "summary": agent_result.executed_action.summary,
+                }
+                if agent_result.executed_action
+                else None,
+                ticket_id=agent_result.ticket_id,
+            )
 
         if working_station is not None:
             retrieval_result = await knowledge_retrieval_service.resolve_question_for_working_station(
@@ -653,6 +808,36 @@ async def get_session_history(
     )
 
 
+@router.get("/operational-tickets", response_model=list[OperationalTicketResponse])
+async def list_operational_tickets(
+    working_station_id: int | None = None,
+    machine_id: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    working_station, machine = resolve_requested_session_target(
+        db,
+        working_station_id=working_station_id,
+        machine_id=machine_id,
+    )
+    query = (
+        db.query(OperationalTicket)
+        .options(
+            joinedload(OperationalTicket.user),
+            joinedload(OperationalTicket.working_station),
+            joinedload(OperationalTicket.machine),
+            joinedload(OperationalTicket.material),
+        )
+        .filter(OperationalTicket.user_id == current_user.id)
+        .order_by(OperationalTicket.created_at.desc(), OperationalTicket.id.desc())
+    )
+    if working_station is not None:
+        query = query.filter(OperationalTicket.working_station_id == working_station.id)
+    if machine is not None:
+        query = query.filter(OperationalTicket.machine_id == machine.id)
+    return [_serialize_operational_ticket(ticket) for ticket in query.all()]
+
+
 @router.post("/clear-session-history", response_model=OperatorChatSessionResponse)
 async def clear_session_history(
     request: InteractionTargetRequest,
@@ -763,7 +948,7 @@ async def resolve_interaction(
             raise HTTPException(status_code=409, detail="Interazione gia chiusa")
         if interaction.feedback_status != "unresolved":
             raise HTTPException(status_code=409, detail="Interazione non risolvibile")
-        if interaction.action_type not in {"question", "maintenance", "emergency"}:
+        if interaction.action_type not in {"question", "maintenance", "emergency", "material_shortage"}:
             raise HTTPException(status_code=400, detail="Tipo interazione non risolvibile")
 
         technician = _resolve_technician_user(request, current_user, db)

@@ -4,9 +4,11 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 FeedbackStatus = Literal["resolved", "unresolved", "not_applicable"]
-InteractionActionType = Literal["question", "maintenance", "emergency"]
+InteractionActionType = Literal["question", "maintenance", "emergency", "material_shortage"]
 QuickActionType = Literal["maintenance", "emergency"]
 InteractionPriority = Literal["normal", "critical"]
+AgentResponseMode = Literal["knowledge_answer", "agent_question", "confirmation_required", "action_completed", "action_blocked"]
+WorkflowType = Literal["material_shortage"]
 
 
 class CategoryBase(BaseModel):
@@ -53,6 +55,9 @@ class AskQuestionRequest(InteractionTargetRequest):
     user_id: Optional[int] = None
     question: str
     selected_knowledge_item_id: Optional[int] = None
+    conversation_state_id: Optional[int] = None
+    selected_material_id: Optional[int] = None
+    confirmation_decision: Optional[Literal["confirm", "cancel"]] = None
 
 
 class QuickActionRequest(InteractionTargetRequest):
@@ -66,6 +71,26 @@ class ClarificationOption(BaseModel):
     category_name: Optional[str] = None
 
 
+class AgentCandidateOption(BaseModel):
+    material_id: int
+    label: str
+    description: Optional[str] = None
+
+
+class AgentConfirmationPayload(BaseModel):
+    prompt: str
+    action: str
+    material_id: Optional[int] = None
+    material_name: Optional[str] = None
+
+
+class AgentExecutedAction(BaseModel):
+    action: str
+    status: Literal["completed", "blocked", "cancelled"]
+    ticket_id: Optional[int] = None
+    summary: Optional[str] = None
+
+
 class AskQuestionResponse(BaseModel):
     interaction_id: Optional[int] = None
     response: str
@@ -77,6 +102,14 @@ class AskQuestionResponse(BaseModel):
     category_name: Optional[str] = None
     knowledge_item_id: Optional[int] = None
     knowledge_item_title: Optional[str] = None
+    response_mode: Optional[AgentResponseMode] = None
+    conversation_state_id: Optional[int] = None
+    workflow_type: Optional[WorkflowType] = None
+    pending_slots: list[str] = Field(default_factory=list)
+    candidate_options: list[AgentCandidateOption] = Field(default_factory=list)
+    confirmation_payload: Optional[AgentConfirmationPayload] = None
+    executed_action: Optional[AgentExecutedAction] = None
+    ticket_id: Optional[int] = None
 
 
 class InteractionFeedbackRequest(BaseModel):
@@ -143,3 +176,25 @@ class OperatorChatSessionResponse(BaseModel):
     working_station_id: Optional[int] = None
     machine_id: Optional[int] = None
     messages: list[OperatorChatMessage] = Field(default_factory=list)
+
+
+class OperationalTicketResponse(BaseModel):
+    id: int
+    workflow_type: WorkflowType
+    status: str
+    priority: InteractionPriority
+    summary: str
+    details: Optional[str] = None
+    user_id: int
+    user_name: Optional[str] = None
+    working_station_id: Optional[int] = None
+    working_station_name: Optional[str] = None
+    machine_id: Optional[int] = None
+    machine_name: Optional[str] = None
+    material_id: Optional[int] = None
+    material_name: Optional[str] = None
+    interaction_log_id: Optional[int] = None
+    conversation_state_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    closed_at: Optional[datetime] = None
